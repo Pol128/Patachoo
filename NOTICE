@@ -1,0 +1,45 @@
+Patachoo
+Copyright 2026 Paul COURTOIS
+
+Ce produit inclut des logiciels développés dans le cadre du projet Patachoo
+(https://github.com/Pol128/Patachoo), distribués sous licence Apache-2.0.
+Le texte intégral de la licence se trouve dans le fichier LICENSE.
+
+
+Composants tiers redistribués
+-----------------------------
+
+foods_fr.json — lexique d'aliments
+    Issu du projet MealieSync (https://github.com/Rouzax/MealieSync).
+    Licence MIT, Copyright (c) 2025 Rouzax.
+    Ce fichier n'est pas versionné ici : il est embarqué (go:embed) dans le
+    module github.com/Pol128/moteur, dont le dépôt conserve le texte de la
+    licence MIT attaché aux données, dans data/foods_fr.LICENSE.
+    Il est en revanche bien redistribué par Patachoo, puisqu'il est compilé
+    dans le binaire livré — d'où sa mention ici. La mention doit suivre les
+    données partout où elles vont.
+
+
+Dépendances liées, non redistribuées sous forme de source
+---------------------------------------------------------
+
+PocketBase (https://github.com/pocketbase/pocketbase) — licence MIT.
+    Utilisé comme bibliothèque Go et compilé dans le binaire livré.
+
+Les autres dépendances Go sont déclarées dans go.mod ; leurs licences
+respectives s'appliquent au code qu'elles couvrent.
+
+
+Ce qui n'est PAS dans ce dépôt, et pourquoi
+-------------------------------------------
+
+Aucune ligne de code n'est reprise de Mealie ni de Tandoor, tous deux sous
+licence AGPL-3.0. Leur analyseur d'ingrédients a été lu et documenté pour
+comprendre pourquoi il échoue sur le français (NOTE-PROJET.md §4), jamais
+recopié : en recopier ne serait-ce qu'un extrait basculerait l'ensemble de
+Patachoo sous AGPL-3.0, licence plus contraignante dont l'absorption ne se
+défait pas.
+
+Aucune page récoltée sur un site tiers n'est versionnée ici. Les jeux de test
+de l'extracteur sont écrits de toutes pièces : contenu inventé, structures
+réelles.
