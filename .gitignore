@@ -1,0 +1,15 @@
+# Suivi de projet — contient le jeton d'API Vikunja en clair
+vikunja/
+
+# Données PocketBase : base SQLite, fichiers téléversés, sauvegardes
+pb_data/
+
+# Binaire compilé
+/patachoo
+
+# Secrets et configuration locale
+.env
+*.local
+
+# Systèmes de fichiers
+.DS_Store
