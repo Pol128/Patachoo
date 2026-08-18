@@ -4,7 +4,8 @@ vikunja/
 # Données PocketBase : base SQLite, fichiers téléversés, sauvegardes
 pb_data/
 
-# Binaire compilé
+# Binaire compilé — nommé d'après le module, donc avec la majuscule
+/Patachoo
 /patachoo
 
 # Secrets et configuration locale
