@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Titre}}</title>
+<link rel="stylesheet" href="/statique/patachoo.css">
+<script src="/statique/htmx.min.js" defer></script>
+</head>
+<body>
+<header>
+<a class="marque" href="/">Patachoo</a>
+<nav>
+<a href="/recettes">Recettes</a>
+<a href="/recettes/nouvelle">Nouvelle recette</a>
+</nav>
+</header>
+<main>{{template "contenu" .}}</main>
+<footer>Patachoo — carnet de recettes</footer>
+</body>
+</html>

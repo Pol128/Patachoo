@@ -209,8 +209,10 @@ func TestAssetAbsentNestPasLaPageDAccueil(t *testing.T) {
 	if !errors.Is(err, router.ErrFileNotFound) {
 		t.Errorf("erreur %v, attendu router.ErrFileNotFound", err)
 	}
-	if rec.Code == http.StatusOK {
-		t.Errorf("statut %d : un asset absent ne répond pas 200", rec.Code)
+	// Le gestionnaire n'écrit rien lui-même : il remonte l'erreur, et c'est le
+	// routeur qui la traduit. Lire rec.Code ne dirait que sa valeur par défaut.
+	if statut := router.ToApiError(err).Status; statut != http.StatusNotFound {
+		t.Errorf("statut %d, attendu %d", statut, http.StatusNotFound)
 	}
 	if strings.Contains(rec.Body.String(), "<html") {
 		t.Errorf("la page d'accueil a été servie à la place d'un 404 :\n%s", rec.Body.String())
