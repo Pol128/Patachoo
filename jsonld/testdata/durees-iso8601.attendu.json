@@ -1,0 +1,18 @@
+{
+  "cas": "Durées ISO 8601 converties en minutes : PT25M vaut 25, PT3H30M vaut 210.",
+  "erreur": "",
+  "recette": {
+    "titre": "Daube de sanglier imaginaire",
+    "preparation_min": 25,
+    "cuisson_min": 210,
+    "ingredients": [
+      "1,2 kg de sanglier",
+      "75 cl de vin rouge",
+      "2 oignons"
+    ],
+    "etapes": [
+      "Faire mariner la veille.",
+      "Mijoter à couvert trois heures et demie."
+    ]
+  }
+}

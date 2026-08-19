@@ -1,0 +1,18 @@
+{
+  "cas": "HowToSection contenant des HowToStep : les sections sont aplaties, l'ordre des étapes est conservé.",
+  "erreur": "",
+  "recette": {
+    "titre": "Tarte aux prunes de Sainte-Ébauche",
+    "ingredients": [
+      "1 pâte brisée",
+      "800 g de prunes",
+      "50 g de poudre d'amande"
+    ],
+    "etapes": [
+      "Étaler la pâte et la piquer.",
+      "Saupoudrer la poudre d'amande.",
+      "Ranger les prunes serrées, face coupée vers le haut.",
+      "Cuire 40 minutes à 190 °C."
+    ]
+  }
+}

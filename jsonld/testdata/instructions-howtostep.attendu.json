@@ -1,0 +1,17 @@
+{
+  "cas": "recipeInstructions en HowToStep : c'est le champ text qui porte l'étape, pas name.",
+  "erreur": "",
+  "recette": {
+    "titre": "Poêlée de champignons des bois inventés",
+    "ingredients": [
+      "400 g de champignons",
+      "2 gousses d'ail",
+      "persil plat"
+    ],
+    "etapes": [
+      "Brosser les champignons sans les laver.",
+      "Saisir à feu vif, sans les remuer d'abord.",
+      "Ajouter l'ail et le persil hors du feu."
+    ]
+  }
+}
