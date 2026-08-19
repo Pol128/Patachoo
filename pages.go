@@ -2,6 +2,7 @@ package main
 
 import (
 	"embed"
+	"io/fs"
 	"net/http"
 
 	"github.com/pocketbase/pocketbase/apis"
@@ -79,9 +80,16 @@ func estHTMX(e *core.RequestEvent) bool {
 }
 
 // assetsStatiques sert la feuille CSS et HTMX depuis nos propres fichiers.
+func assetsStatiques() func(*core.RequestEvent) error {
+	return servirAssets(apis.MustSubFS(statique, "statique"))
+}
+
+// servirAssets sert un système de fichiers d'assets, et rien d'autre.
 //
 // Le false passé à Static est délibéré : un asset absent doit être un 404, pas
-// la page d'accueil déguisée en fichier JavaScript.
-func assetsStatiques() func(*core.RequestEvent) error {
-	return apis.Static(apis.MustSubFS(statique, "statique"), false)
+// la page d'accueil déguisée en fichier JavaScript. La fonction prend son
+// système de fichiers en paramètre pour que ce choix soit vérifiable — servi
+// sur nos seuls assets, il ne se distingue pas de son contraire.
+func servirAssets(fsys fs.FS) func(*core.RequestEvent) error {
+	return apis.Static(fsys, false)
 }
