@@ -9,6 +9,14 @@ Le texte intégral de la licence se trouve dans le fichier LICENSE.
 Composants tiers redistribués
 -----------------------------
 
+htmx 2.0.10 — bibliothèque JavaScript
+    Issu du projet htmx (https://github.com/bigskysoftware/htmx).
+    Licence 0BSD (Zero-Clause BSD).
+    Le fichier statique/htmx.min.js est déposé tel quel, sans retouche, et
+    embarqué (go:embed) dans le binaire livré : il est donc redistribué.
+    Il est servi depuis nos propres assets et jamais depuis un CDN — Patachoo
+    doit fonctionner sur un réseau coupé d'Internet.
+
 foods_fr.json — lexique d'aliments
     Issu du projet MealieSync (https://github.com/Rouzax/MealieSync).
     Licence MIT, Copyright (c) 2025 Rouzax.
