@@ -1,0 +1,67 @@
+/* Socle de lisibilité, pas une identité visuelle : largeur de ligne bornée,
+   polices du système, un peu d'air. Le thème et la décoration viendront quand
+   il y aura des pages à décorer. */
+
+:root {
+	--encre: #1b1b1b;
+	--papier: #fdfdfb;
+	--trait: #d8d4cc;
+	--lien: #7a4b1e;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+body {
+	margin: 0;
+	background: var(--papier);
+	color: var(--encre);
+	font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+	font-size: 1.05rem;
+	line-height: 1.6;
+}
+
+header,
+main,
+footer {
+	max-width: 42rem;
+	margin: 0 auto;
+	padding: 1rem;
+}
+
+header {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5rem 1.5rem;
+	align-items: baseline;
+	border-bottom: 1px solid var(--trait);
+}
+
+.marque {
+	font-weight: 700;
+	font-size: 1.25rem;
+	text-decoration: none;
+	color: inherit;
+}
+
+nav {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 1rem;
+}
+
+a {
+	color: var(--lien);
+}
+
+h1 {
+	font-size: 1.6rem;
+	line-height: 1.25;
+}
+
+footer {
+	border-top: 1px solid var(--trait);
+	color: #6b675f;
+	font-size: 0.9rem;
+}

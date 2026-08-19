@@ -1,39 +1,87 @@
 package main
 
 import (
-	"html/template"
+	"embed"
 	"net/http"
-	"strings"
 
+	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/tools/template"
 )
+
+// Gabarits et assets partent dans le binaire dès maintenant : c'est plus
+// pénible à rattraper après coup que d'être fait dès le départ. Un go build
+// suffit donc toujours — ni Node, ni node_modules, ni étape de construction.
+//
+//go:embed vues/*.html
+var vues embed.FS
+
+//go:embed statique
+var statique embed.FS
+
+// registre est créé une fois et partagé par toutes les pages : il est sûr en
+// accès concurrent et met en cache le jeu de fichiers parsé.
+var registre = template.NewRegistry()
+
+// donneesPage porte ce que la mise en page et le contenu ont en commun.
+type donneesPage struct {
+	Titre   string
+	Message string
+}
 
 // pageAccueil sert la page d'accueil.
 //
-// Le squelette répond avec un document écrit à la main : poser les gabarits
-// html/template et HTMX est le sujet de PATA-12. Ce que cette route prouve,
-// c'est que nos routes cohabitent avec celles de PocketBase.
+// Elle garde son message d'attente — la liste des recettes est PATA-13 —, mais
+// il passe désormais par les gabarits, et elle exerce les deux chemins de
+// rendu : une convention qu'aucune page n'emprunte n'est pas une convention.
 func pageAccueil(e *core.RequestEvent) error {
-	return e.HTML(http.StatusOK, document("Patachoo", "Le carnet de recettes est en construction."))
+	return rendre(e, "accueil.html", "accueil-corps.html", donneesPage{
+		Titre:   "Patachoo",
+		Message: "Le carnet de recettes est en construction.",
+	})
 }
 
-// document assemble un document HTML minimal mais valide.
+// rendre écrit soit le document complet, soit le seul fragment.
 //
-// Le titre et le corps sont échappés : ils viendront un jour de données, et
-// une page qui n'échappe pas ses entrées est une injection en attente.
-func document(titre, corps string) string {
-	var b strings.Builder
-	b.WriteString(`<!doctype html>` + "\n")
-	b.WriteString(`<html lang="fr">` + "\n")
-	b.WriteString(`<head>` + "\n")
-	b.WriteString(`<meta charset="utf-8">` + "\n")
-	b.WriteString(`<meta name="viewport" content="width=device-width, initial-scale=1">` + "\n")
-	b.WriteString(`<title>` + template.HTMLEscapeString(titre) + `</title>` + "\n")
-	b.WriteString(`</head>` + "\n")
-	b.WriteString(`<body>` + "\n")
-	b.WriteString(`<h1>` + template.HTMLEscapeString(titre) + `</h1>` + "\n")
-	b.WriteString(`<p>` + template.HTMLEscapeString(corps) + `</p>` + "\n")
-	b.WriteString(`</body>` + "\n")
-	b.WriteString(`</html>` + "\n")
-	return b.String()
+// C'est ici, et nulle part ailleurs, que se fait le choix entre les deux :
+// chaque route qui répond à HTMX rend un fragment, jamais la page entière —
+// une page complète renvoyée dans un hx-target produit des pages imbriquées.
+//
+// La convention que les pages suivantes reprennent :
+//
+//   - la mise en page passe toujours en premier à LoadFS, parce que Render
+//     exécute le gabarit nommé d'après le premier fichier du premier motif ;
+//   - un gabarit de page définit {{define "contenu"}} et n'est jamais premier ;
+//   - un bloc qu'une route peut renvoyer seul vit dans son propre fichier, au
+//     niveau racine, sans {{define}} autour. Chargé seul, un fichier réduit à
+//     un {{define}} rendrait une chaîne vide sans la moindre erreur.
+//
+// Le rendu passe par un tampon avant d'être écrit : une erreur de gabarit
+// remonte comme erreur et ne peut pas produire une demi-page déjà partie sur
+// le réseau.
+func rendre(e *core.RequestEvent, page, fragment string, donnees any) error {
+	motifs := []string{"vues/" + fragment}
+	if !estHTMX(e) {
+		motifs = []string{"vues/mise-en-page.html", "vues/" + page, "vues/" + fragment}
+	}
+
+	rendu, err := registre.LoadFS(vues, motifs...).Render(donnees)
+	if err != nil {
+		return err
+	}
+
+	return e.HTML(http.StatusOK, rendu)
+}
+
+// estHTMX dit si la requête vient de HTMX, qui se signale par un en-tête.
+func estHTMX(e *core.RequestEvent) bool {
+	return e.Request.Header.Get("HX-Request") == "true"
+}
+
+// assetsStatiques sert la feuille CSS et HTMX depuis nos propres fichiers.
+//
+// Le false passé à Static est délibéré : un asset absent doit être un 404, pas
+// la page d'accueil déguisée en fichier JavaScript.
+func assetsStatiques() func(*core.RequestEvent) error {
+	return apis.Static(apis.MustSubFS(statique, "statique"), false)
 }
