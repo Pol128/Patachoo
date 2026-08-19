@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
@@ -216,6 +217,26 @@ func TestAssetAbsentNestPasLaPageDAccueil(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "<html") {
 		t.Errorf("la page d'accueil a été servie à la place d'un 404 :\n%s", rec.Body.String())
+	}
+}
+
+// Le false n'est observable que si le système de fichiers porte un index.html
+// à servir en repli : sur nos seuls assets, les deux valeurs se ressemblent.
+// Ce test-là fait la différence, et c'est lui qui rougira le jour où quelqu'un
+// passera l'indexFallback à true.
+func TestAssetAbsentNeTombePasSurUnIndex(t *testing.T) {
+	fsys := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html>repli</html>")}}
+
+	e, rec := requete(t, http.MethodGet, "/statique/absent.js", nil)
+	e.Request.SetPathValue(apis.StaticWildcardParam, "absent.js")
+
+	err := servirAssets(fsys)(e)
+
+	if !errors.Is(err, router.ErrFileNotFound) {
+		t.Errorf("erreur %v, attendu router.ErrFileNotFound", err)
+	}
+	if corps := rec.Body.String(); strings.Contains(corps, "repli") {
+		t.Errorf("index.html servi en repli à la place d'un 404 : %q", corps)
 	}
 }
 
