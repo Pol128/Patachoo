@@ -1,0 +1,17 @@
+{
+  "cas": "@type peut être une chaîne ou un tableau ; ici la recette se double d'un article.",
+  "erreur": "",
+  "recette": {
+    "titre": "Soupe de cailloux du Perche",
+    "ingredients": [
+      "3 cailloux bien lavés",
+      "2 poireaux",
+      "1 navet"
+    ],
+    "etapes": [
+      "Mettre les cailloux dans l'eau froide.",
+      "Ajouter les légumes.",
+      "Laisser mijoter une heure."
+    ]
+  }
+}

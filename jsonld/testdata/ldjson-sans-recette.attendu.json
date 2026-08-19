@@ -1,0 +1,5 @@
+{
+  "cas": "Du JSON-LD, mais aucune entité Recipe : 8,7 % du corpus mesuré. Un article qui parle de recettes n'en est pas une.",
+  "erreur": "sans_recette",
+  "recette": null
+}

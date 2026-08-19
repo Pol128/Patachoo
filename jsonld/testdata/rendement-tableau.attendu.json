@@ -1,0 +1,17 @@
+{
+  "cas": "recipeYield en tableau : on retient la première entrée, sans chercher la plus jolie.",
+  "erreur": "",
+  "recette": {
+    "titre": "Cake aux olives et au thym",
+    "portions": "6",
+    "ingredients": [
+      "180 g de farine",
+      "150 g d'olives vertes",
+      "3 œufs"
+    ],
+    "etapes": [
+      "Mélanger les ingrédients secs.",
+      "Cuire 45 minutes à 170 °C."
+    ]
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "cas": "image en ImageObject : c'est url qu'il faut lire, pas l'objet entier.",
+  "erreur": "",
+  "recette": {
+    "titre": "Velouté de panais au cumin",
+    "image": "https://fourneaux-de-perlimpinpin.example/images/veloute-panais.jpg",
+    "ingredients": [
+      "600 g de panais",
+      "1 c. à c. de cumin"
+    ],
+    "etapes": [
+      "Cuire les panais dans le bouillon.",
+      "Mixer avec le cumin."
+    ]
+  }
+}

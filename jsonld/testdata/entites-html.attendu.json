@@ -1,0 +1,17 @@
+{
+  "cas": "Entités HTML dans le JSON : les sites en publient, l'utilisateur ne doit pas les lire brutes. Elles sont décodées.",
+  "erreur": "",
+  "recette": {
+    "titre": "Crème brûlée & éclats de nougatine",
+    "description": "Un dessert d'hiver, croquant & crémeux.",
+    "ingredients": [
+      "50 cl de crème",
+      "6 jaunes d'œufs",
+      "80 g de sucre"
+    ],
+    "etapes": [
+      "Infuser la vanille dans la crème.",
+      "Cuire au bain-marie."
+    ]
+  }
+}

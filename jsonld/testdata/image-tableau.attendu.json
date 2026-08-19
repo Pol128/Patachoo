@@ -1,0 +1,17 @@
+{
+  "cas": "image en tableau mêlant chaînes et objets : on retient la première, quelle que soit sa forme.",
+  "erreur": "",
+  "recette": {
+    "titre": "Clafoutis aux cerises de nulle part",
+    "image": "https://fourneaux-de-perlimpinpin.example/images/clafoutis-16x9.jpg",
+    "ingredients": [
+      "500 g de cerises",
+      "3 œufs",
+      "80 g de farine"
+    ],
+    "etapes": [
+      "Ranger les cerises dans le plat beurré.",
+      "Verser l'appareil et cuire 35 minutes."
+    ]
+  }
+}

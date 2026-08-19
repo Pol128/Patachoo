@@ -1,0 +1,17 @@
+{
+  "cas": "recipeInstructions en chaîne unique : les sauts de ligne séparent les étapes, les lignes vides sont ignorées.",
+  "erreur": "",
+  "recette": {
+    "titre": "Pain perdu des dimanches gris",
+    "ingredients": [
+      "6 tranches de pain rassis",
+      "2 œufs",
+      "30 cl de lait"
+    ],
+    "etapes": [
+      "Battre les œufs avec le lait.",
+      "Tremper le pain.",
+      "Dorer à la poêle."
+    ]
+  }
+}

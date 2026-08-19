@@ -1,0 +1,17 @@
+{
+  "cas": "recipeYield en texte : la mention est conservée telle quelle, pas réduite à un nombre.",
+  "erreur": "",
+  "recette": {
+    "titre": "Blanquette de tofu fumé",
+    "portions": "4 personnes",
+    "ingredients": [
+      "400 g de tofu fumé",
+      "3 carottes",
+      "20 cl de crème de soja"
+    ],
+    "etapes": [
+      "Saisir le tofu.",
+      "Mijoter avec les légumes 30 minutes."
+    ]
+  }
+}

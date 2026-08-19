@@ -1,0 +1,19 @@
+{
+  "cas": "La recette n'est pas à la racine : elle est une entité parmi d'autres dans @graph.",
+  "erreur": "",
+  "recette": {
+    "titre": "Gratin de courge à la sauge",
+    "description": "Un gratin de courge fondant, relevé de sauge fraîche.",
+    "ingredients": [
+      "800 g de courge butternut",
+      "12 feuilles de sauge",
+      "20 cl de crème entière",
+      "60 g de parmesan râpé"
+    ],
+    "etapes": [
+      "Peler la courge et la couper en cubes.",
+      "Faire revenir la sauge dans le beurre.",
+      "Enfourner 45 minutes à 180 °C."
+    ]
+  }
+}

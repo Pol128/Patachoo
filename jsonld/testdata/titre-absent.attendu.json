@@ -1,0 +1,5 @@
+{
+  "cas": "Une entité Recipe sans name : sans titre il n'y a pas de fiche à montrer, l'extraction échoue plutôt que d'inventer.",
+  "erreur": "titre_absent",
+  "recette": null
+}

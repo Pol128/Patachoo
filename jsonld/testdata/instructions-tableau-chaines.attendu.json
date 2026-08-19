@@ -1,0 +1,17 @@
+{
+  "cas": "recipeInstructions en tableau de chaînes — la forme la plus courante.",
+  "erreur": "",
+  "recette": {
+    "titre": "Salade tiède de lentilles vertes",
+    "ingredients": [
+      "250 g de lentilles vertes",
+      "1 échalote",
+      "1 c. à s. de moutarde"
+    ],
+    "etapes": [
+      "Cuire les lentilles 25 minutes.",
+      "Ciseler l'échalote.",
+      "Mélanger tiède avec la vinaigrette."
+    ]
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "cas": "Trois blocs ld+json sur la page : il faut parcourir tous les blocs, pas seulement le premier.",
+  "erreur": "",
+  "recette": {
+    "titre": "Riz au lait à la fleur d'oranger",
+    "ingredients": [
+      "150 g de riz rond",
+      "1 l de lait entier",
+      "1 c. à s. d'eau de fleur d'oranger"
+    ],
+    "etapes": [
+      "Cuire le riz dans le lait à feu doux.",
+      "Parfumer hors du feu."
+    ]
+  }
+}
