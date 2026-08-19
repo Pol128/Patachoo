@@ -1,0 +1,86 @@
+# Definition of Done
+
+Ce qu'il faut avoir fait pour dire qu'une tâche est terminée. Chaque point se
+vérifie par une commande ou par une question à réponse binaire — une DoD qu'on
+ne peut pas cocher est une intention, pas une définition.
+
+## 1. Ça compile et c'est propre
+
+```sh
+./verifie          # gofmt, go vet, go test, govulncheck
+```
+
+Le script échoue au premier manquement. C'est le minimum, pas la DoD complète :
+les points 2 à 5 ne s'automatisent pas.
+
+## 2. Tests unitaires
+
+La logique nouvelle est couverte, **cas d'échec compris**. Les cas d'échec sont
+la moitié du travail : l'import échouera sur un site sur quatre, et c'est ce
+comportement-là que l'utilisateur verra.
+
+**Pas de seuil de couverture chiffré.** Un pourcentage se gonfle sans effort et
+finit par mesurer le zèle plutôt que la qualité. La règle est celle-ci :
+
+> Retirer le comportement doit faire rougir un test, et un seul.
+
+Un test qui passe encore après qu'on a cassé ce qu'il prétend vérifier ne teste
+rien. Un comportement qui en fait rougir douze indique des tests qui se répètent.
+En cas de doute, casser volontairement la ligne concernée et relancer les tests :
+c'est trente secondes, et ça répond.
+
+## 3. Tests de sécurité
+
+Là où le sujet existe — et il existe plus souvent qu'on ne croit.
+
+- **SSRF.** L'import va chercher, *depuis le serveur*, une URL fournie par
+  l'utilisateur. Un test par plage refusée — `localhost`, `127.0.0.0/8`,
+  `169.254.0.0/16` (métadonnées cloud), `10.0.0.0/8`, `172.16.0.0/12`,
+  `192.168.0.0/16` — **après résolution DNS**, sinon un nom de domaine qui
+  pointe vers une IP privée passe au travers. Plus un test sur la redirection
+  qui tente d'y revenir, et un sur les schémas autres que `http`/`https`.
+  C'est le point le plus dangereux du produit.
+- **Échappement.** Tout ce qui vient d'un utilisateur ou d'un site tiers et
+  ressort dans une page a son test d'échappement. Une recette importée est du
+  contenu étranger par nature.
+- **Règles d'accès.** Les tests disent ce qu'un compte **ne peut pas** faire.
+  Les recettes sont partagées entre comptes : la règle qui protège l'auteur se
+  teste dans le sens du refus, pas seulement dans celui de l'autorisation.
+- **Limites.** Taille de réponse, délai, nombre de redirections. Une valeur
+  codée sans test finit augmentée « temporairement ».
+
+## 4. Dépendances et licences
+
+`govulncheck` passe — il est dans `./verifie`. Toute dépendance nouvelle
+**redistribuée** est déclarée dans `NOTICE`, avec sa licence. Pas d'en-tête de
+licence dans les fichiers source : `LICENSE` et `NOTICE` à la racine suffisent,
+c'est tranché.
+
+Et le garde-fou permanent : **aucune ligne reprise de Mealie ou Tandoor**
+(AGPL-3.0).
+
+## 5. Trace
+
+La tâche Vikunja passe en Done avec un commentaire qui dit **ce qui a été
+vérifié, et ce qui ne l'a pas été**. Un écart assumé et écrit vaut mieux qu'un
+critère silencieusement contourné : c'est ce commentaire qui permet de relire
+une décision six mois plus tard sans rouvrir le code.
+
+---
+
+## Ce qui a été tranché en écrivant ceci
+
+**Pas de `gosec`.** `go vet` et `govulncheck` couvrent le réel — erreurs de
+typage subtiles et CVE connues. `gosec` travaille par motifs et rendrait, sur
+une base de cette taille, surtout des faux positifs qu'on apprendrait vite à
+ignorer — c'est-à-dire le pire des deux mondes. À reconsidérer si le code de
+manipulation de fichiers et d'URL grossit.
+
+**Pas encore de CI**, donc la DoD s'applique à la main, et c'est sa faiblesse
+connue. Le point 5 est ce qui la rend vérifiable en attendant : le commentaire
+Vikunja est la trace. Poser la CI est une tâche à part entière (PATA-30).
+
+**Rétroactivité.** PATA-1, PATA-2 et PATA-5 ont été livrées le 19/08/2026 sous
+une version implicite de cette DoD : `gofmt`, `go vet`, tests unitaires, et un
+test d'échappement HTML. `govulncheck` n'avait pas été passé — il l'a été depuis,
+sans rien signaler. Rien à reprendre.
