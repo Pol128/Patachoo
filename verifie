@@ -1,0 +1,30 @@
+#!/bin/sh
+# Ce que la DoD demande de vérifiable par une commande (DOD.md §1).
+#
+# Échoue au premier manquement, et dit lequel. Volontairement bête : ce script
+# doit pouvoir être lu en entier avant d'être exécuté.
+set -eu
+
+echo "→ gofmt"
+mal_formates=$(gofmt -l .)
+if [ -n "$mal_formates" ]; then
+	echo "fichiers mal formatés :" >&2
+	echo "$mal_formates" >&2
+	echo "  corriger avec : gofmt -w ." >&2
+	exit 1
+fi
+
+echo "→ go vet"
+go vet ./...
+
+echo "→ go test"
+go test ./...
+
+echo "→ govulncheck"
+if [ "${SANS_RESEAU:-}" = "1" ]; then
+	echo "  sauté (SANS_RESEAU=1) — à repasser avant de clore la tâche"
+else
+	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+fi
+
+echo "✓ tout est vert"

@@ -17,8 +17,13 @@ L'interface d'administration répond sur `/_/`, l'API REST sur `/api/`.
 
 ```sh
 go test ./...                       # les tests, avant tout le reste
+./verifie                           # gofmt, vet, tests, govulncheck
 go build -o Patachoo .              # un binaire, rien d'autre à installer
 ```
+
+Ce qu'il faut avoir fait pour dire qu'une tâche est terminée est écrit dans
+[DOD.md](DOD.md) — tests unitaires, tests de sécurité, et la règle qui remplace
+un seuil de couverture.
 
 ## Ce que c'est, techniquement
 
