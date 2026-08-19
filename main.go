@@ -14,10 +14,19 @@ import (
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/plugins/migratecmd"
+
+	// Le schéma vit dans le dépôt : l'importer suffit à l'enregistrer.
+	_ "github.com/Pol128/Patachoo/migrations"
 )
 
 func main() {
 	app := pocketbase.New()
+
+	// Automigrate à false : les migrations s'écrivent à la main et se relisent
+	// en revue. Une migration générée par une manipulation dans l'interface
+	// d'administration décrirait un schéma que personne n'a décidé.
+	migratecmd.MustRegister(app, app.RootCmd, migratecmd.Config{Automigrate: false})
 
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
 		se.Router.GET("/", pageAccueil)
