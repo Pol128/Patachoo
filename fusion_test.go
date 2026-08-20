@@ -122,19 +122,22 @@ func sans(slugs []string, exclu string) []string {
 // executeLaCommande monte une racine cobra neuve, y branche nos commandes et
 // exécute les arguments donnés. La sortie standard et la sortie d'erreur sont
 // capturées ensemble : le compte rendu se lit d'un bloc.
-func executeLaCommande(t *testing.T, app core.App, args ...string) (string, error) {
+//
+// aEchoue rend le témoin que brancheLesCommandes laisse à main() : c'est lui
+// qui porte le code de retour du binaire.
+func executeLaCommande(t *testing.T, app core.App, args ...string) (sortie string, aEchoue bool, err error) {
 	t.Helper()
 
 	racine := &cobra.Command{Use: "patachoo"}
-	brancheLesCommandes(app, racine)
+	echoue := brancheLesCommandes(app, racine)
 
-	var sortie bytes.Buffer
-	racine.SetOut(&sortie)
-	racine.SetErr(&sortie)
+	var tampon bytes.Buffer
+	racine.SetOut(&tampon)
+	racine.SetErr(&tampon)
 	racine.SetArgs(args)
 
-	err := racine.Execute()
-	return sortie.String(), err
+	err = racine.Execute()
+	return tampon.String(), echoue(), err
 }
 
 // --- fusionnerTags -------------------------------------------------------
@@ -346,7 +349,7 @@ func TestLaCommandeNecritRienSansAppliquer(t *testing.T) {
 	tagEnregistre(t, app, "b")
 	recette := recetteAvecTags(t, app, "intacte", a)
 
-	sortie, err := executeLaCommande(t, app, "tags", "fusionner", "a", "b")
+	sortie, _, err := executeLaCommande(t, app, "tags", "fusionner", "a", "b")
 	if err != nil {
 		t.Fatalf("commande en erreur : %v\n%s", err, sortie)
 	}
@@ -369,9 +372,14 @@ func TestLaCommandeEcritAvecAppliquer(t *testing.T) {
 	tagEnregistre(t, app, "b")
 	recette := recetteAvecTags(t, app, "fusionnée", a)
 
-	sortie, err := executeLaCommande(t, app, "tags", "fusionner", "a", "b", "--appliquer")
+	sortie, aEchoue, err := executeLaCommande(t, app, "tags", "fusionner", "a", "b", "--appliquer")
 	if err != nil {
 		t.Fatalf("commande en erreur : %v\n%s", err, sortie)
+	}
+	// Le sens qui manque au test du slug inconnu : une fusion qui aboutit ne
+	// doit pas faire sortir le binaire en erreur.
+	if aEchoue {
+		t.Error("une fusion réussie est signalée comme un échec au binaire")
 	}
 
 	if slugs := slugsDeLaRecette(t, app, recette.Id); !memeSuite(slugs, []string{"b"}) {
@@ -392,11 +400,17 @@ func TestLaCommandeRendUneErreurSurUnSlugInconnu(t *testing.T) {
 
 	tagEnregistre(t, app, "b")
 
-	sortie, err := executeLaCommande(t, app, "tags", "fusionner", "absent", "b", "--appliquer")
+	sortie, aEchoue, err := executeLaCommande(t, app, "tags", "fusionner", "absent", "b", "--appliquer")
 	if err == nil {
 		t.Fatalf("un slug inconnu n'a pas fait échouer la commande :\n%s", sortie)
 	}
 	if !strings.Contains(err.Error(), "absent") {
 		t.Errorf("l'erreur ne nomme pas le slug fautif : %v", err)
+	}
+	// PocketBase ignore délibérément l'erreur rendue par la racine cobra :
+	// sans ce témoin, une fusion refusée s'arrêterait sur un code de retour
+	// nul, et le script qui l'appelle la croirait passée.
+	if !aEchoue {
+		t.Error("l'échec n'est pas signalé au binaire : le code de retour resterait nul")
 	}
 }
