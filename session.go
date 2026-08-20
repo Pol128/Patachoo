@@ -18,6 +18,12 @@ import (
 // compatibilité que ce cookie n'a pas.
 const nomCookieSession = "patachoo_session"
 
+// cleSessionPorteeParLeCookie marque, dans le magasin de la requête, que c'est
+// notre cookie qui a fourni le jeton d'authentification — et non un en-tête que
+// le client portait déjà. Un marqueur plutôt qu'une relecture du cookie : la
+// présence d'un cookie ne dit pas qu'il a authentifié quoi que ce soit.
+const cleSessionPorteeParLeCookie = "patachooSessionPorteeParLeCookie"
+
 // Les deux priorités qui font tout tenir. Les handlers sont triés par priorité
 // croissante (tools/hook/hook.go), donc :
 //
@@ -51,6 +57,7 @@ func recopieLeCookieDansLEnTete() *hook.Handler[*core.RequestEvent] {
 			if e.Request.Header.Get("Authorization") == "" {
 				if cookie, err := e.Request.Cookie(nomCookieSession); err == nil && cookie.Value != "" {
 					e.Request.Header.Set("Authorization", cookie.Value)
+					e.Set(cleSessionPorteeParLeCookie, cookie.Value)
 				}
 			}
 			return e.Next()
@@ -83,10 +90,14 @@ func sessionARenouveler(e *core.RequestEvent) (string, time.Duration, bool) {
 		return "", 0, false
 	}
 
-	// Seule une session portée par notre cookie se renouvelle : un client qui
-	// gère lui-même son jeton dans l'en-tête n'a que faire d'un Set-Cookie.
-	cookie, err := e.Request.Cookie(nomCookieSession)
-	if err != nil || cookie.Value == "" {
+	// Seule une session portée par notre cookie se renouvelle, et c'est le
+	// marqueur qui le dit — pas la présence d'un cookie. Une requête peut
+	// porter les deux : le cookie du compte A et l'en-tête Authorization du
+	// compte B. L'en-tête l'emporte alors, e.Auth est B, et décider sur le
+	// jeton de A pour réémettre celui de B reposerait la session du navigateur
+	// sur un compte que son cookie ne désignait pas.
+	jetonDuCookie, porteeParLeCookie := e.Get(cleSessionPorteeParLeCookie).(string)
+	if !porteeParLeCookie || jetonDuCookie == "" {
 		return "", 0, false
 	}
 
@@ -96,12 +107,12 @@ func sessionARenouveler(e *core.RequestEvent) (string, time.Duration, bool) {
 	// cette borne, puis la prolongerait de renouvellement en renouvellement.
 	// PocketBase applique la même règle sur sa propre route de renouvellement
 	// (apis/record_auth_refresh.go).
-	if !estRenouvelable(cookie.Value) {
+	if !estRenouvelable(jetonDuCookie) {
 		return "", 0, false
 	}
 
 	duree := e.Auth.Collection().AuthToken.DurationTime()
-	if duree <= 0 || !aPasseLaMiVie(cookie.Value, duree) {
+	if duree <= 0 || !aPasseLaMiVie(jetonDuCookie, duree) {
 		return "", 0, false
 	}
 
