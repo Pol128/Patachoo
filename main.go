@@ -11,6 +11,7 @@ package main
 
 import (
 	"log"
+	"os"
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
@@ -42,7 +43,7 @@ func main() {
 
 	// Avant app.Start() : c'est Execute() qui amorce l'application puis exécute
 	// la sous-commande demandée, laquelle dispose donc d'une base ouverte.
-	brancheLesCommandes(app, app.RootCmd)
+	commandeAEchoue := brancheLesCommandes(app, app.RootCmd)
 
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
 		se.Router.GET("/", pageAccueil)
@@ -59,5 +60,11 @@ func main() {
 
 	if err := app.Start(); err != nil {
 		log.Fatal(err)
+	}
+
+	// PocketBase avale l'erreur rendue par la sous-commande : sans ce témoin,
+	// une fusion refusée sortirait sur zéro et passerait pour réussie.
+	if commandeAEchoue() {
+		os.Exit(1)
 	}
 }

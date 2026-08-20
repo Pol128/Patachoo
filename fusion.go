@@ -4,27 +4,43 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/spf13/cobra"
 )
 
-// brancheLesCommandes ajoute nos sous-commandes à la racine du binaire.
+// brancheLesCommandes ajoute nos sous-commandes à la racine du binaire et rend
+// un témoin : interrogé après l'exécution, il dit si une commande a échoué.
 //
 // PocketBase amorce l'application avant d'exécuter la commande : une
 // sous-commande dispose donc d'un core.App complet, base ouverte, sans rien
-// monter de plus.
-func brancheLesCommandes(app core.App, racine *cobra.Command) {
-	racine.AddCommand(commandeTags(app))
+// monter de plus. En revanche, Execute() ignore délibérément l'erreur rendue
+// par la racine cobra — « leave to the commands to decide whether to print
+// their error » — et app.Start() ne rend donc rien à main(). Sans ce témoin,
+// une fusion refusée s'arrêterait sur un code de retour nul, et le script qui
+// l'appelle la croirait passée.
+func brancheLesCommandes(app core.App, racine *cobra.Command) (aEchoue func() bool) {
+	echec := false
+	retient := func(err error) error {
+		if err != nil {
+			echec = true
+		}
+		return err
+	}
+
+	racine.AddCommand(commandeTags(app, retient))
+
+	return func() bool { return echec }
 }
 
-func commandeTags(app core.App) *cobra.Command {
+func commandeTags(app core.App, retient func(error) error) *cobra.Command {
 	tags := &cobra.Command{
 		Use:   "tags",
 		Short: "Entretien des tags.",
 	}
-	tags.AddCommand(commandeFusionner(app))
+	tags.AddCommand(commandeFusionner(app, retient))
 	return tags
 }
 
@@ -32,7 +48,7 @@ func commandeTags(app core.App) *cobra.Command {
 // tout compte connecté laisserait n'importe quel utilisateur réécrire les tags
 // de tout le monde, et il n'y a aujourd'hui aucun modèle de rôles où poser
 // cette autorisation. L'accès d'une commande est celui du shell de la machine.
-func commandeFusionner(app core.App) *cobra.Command {
+func commandeFusionner(app core.App, retient func(error) error) *cobra.Command {
 	var appliquer bool
 
 	cmd := &cobra.Command{
@@ -46,29 +62,7 @@ func commandeFusionner(app core.App) *cobra.Command {
 		// l'aide complète par-dessus le message noierait ce dernier.
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			source, cible := args[0], args[1]
-
-			_, _, recettes, err := fusionPrevue(app, source, cible)
-			if err != nil {
-				return err
-			}
-
-			sortie := cmd.OutOrStdout()
-			fmt.Fprintf(sortie, "fusion du tag « %s » vers « %s » : %d recette(s) concernée(s).\n",
-				source, cible, len(recettes))
-
-			if !appliquer {
-				fmt.Fprintln(sortie, "rien n'a été écrit — relancer avec --appliquer pour appliquer la fusion.")
-				return nil
-			}
-
-			modifiees, err := fusionnerTags(app, source, cible)
-			if err != nil {
-				return err
-			}
-			fmt.Fprintf(sortie, "fusion appliquée : %d recette(s) modifiée(s), le tag « %s » a été supprimé.\n",
-				modifiees, source)
-			return nil
+			return retient(rendCompteDeLaFusion(app, cmd.OutOrStdout(), args[0], args[1], appliquer))
 		},
 	}
 
@@ -76,6 +70,33 @@ func commandeFusionner(app core.App) *cobra.Command {
 		"écrire les modifications ; sans ce drapeau, rien n'est modifié")
 
 	return cmd
+}
+
+// rendCompteDeLaFusion annonce l'ampleur de la fusion, puis l'applique si on
+// le lui demande. Le compte rendu précède l'écriture : une opération
+// irréversible qui s'exécute au premier essai est une opération qu'on regrette.
+func rendCompteDeLaFusion(app core.App, sortie io.Writer, source, cible string, appliquer bool) error {
+	_, _, recettes, err := fusionPrevue(app, source, cible)
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintf(sortie, "fusion du tag « %s » vers « %s » : %d recette(s) concernée(s).\n",
+		source, cible, len(recettes))
+
+	if !appliquer {
+		fmt.Fprintln(sortie, "rien n'a été écrit — relancer avec --appliquer pour appliquer la fusion.")
+		return nil
+	}
+
+	modifiees, err := fusionnerTags(app, source, cible)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(sortie, "fusion appliquée : %d recette(s) modifiée(s), le tag « %s » a été supprimé.\n",
+		modifiees, source)
+
+	return nil
 }
 
 // fusionnerTags reporte les recettes du tag source sur le tag cible, supprime
