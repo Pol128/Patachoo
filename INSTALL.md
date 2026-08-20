@@ -74,10 +74,14 @@ source de vérité.
 > contient. Une archive envoyée sur S3 porte donc les identifiants de ce même
 > S3 : quiconque met la main sur le bucket obtient de quoi y revenir.
 >
-> Pour les chiffrer, lancer le serveur avec une clé de 32 caractères :
+> Pour les chiffrer, lancer le serveur avec une clé de 32 caractères. Cette clé
+> se **tire au hasard**, et elle est **propre à votre installation** : une clé
+> recopiée depuis une documentation est connue de tous ceux qui l'ont lue, et le
+> chiffrement ne protège alors plus rien tout en paraissant actif.
 >
 > ```sh
-> export PATACHOO_CLE_REGLAGES='une-chaine-de-32-caracteres-pile'
+> export PATACHOO_CLE_REGLAGES=$(head -c 24 /dev/urandom | base64 | cut -c1-32)
+> echo "$PATACHOO_CLE_REGLAGES"   # à conserver ailleurs qu'ici, avant de continuer
 > ./Patachoo serve --encryptionEnv=PATACHOO_CLE_REGLAGES
 > ```
 >
