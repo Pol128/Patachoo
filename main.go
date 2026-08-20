@@ -11,6 +11,7 @@ package main
 
 import (
 	"log"
+	"os"
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
@@ -21,17 +22,23 @@ import (
 )
 
 func main() {
+	// La sonde du HEALTHCHECK, traitée avant tout le reste. Enregistrée sur
+	// app.RootCmd, elle serait une commande connue de PocketBase, et
+	// app.Start() amorcerait l'application entière avant de la lancer : data.db
+	// et auxiliary.db ouvertes puis jamais refermées, migrations système
+	// jouées, et pb_data/.pb_temp_to_delete effacé — le répertoire de travail
+	// d'une sauvegarde ou d'une restauration en cours. Toutes les trente
+	// secondes, sur le volume vivant, pour un GET sur la boucle locale.
+	if santeDemandee(os.Args[1:]) {
+		os.Exit(lanceSante(os.Args[1:], os.Stderr))
+	}
+
 	app := pocketbase.New()
 
 	// Automigrate à false : les migrations s'écrivent à la main et se relisent
 	// en revue. Une migration générée par une manipulation dans l'interface
 	// d'administration décrirait un schéma que personne n'a décidé.
 	migratecmd.MustRegister(app, app.RootCmd, migratecmd.Config{Automigrate: false})
-
-	// La sonde du HEALTHCHECK de l'image Docker. Elle vit sur RootCmd, comme
-	// serve ou migrate : l'image est un scratch, sans shell ni curl, donc le
-	// seul exécutable qu'elle puisse appeler est ce binaire.
-	app.RootCmd.AddCommand(commandeSante())
 
 	// Le pack de langue et le lexique d'aliments sont lus ici, une fois, et
 	// nulle part ailleurs : les recharger sur le chemin d'une ligne mettrait

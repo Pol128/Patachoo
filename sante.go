@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -16,6 +15,20 @@ import (
 // curl, ni wget, ni /bin/sh. Le HEALTHCHECK ne peut s'appuyer que sur le
 // binaire lui-même — d'où cette sous-commande, qui interroge l'application
 // comme le ferait un client extérieur, par sa route publique de santé.
+//
+// Elle vit délibérément hors de app.RootCmd, et main() la traite avant tout le
+// reste : une commande connue de PocketBase est amorcée par app.Start() avant
+// d'être lancée — data.db et auxiliary.db ouvertes, migrations système jouées,
+// puis pb_data/.pb_temp_to_delete effacé, alors que ce répertoire porte
+// l'archive d'une sauvegarde ou l'extraction d'une restauration en cours. Un
+// GET sur la boucle locale toutes les trente secondes n'a besoin de rien de
+// tout cela, et n'a surtout pas à écrire dans le volume qu'il surveille.
+
+// nomCommandeSante est le nom qu'appelle le HEALTHCHECK de l'image. Le changer
+// ici sans le changer dans le Dockerfile rendrait le conteneur « unhealthy »
+// alors qu'il répond : c'est TestSanteNeTouchePasAuRepertoireDeDonnees, qui
+// lance le binaire par ce nom-là, qui tient la couture entre les deux.
+const nomCommandeSante = "healthcheck"
 
 const (
 	// adresseSanteDefaut est celle que sert le CMD de l'image. La sonde
@@ -32,26 +45,46 @@ const (
 	delaiSanteDefaut = 3 * time.Second
 )
 
-// commandeSante construit la sous-commande `patachoo healthcheck`.
-//
-// Elle sort par os.Exit et non par une erreur rendue : PocketBase lance
-// RootCmd.Execute() dans une goroutine et jette son erreur — « leave to the
-// commands to decide whether to print their error ». Une commande qui se
-// contenterait de rendre une erreur sortirait donc avec le code 0, et le
-// HEALTHCHECK dirait « sain » quoi qu'il arrive.
-func commandeSante() *cobra.Command {
+// santeDemandee dit si les arguments du processus désignent la sonde. C'est le
+// seul aiguillage : tout le reste part chez PocketBase, comme avant.
+func santeDemandee(args []string) bool {
+	return len(args) > 0 && args[0] == nomCommandeSante
+}
+
+// lanceSante exécute la sonde sur les arguments du processus — le nom de la
+// commande compris, comme os.Args[1:] les donne — et rend le code de sortie.
+func lanceSante(args []string, journal io.Writer) int {
+	// 1 par défaut : une erreur d'analyse des drapeaux ne doit pas laisser
+	// passer un « sain » qui n'a jamais été mesuré.
+	code := 1
+
+	cmd := commandeSante(&code)
+	cmd.SetArgs(args[1:])
+	cmd.SetOut(journal)
+	cmd.SetErr(journal)
+
+	if err := cmd.Execute(); err != nil {
+		return 1
+	}
+	return code
+}
+
+// commandeSante construit la sous-commande `patachoo healthcheck`. Elle écrit
+// le code de sortie dans code plutôt que de le rendre : cobra ne rapporte que
+// des erreurs, et un échec de sonde n'en est pas une.
+func commandeSante(code *int) *cobra.Command {
 	var adresse string
 	var delai time.Duration
 
 	cmd := &cobra.Command{
-		Use:   "healthcheck",
+		Use:   nomCommandeSante,
 		Short: "Interroge /api/health et sort 0 si l'application répond",
 		Long: "Sonde de santé du conteneur : un GET sur /api/health de l'adresse\n" +
 			"donnée, code de sortie 0 si l'application répond 200, non nul sinon.\n" +
 			"C'est ce que lance le HEALTHCHECK de l'image Docker, qui n'a pas de\n" +
 			"shell pour appeler curl.",
 		Run: func(cmd *cobra.Command, _ []string) {
-			os.Exit(codeSante(adresse, delai, cmd.ErrOrStderr()))
+			*code = codeSante(adresse, delai, cmd.ErrOrStderr())
 		},
 	}
 
@@ -59,6 +92,14 @@ func commandeSante() *cobra.Command {
 		"adresse hôte:port à interroger")
 	cmd.Flags().DurationVar(&delai, "delai", delaiSanteDefaut,
 		"délai au-delà duquel la sonde renonce")
+
+	// --dir est celui de PocketBase, et la sonde ne s'en sert pas : elle fait
+	// un GET, elle n'ouvre pas la base. Il est accepté pour qu'une habitude —
+	// `patachoo healthcheck --dir=/pb_data` — ne devienne pas une erreur, et
+	// déclaré plutôt que toléré en masse pour qu'un drapeau mal orthographié
+	// reste, lui, une erreur.
+	cmd.Flags().String("dir", "",
+		"accepté et ignoré : la sonde ne lit pas le répertoire de données")
 
 	return cmd
 }
