@@ -34,12 +34,14 @@ func connexion(e *core.RequestEvent) error {
 
 	compte, err := e.App.FindAuthRecordByEmail("users", courriel)
 	if err != nil || !compte.ValidatePassword(motDePasse) {
-		// Ni le courriel saisi ni le mot de passe ne sont renvoyés à la page :
-		// le second n'a rien à faire dans du HTML, fût-il le sien.
-		return rendre(e, "connexion.html", "connexion-corps.html", donneesPage{
-			Titre:   "Connexion — Patachoo",
-			Message: messageEchecConnexion,
-		})
+		return echecDeConnexion(e)
+	}
+
+	// Les identifiants sont bons ; reste à savoir si la collection autorise
+	// cette connexion-là. Même refus que ci-dessus : dire lequel des deux a
+	// échoué renseignerait sur l'existence du compte.
+	if !laConnexionEstAutorisee(e, compte) {
+		return echecDeConnexion(e)
 	}
 
 	jeton, err := compte.NewAuthToken()
@@ -49,6 +51,54 @@ func connexion(e *core.RequestEvent) error {
 	poseLeCookieDeSession(e, cookieDeSession(jeton, compte.Collection().AuthToken.DurationTime()))
 
 	return e.Redirect(http.StatusSeeOther, "/")
+}
+
+// laConnexionEstAutorisee applique les deux contrôles que PocketBase pose sur
+// sa propre route d'authentification, et que celle-ci, écrite à la main,
+// contournerait sans eux.
+//
+// PasswordAuth.Enabled est l'interrupteur de l'administration
+// (apis/record_auth_with_password.go) : fermé, il doit couper cette page-ci
+// aussi, et pas seulement l'API REST.
+//
+// AuthRule dit quels comptes ont le droit d'ouvrir une session — non vérifié,
+// suspendu, restreint par une règle de collection. PocketBase ne la lit qu'ici,
+// à l'authentification (apis/record_helpers.go, recordAuthResponse), et jamais
+// au chargement du jeton : un jeton émis en la violant resterait valable
+// jusqu'à son échéance, cinq jours durant.
+//
+// Le doute vaut refus : une règle illisible ferme la porte plutôt que de
+// l'ouvrir en silence.
+func laConnexionEstAutorisee(e *core.RequestEvent, compte *core.Record) bool {
+	collection := compte.Collection()
+	if !collection.PasswordAuth.Enabled {
+		return false
+	}
+
+	infos, err := e.RequestInfo()
+	if err != nil {
+		e.App.Logger().Error("informations de requête illisibles", "erreur", err)
+		return false
+	}
+
+	autorise, err := e.App.CanAccessRecord(compte, infos, collection.AuthRule)
+	if err != nil {
+		e.App.Logger().Error("règle d'authentification inapplicable", "erreur", err)
+		return false
+	}
+	return autorise
+}
+
+// echecDeConnexion réaffiche le formulaire avec le seul message qu'un échec
+// produise.
+//
+// Ni le courriel saisi ni le mot de passe ne sont renvoyés à la page : le
+// second n'a rien à faire dans du HTML, fût-il le sien.
+func echecDeConnexion(e *core.RequestEvent) error {
+	return rendre(e, "connexion.html", "connexion-corps.html", donneesPage{
+		Titre:   "Connexion — Patachoo",
+		Message: messageEchecConnexion,
+	})
 }
 
 // deconnexion efface le cookie et renvoie à l'accueil.

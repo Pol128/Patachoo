@@ -90,6 +90,16 @@ func sessionARenouveler(e *core.RequestEvent) (string, time.Duration, bool) {
 		return "", 0, false
 	}
 
+	// Un jeton non renouvelable garde la borne choisie à son émission : c'est
+	// le cas des jetons statiques de l'impersonation, émis pour quelques
+	// minutes. Le remplacer par un jeton ordinaire de cinq jours effacerait
+	// cette borne, puis la prolongerait de renouvellement en renouvellement.
+	// PocketBase applique la même règle sur sa propre route de renouvellement
+	// (apis/record_auth_refresh.go).
+	if !estRenouvelable(cookie.Value) {
+		return "", 0, false
+	}
+
 	duree := e.Auth.Collection().AuthToken.DurationTime()
 	if duree <= 0 || !aPasseLaMiVie(cookie.Value, duree) {
 		return "", 0, false
@@ -101,6 +111,24 @@ func sessionARenouveler(e *core.RequestEvent) (string, time.Duration, bool) {
 		return "", 0, false
 	}
 	return jeton, duree, true
+}
+
+// estRenouvelable lit la revendication que PocketBase pose à l'émission :
+// vraie sur un jeton ordinaire (NewAuthToken), fausse sur un jeton statique
+// (NewStaticAuthToken). Absente, ou d'un autre type que le booléen JSON qu'y
+// écrit core/record_tokens.go, elle vaut refus — un jeton dont on ne sait rien
+// ne se prolonge pas.
+//
+// La signature n'est pas revérifiée ici, pour la même raison que dans
+// aPasseLaMiVie.
+func estRenouvelable(jeton string) bool {
+	revendications, err := security.ParseUnverifiedJWT(jeton)
+	if err != nil {
+		return false
+	}
+
+	renouvelable, estUnBooleen := revendications[core.TokenClaimRefreshable].(bool)
+	return estUnBooleen && renouvelable
 }
 
 // aPasseLaMiVie dit si le jeton a consommé plus de la moitié de sa vie.
