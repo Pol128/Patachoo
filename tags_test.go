@@ -7,8 +7,6 @@ import (
 	"testing"
 
 	"github.com/pocketbase/pocketbase/core"
-
-	_ "github.com/Pol128/Patachoo/migrations"
 )
 
 // baseNeuve monte une base vide, y branche nos hooks puis applique les
