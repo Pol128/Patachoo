@@ -472,6 +472,29 @@ func TestLEnTetePorteLeCompteConnecte(t *testing.T) {
 	}
 }
 
+// DOD.md §3 : le nom d'un compte ressort dans l'en-tête de chaque page, et
+// rien ne dit qu'il a été saisi de bonne foi. Le test porte sur le HTML rendu,
+// pas sur un appel d'échappement.
+func TestLEnTeteEchappeLeNomDuCompte(t *testing.T) {
+	app, mux := serveurDeTest(t)
+
+	compte := compteDeTest(t, app)
+	compte.Set("name", `<script>alert(1)</script>`)
+	if err := app.Save(compte); err != nil {
+		t.Fatalf("renommage du compte : %v", err)
+	}
+
+	cookie := cookieDe(t, seConnecte(t, mux, courrielDeTest, motDePasseDeTest))
+	corps := avecCookie(mux, http.MethodGet, "/", cookie).Body.String()
+
+	if strings.Contains(corps, "<script>alert(1)</script>") {
+		t.Errorf("nom de compte non échappé :\n%s", corps)
+	}
+	if !strings.Contains(corps, "&lt;script&gt;alert(1)&lt;/script&gt;") {
+		t.Errorf("nom de compte absent de l'en-tête :\n%s", corps)
+	}
+}
+
 func TestLEnTeteProposeLaConnexionAuVisiteur(t *testing.T) {
 	_, mux := serveurDeTest(t)
 
