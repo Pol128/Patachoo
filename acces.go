@@ -52,9 +52,13 @@ func poseLAuteur(enregistrement *core.Record, compte *core.Record) {
 // droit de modifier n'importe quelle recette. Sans ce hook, il s'attribue
 // celle d'un autre, puis la supprime — et la règle de suppression ne protège
 // plus rien.
+//
+// Sans exception, superuser compris. La création en a une, par nécessité :
+// l'identifiant d'un superuser ne désigne aucun compte de users, et la
+// relation serait refusée. Ici il n'y a rien à contourner — réécrire une
+// valeur déjà enregistrée ne peut pas échouer. Une recette s'attribue à sa
+// création, et là seulement.
 func restaureLAuteur(e *core.RecordRequestEvent) error {
-	if e.Auth == nil || !e.Auth.IsSuperuser() {
-		e.Record.Set(champAuteur, e.Record.Original().GetString(champAuteur))
-	}
+	e.Record.Set(champAuteur, e.Record.Original().GetString(champAuteur))
 	return e.Next()
 }
