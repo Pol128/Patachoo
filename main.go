@@ -15,6 +15,7 @@ import (
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/plugins/migratecmd"
+	"github.com/pocketbase/pocketbase/tools/router"
 
 	// Le schéma vit dans le dépôt : l'importer suffit à l'enregistrer.
 	_ "github.com/Pol128/Patachoo/migrations"
@@ -41,12 +42,7 @@ func main() {
 	brancheLesHooks(app, analyseur)
 
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
-		se.Router.GET("/", pageAccueil)
-		se.Router.POST("/api/import", importDepuisURL)
-
-		// Nos propres assets, embarqués dans le binaire : ni CDN, ni domaine
-		// tiers. Patachoo doit fonctionner sur un réseau coupé d'Internet.
-		se.Router.GET("/statique/{path...}", assetsStatiques())
+		brancheLesRoutes(se.Router)
 
 		// se.Next() laisse la main aux routes de PocketBase : sans lui,
 		// l'interface d'administration et l'API REST ne répondent plus.
@@ -56,4 +52,23 @@ func main() {
 	if err := app.Start(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// brancheLesRoutes pose nos middlewares et nos routes sur le routeur.
+//
+// À part de OnServe pour être montable dans un test : c'est l'ordre des
+// middlewares qui fait tenir la session, et un test qui rebâtirait son propre
+// montage ne vérifierait que lui-même.
+func brancheLesRoutes(routeur *router.Router[*core.RequestEvent]) {
+	brancheLaSession(routeur)
+
+	routeur.GET("/", pageAccueil)
+	routeur.GET("/connexion", pageConnexion)
+	routeur.POST("/connexion", connexion)
+	routeur.POST("/deconnexion", deconnexion)
+	routeur.POST("/api/import", importDepuisURL)
+
+	// Nos propres assets, embarqués dans le binaire : ni CDN, ni domaine
+	// tiers. Patachoo doit fonctionner sur un réseau coupé d'Internet.
+	routeur.GET("/statique/{path...}", assetsStatiques())
 }

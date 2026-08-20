@@ -154,8 +154,28 @@ func attributsDeSession(t *testing.T, cookie *http.Cookie) {
 	}
 }
 
-// journaux vide le tampon du journal et rend tout ce qu'il a écrit.
+// journaux rend tout ce que le journal a écrit, ou "" au bout de deux
+// secondes.
+//
+// PocketBase journalise chaque requête dans une goroutine détachée
+// (routine.FireAndForget), puis accumule les lignes dans un tampon : lire une
+// seule fois, tout de suite, rendrait un journal vide et un test qui ne prouve
+// rien. D'où l'attente — bornée, et qui se termine dès la première ligne.
 func journaux(t *testing.T, app core.App) string {
+	t.Helper()
+
+	limite := time.Now().Add(2 * time.Second)
+	for {
+		ecrit := journalEcrit(t, app)
+		if ecrit != "" || time.Now().After(limite) {
+			return ecrit
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// journalEcrit vide le tampon du journal et rend ce qui est en base.
+func journalEcrit(t *testing.T, app core.App) string {
 	t.Helper()
 
 	if tampon, ok := app.Logger().Handler().(*logger.BatchHandler); ok {

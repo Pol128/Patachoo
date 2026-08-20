@@ -1,0 +1,9 @@
+<h1>Connexion</h1>
+{{if .Message}}<p class="erreur" role="alert">{{.Message}}</p>{{end}}
+<form method="post" action="/connexion">
+<label for="courriel">Courriel</label>
+<input type="email" id="courriel" name="courriel" autocomplete="username" required>
+<label for="mot-de-passe">Mot de passe</label>
+<input type="password" id="mot-de-passe" name="mot-de-passe" autocomplete="current-password" required>
+<button type="submit">Se connecter</button>
+</form>

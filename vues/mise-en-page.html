@@ -14,6 +14,14 @@
 <a href="/recettes">Recettes</a>
 <a href="/recettes/nouvelle">Nouvelle recette</a>
 </nav>
+{{with .Utilisateur}}
+<div class="compte">
+<span>Connecté en tant que {{.Nom}}</span>
+<form method="post" action="/deconnexion"><button type="submit">Déconnexion</button></form>
+</div>
+{{else}}
+<div class="compte"><a href="/connexion">Connexion</a></div>
+{{end}}
 </header>
 <main>{{template "contenu" .}}</main>
 <footer>Patachoo — carnet de recettes</footer>
