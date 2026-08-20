@@ -429,6 +429,39 @@ func TestUneSessionPorteeParLEnTeteNestPasRenouvelee(t *testing.T) {
 	}
 }
 
+// La variante que le garde « un cookie est présent » ne couvre pas : le cookie
+// est bien là, mais ce n'est pas lui qui a authentifié la requête.
+//
+// Le renouvellement décide sur le jeton du cookie et réémet pour e.Auth. Quand
+// les deux ne désignent pas le même compte — cookie de A, en-tête Authorization
+// de B —, la recopie ne supplante rien, e.Auth est B, et la réponse reposerait
+// la session du navigateur sur un jeton de B, Path=/ et cinq jours. Le cookie
+// de A aurait suffi à faire déposer celui d'un autre.
+func TestUnCookieNeFaitPasRenouvelerLaSessionDeLEnTete(t *testing.T) {
+	app, mux := serveurDeTest(t, sonde)
+	porteur := compteDeTest(t, app)
+	autre := creeCompte(t, app, "autre@exemple.fr", "Autre")
+
+	// Sous la mi-vie, et renouvelable : tout ce que le renouvellement demande
+	// d'un cookie, pour qu'il ne reste plus que l'identité en cause.
+	court := jetonRenouvelableCourt(t, app, porteur, time.Minute)
+	jetonDeLAutre, err := autre.NewAuthToken()
+	if err != nil {
+		t.Fatalf("émission du jeton : %v", err)
+	}
+
+	rec := avecEnTete(mux, http.MethodGet, "/sonde", jetonDeLAutre,
+		&http.Cookie{Name: nomCookieSession, Value: court})
+
+	if rec.Body.String() != autre.Id {
+		t.Fatalf("la sonde a reconnu %q, attendu %q", rec.Body.String(), autre.Id)
+	}
+	if pose := cookieEventuelDe(rec); pose != nil {
+		t.Errorf("la réponse repose la session du navigateur sur un jeton qui n'est pas celui du cookie : le compte %q y a gagné la session de %q",
+			porteur.Id, autre.Id)
+	}
+}
+
 // --- La page de connexion -------------------------------------------------
 
 func TestLaPageDeConnexionPorteLeFormulaire(t *testing.T) {
