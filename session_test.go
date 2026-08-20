@@ -69,8 +69,13 @@ func sondeProtegee(routeur *router.Router[*core.RequestEvent]) {
 	}).Bind(apis.RequireAuth())
 }
 
-// compteDeTest crée le compte dont les tests se servent pour se connecter.
-func compteDeTest(t *testing.T, app core.App) *core.Record {
+// compteParDefaut crée le compte dont les tests de session se servent pour se
+// connecter.
+//
+// Le nom le distingue de compteDeTest (acces_test.go), qui crée un compte nu
+// dans une collection quelconque : les deux vivent dans le même paquet, et ne
+// posent ni le même mot de passe, ni de nom.
+func compteParDefaut(t *testing.T, app core.App) *core.Record {
 	t.Helper()
 	return creeCompte(t, app, courrielDeTest, nomDeTest)
 }
@@ -333,7 +338,7 @@ func journalEcrit(t *testing.T, app core.App) string {
 
 func TestUneConnexionReussieDeposeUnCookieDeSession(t *testing.T) {
 	app, mux := serveurDeTest(t)
-	compte := compteDeTest(t, app)
+	compte := compteParDefaut(t, app)
 
 	rec := seConnecte(t, mux, courrielDeTest, motDePasseDeTest)
 
@@ -360,7 +365,7 @@ func TestUneConnexionReussieDeposeUnCookieDeSession(t *testing.T) {
 // middleware, la connexion ne survivrait pas au rechargement.
 func TestLeCookieSeulAuthentifieLaRequeteSuivante(t *testing.T) {
 	app, mux := serveurDeTest(t, sonde)
-	compte := compteDeTest(t, app)
+	compte := compteParDefaut(t, app)
 
 	cookie := cookieDe(t, seConnecte(t, mux, courrielDeTest, motDePasseDeTest))
 	rec := avecCookie(mux, http.MethodGet, "/sonde", cookie)
@@ -372,7 +377,7 @@ func TestLeCookieSeulAuthentifieLaRequeteSuivante(t *testing.T) {
 
 func TestUnCookieInexploitableLaisseLaRequeteEnVisiteur(t *testing.T) {
 	app, mux := serveurDeTest(t, sonde)
-	compte := compteDeTest(t, app)
+	compte := compteParDefaut(t, app)
 
 	jeton, err := compte.NewAuthToken()
 	if err != nil {
@@ -417,7 +422,7 @@ func TestUnCookieInexploitableLaisseLaRequeteEnVisiteur(t *testing.T) {
 // supplante pas le jeton d'un client d'API.
 func TestLEnTeteAuthorizationLEmporteSurLeCookie(t *testing.T) {
 	app, mux := serveurDeTest(t, sonde)
-	porteur := compteDeTest(t, app)
+	porteur := compteParDefaut(t, app)
 	autre := creeCompte(t, app, "autre@exemple.fr", "Autre")
 
 	cookie := cookieDe(t, seConnecte(t, mux, courrielDeTest, motDePasseDeTest))
@@ -438,7 +443,7 @@ func TestLEnTeteAuthorizationLEmporteSurLeCookie(t *testing.T) {
 // HttpOnly et Path=/, serait lui imposer une session qu'il ne gère pas.
 func TestUneSessionPorteeParLEnTeteNestPasRenouvelee(t *testing.T) {
 	app, mux := serveurDeTest(t, sonde)
-	compte := compteDeTest(t, app)
+	compte := compteParDefaut(t, app)
 
 	// Renouvelable, et non statique : c'est la garde du cookie que ce test
 	// exerce, et un jeton que le renouvellement refuserait de toute façon la
@@ -465,7 +470,7 @@ func TestUneSessionPorteeParLEnTeteNestPasRenouvelee(t *testing.T) {
 // de A aurait suffi à faire déposer celui d'un autre.
 func TestUnCookieNeFaitPasRenouvelerLaSessionDeLEnTete(t *testing.T) {
 	app, mux := serveurDeTest(t, sonde)
-	porteur := compteDeTest(t, app)
+	porteur := compteParDefaut(t, app)
 	autre := creeCompte(t, app, "autre@exemple.fr", "Autre")
 
 	// Sous la mi-vie, et renouvelable : tout ce que le renouvellement demande
@@ -511,7 +516,7 @@ func TestLaPageDeConnexionPorteLeFormulaire(t *testing.T) {
 
 func TestLaPageDeConnexionRedirigeUnCompteDejaConnecte(t *testing.T) {
 	app, mux := serveurDeTest(t)
-	compteDeTest(t, app)
+	compteParDefaut(t, app)
 
 	cookie := cookieDe(t, seConnecte(t, mux, courrielDeTest, motDePasseDeTest))
 	rec := avecCookie(mux, http.MethodGet, "/connexion", cookie)
@@ -528,7 +533,7 @@ func TestLaPageDeConnexionRedirigeUnCompteDejaConnecte(t *testing.T) {
 // sinon la page de connexion devient un annuaire des comptes existants.
 func TestUnEchecDeConnexionNeDitPasQuelsCourrielsExistent(t *testing.T) {
 	app, mux := serveurDeTest(t)
-	compteDeTest(t, app)
+	compteParDefaut(t, app)
 
 	inconnu := seConnecte(t, mux, "personne@exemple.fr", motDePasseDeTest)
 	mauvais := seConnecte(t, mux, courrielDeTest, "pas-le-bon-mot-de-passe")
@@ -560,7 +565,7 @@ func TestUnEchecDeConnexionNeDitPasParLeTempsQuelsCourrielsExistent(t *testing.T
 	const mesures = 5
 
 	app, mux := serveurDeTest(t)
-	compteDeTest(t, app)
+	compteParDefaut(t, app)
 
 	connu := plusCourtEchecDeConnexion(t, mux, courrielDeTest, mesures)
 	inconnu := plusCourtEchecDeConnexion(t, mux, "personne@exemple.fr", mesures)
@@ -585,7 +590,7 @@ func TestUnEchecDeConnexionNeDitPasParLeTempsQuelsCourrielsExistent(t *testing.T
 // côté pour l'attaquant, et le jeton qu'elle émet reste valable cinq jours.
 func TestUneConnexionEstRefuseeParLaRegleDAuthentification(t *testing.T) {
 	app, mux := serveurDeTest(t)
-	compteDeTest(t, app)
+	compteParDefaut(t, app)
 	poseLaRegleDAuthentification(t, app, "verified = true")
 
 	rec := seConnecte(t, mux, courrielDeTest, motDePasseDeTest)
@@ -603,7 +608,7 @@ func TestUneConnexionEstRefuseeParLaRegleDAuthentification(t *testing.T) {
 // d'authentifier par mot de passe.
 func TestUneConnexionEstRefuseeQuandLeMotDePasseEstCoupe(t *testing.T) {
 	app, mux := serveurDeTest(t)
-	compteDeTest(t, app)
+	compteParDefaut(t, app)
 	coupeLAuthentificationParMotDePasse(t, app)
 
 	rec := seConnecte(t, mux, courrielDeTest, motDePasseDeTest)
@@ -620,7 +625,7 @@ func TestLeMotDePasseNapparaitNiDansLaPageNiDansLesJournaux(t *testing.T) {
 	const saisi = "sirop-de-liege-mal-tape"
 
 	app, mux := serveurDeTest(t)
-	compteDeTest(t, app)
+	compteParDefaut(t, app)
 
 	rec := seConnecte(t, mux, courrielDeTest, saisi)
 
@@ -641,7 +646,7 @@ func TestLeMotDePasseNapparaitNiDansLaPageNiDansLesJournaux(t *testing.T) {
 
 func TestLaDeconnexionEffaceLeCookie(t *testing.T) {
 	app, mux := serveurDeTest(t, sonde)
-	compteDeTest(t, app)
+	compteParDefaut(t, app)
 
 	cookie := cookieDe(t, seConnecte(t, mux, courrielDeTest, motDePasseDeTest))
 	rec := avecCookie(mux, http.MethodPost, "/deconnexion", cookie)
@@ -673,7 +678,7 @@ func TestLaDeconnexionEffaceLeCookie(t *testing.T) {
 // déconnexion ne vaut plus que par leur ordre.
 func TestLaDeconnexionSousLaMiVieNeRenvoieQueLEffacement(t *testing.T) {
 	app, mux := serveurDeTest(t, sonde)
-	compte := compteDeTest(t, app)
+	compte := compteParDefaut(t, app)
 
 	// Renouvelable : c'est la rencontre du renouvellement et de l'effacement
 	// que ce test garde, et elle n'a lieu que si le premier se déclenche.
@@ -699,7 +704,7 @@ func TestLaDeconnexionSousLaMiVieNeRenvoieQueLEffacement(t *testing.T) {
 
 func TestUnJetonFraisNestPasRenouvele(t *testing.T) {
 	app, mux := serveurDeTest(t, sonde)
-	compteDeTest(t, app)
+	compteParDefaut(t, app)
 
 	cookie := cookieDe(t, seConnecte(t, mux, courrielDeTest, motDePasseDeTest))
 	rec := avecCookie(mux, http.MethodGet, "/sonde", cookie)
@@ -713,7 +718,7 @@ func TestUnJetonFraisNestPasRenouvele(t *testing.T) {
 // y compris en pleine saisie.
 func TestUnJetonSousLaMiVieEstRenouvele(t *testing.T) {
 	app, mux := serveurDeTest(t, sonde)
-	compte := compteDeTest(t, app)
+	compte := compteParDefaut(t, app)
 
 	// La durée réduite que demande le critère, obtenue sans changer la nature
 	// du jeton : celui-ci est ordinaire, donc renouvelable, et c'est le chemin
@@ -746,7 +751,7 @@ func TestUnJetonSousLaMiVieEstRenouvele(t *testing.T) {
 // réémission.
 func TestUnJetonNonRenouvelableNestPasRenouvele(t *testing.T) {
 	app, mux := serveurDeTest(t, sonde)
-	compte := compteDeTest(t, app)
+	compte := compteParDefaut(t, app)
 
 	statique, err := compte.NewStaticAuthToken(30 * time.Second)
 	if err != nil {
@@ -768,7 +773,7 @@ func TestUnJetonNonRenouvelableNestPasRenouvele(t *testing.T) {
 
 func TestUneRouteProtegeeExigeLaSession(t *testing.T) {
 	app, mux := serveurDeTest(t, sondeProtegee)
-	compteDeTest(t, app)
+	compteParDefaut(t, app)
 
 	sans := avecCookie(mux, http.MethodGet, "/sonde-protegee", nil)
 	if sans.Code != http.StatusUnauthorized {
@@ -786,7 +791,7 @@ func TestUneRouteProtegeeExigeLaSession(t *testing.T) {
 
 func TestLEnTetePorteLeCompteConnecte(t *testing.T) {
 	app, mux := serveurDeTest(t)
-	compteDeTest(t, app)
+	compteParDefaut(t, app)
 
 	cookie := cookieDe(t, seConnecte(t, mux, courrielDeTest, motDePasseDeTest))
 	corps := avecCookie(mux, http.MethodGet, "/", cookie).Body.String()
@@ -808,7 +813,7 @@ func TestLEnTetePorteLeCompteConnecte(t *testing.T) {
 func TestLEnTeteEchappeLeNomDuCompte(t *testing.T) {
 	app, mux := serveurDeTest(t)
 
-	compte := compteDeTest(t, app)
+	compte := compteParDefaut(t, app)
 	compte.Set("name", `<script>alert(1)</script>`)
 	if err := app.Save(compte); err != nil {
 		t.Fatalf("renommage du compte : %v", err)
