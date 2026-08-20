@@ -72,6 +72,13 @@ func sondeProtegee(routeur *router.Router[*core.RequestEvent]) {
 // compteDeTest crée le compte dont les tests se servent pour se connecter.
 func compteDeTest(t *testing.T, app core.App) *core.Record {
 	t.Helper()
+	return creeCompte(t, app, courrielDeTest, nomDeTest)
+}
+
+// creeCompte crée un compte quelconque : les tests où deux identités se
+// disputent la même requête en demandent un second.
+func creeCompte(t *testing.T, app core.App, courriel, nom string) *core.Record {
+	t.Helper()
 
 	collection, err := app.FindCollectionByNameOrId("users")
 	if err != nil {
@@ -79,11 +86,11 @@ func compteDeTest(t *testing.T, app core.App) *core.Record {
 	}
 
 	compte := core.NewRecord(collection)
-	compte.SetEmail(courrielDeTest)
+	compte.SetEmail(courriel)
 	compte.SetPassword(motDePasseDeTest)
-	compte.Set("name", nomDeTest)
+	compte.Set("name", nom)
 	if err := app.Save(compte); err != nil {
-		t.Fatalf("création du compte : %v", err)
+		t.Fatalf("création du compte %q : %v", courriel, err)
 	}
 	return compte
 }
@@ -125,14 +132,43 @@ func cookieDe(t *testing.T, rec *httptest.ResponseRecorder) *http.Cookie {
 	return cookie
 }
 
-// cookieEventuelDe rend le cookie de session, ou nil s'il n'y en a pas.
+// cookieEventuelDe rend le premier cookie de session, ou nil s'il n'y en a pas.
 func cookieEventuelDe(rec *httptest.ResponseRecorder) *http.Cookie {
+	poses := cookiesDeSession(rec)
+	if len(poses) == 0 {
+		return nil
+	}
+	return poses[0]
+}
+
+// cookiesDeSession rend tous les Set-Cookie de session de la réponse.
+//
+// Leur nombre est ce qui compte : http.SetCookie ajoute un en-tête au lieu de
+// le remplacer, donc deux étapes qui posent chacune le leur partent ensemble,
+// et la réponse ne vaut plus que par leur ordre.
+func cookiesDeSession(rec *httptest.ResponseRecorder) []*http.Cookie {
+	var poses []*http.Cookie
 	for _, cookie := range (&http.Response{Header: rec.Header()}).Cookies() {
 		if cookie.Name == nomCookieSession {
-			return cookie
+			poses = append(poses, cookie)
 		}
 	}
-	return nil
+	return poses
+}
+
+// avecEnTete joue une requête authentifiée par le seul en-tête Authorization,
+// et un cookie facultatif : c'est ce que fait un client d'API, à qui le
+// navigateur ne dicte rien.
+func avecEnTete(mux http.Handler, methode, cible, jeton string, cookie *http.Cookie) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(methode, cible, nil)
+	req.Header.Set("Authorization", jeton)
+	if cookie != nil {
+		req.AddCookie(cookie)
+	}
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
 }
 
 // attributsDeSession vérifie les quatre attributs qui ne changent jamais,
@@ -280,6 +316,51 @@ func TestUnCookieInexploitableLaisseLaRequeteEnVisiteur(t *testing.T) {
 	}
 }
 
+// --- Le cookie et l'en-tête face à face ------------------------------------
+
+// Deux identités dans la même requête, et une seule doit gagner : celle que
+// le client porte lui-même. Un cookie que le navigateur joint d'office ne
+// supplante pas le jeton d'un client d'API.
+func TestLEnTeteAuthorizationLEmporteSurLeCookie(t *testing.T) {
+	app, mux := serveurDeTest(t, sonde)
+	porteur := compteDeTest(t, app)
+	autre := creeCompte(t, app, "autre@exemple.fr", "Autre")
+
+	cookie := cookieDe(t, seConnecte(t, mux, courrielDeTest, motDePasseDeTest))
+	jeton, err := autre.NewAuthToken()
+	if err != nil {
+		t.Fatalf("émission du jeton : %v", err)
+	}
+
+	rec := avecEnTete(mux, http.MethodGet, "/sonde", jeton, cookie)
+
+	if rec.Body.String() != autre.Id {
+		t.Errorf("la sonde a reconnu %q, attendu %q — le cookie de %q a supplanté l'en-tête",
+			rec.Body.String(), autre.Id, porteur.Id)
+	}
+}
+
+// Un client d'API n'a pas demandé de cookie : lui en poser un de cinq jours,
+// HttpOnly et Path=/, serait lui imposer une session qu'il ne gère pas.
+func TestUneSessionPorteeParLEnTeteNestPasRenouvelee(t *testing.T) {
+	app, mux := serveurDeTest(t, sonde)
+	compte := compteDeTest(t, app)
+
+	court, err := compte.NewStaticAuthToken(30 * time.Second)
+	if err != nil {
+		t.Fatalf("émission du jeton court : %v", err)
+	}
+
+	rec := avecEnTete(mux, http.MethodGet, "/sonde", court, nil)
+
+	if rec.Body.String() != compte.Id {
+		t.Fatalf("la sonde a reconnu %q, attendu %q", rec.Body.String(), compte.Id)
+	}
+	if pose := cookieEventuelDe(rec); pose != nil {
+		t.Errorf("un cookie de session a été posé à un client d'API : %q", pose.Value)
+	}
+}
+
 // --- La page de connexion -------------------------------------------------
 
 func TestLaPageDeConnexionPorteLeFormulaire(t *testing.T) {
@@ -389,6 +470,35 @@ func TestLaDeconnexionEffaceLeCookie(t *testing.T) {
 	if suivante.Body.String() != "visiteur" {
 		t.Errorf("la sonde a reconnu %q après déconnexion, attendu un visiteur", suivante.Body.String())
 	}
+}
+
+// Le renouvellement passe avant le gestionnaire : sous la mi-vie, il pose un
+// jeton frais de cinq jours dans la réponse même qui est censée révoquer la
+// session. Deux Set-Cookie de même nom partent alors ensemble, et la
+// déconnexion ne vaut plus que par leur ordre.
+func TestLaDeconnexionSousLaMiVieNeRenvoieQueLEffacement(t *testing.T) {
+	app, mux := serveurDeTest(t, sonde)
+	compte := compteDeTest(t, app)
+
+	court, err := compte.NewStaticAuthToken(30 * time.Second)
+	if err != nil {
+		t.Fatalf("émission du jeton court : %v", err)
+	}
+
+	rec := avecCookie(mux, http.MethodPost, "/deconnexion", &http.Cookie{Name: nomCookieSession, Value: court})
+
+	poses := cookiesDeSession(rec)
+	if len(poses) != 1 {
+		t.Fatalf("%d cookies %q dans la réponse, attendu 1 : %q",
+			len(poses), nomCookieSession, rec.Header().Values("Set-Cookie"))
+	}
+	if poses[0].Value != "" {
+		t.Errorf("cookie de valeur %q, attendue vide", poses[0].Value)
+	}
+	if poses[0].MaxAge >= 0 {
+		t.Errorf("Max-Age %d, attendu négatif", poses[0].MaxAge)
+	}
+	attributsDeSession(t, poses[0])
 }
 
 // --- Le renouvellement ----------------------------------------------------
