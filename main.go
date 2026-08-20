@@ -11,6 +11,7 @@ package main
 
 import (
 	"log"
+	"os"
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
@@ -22,6 +23,17 @@ import (
 )
 
 func main() {
+	// La sonde du HEALTHCHECK, traitée avant tout le reste. Enregistrée sur
+	// app.RootCmd, elle serait une commande connue de PocketBase, et
+	// app.Start() amorcerait l'application entière avant de la lancer : data.db
+	// et auxiliary.db ouvertes puis jamais refermées, migrations système
+	// jouées, et pb_data/.pb_temp_to_delete effacé — le répertoire de travail
+	// d'une sauvegarde ou d'une restauration en cours. Toutes les trente
+	// secondes, sur le volume vivant, pour un GET sur la boucle locale.
+	if santeDemandee(os.Args[1:]) {
+		os.Exit(lanceSante(os.Args[1:], os.Stderr))
+	}
+
 	app := pocketbase.New()
 
 	// Automigrate à false : les migrations s'écrivent à la main et se relisent
@@ -41,6 +53,10 @@ func main() {
 	// tag créé par une commande, où le serveur ne tourne pas.
 	brancheLesHooks(app, analyseur)
 
+	// Avant app.Start() : c'est Execute() qui amorce l'application puis exécute
+	// la sous-commande demandée, laquelle dispose donc d'une base ouverte.
+	commandeAEchoue := brancheLesCommandes(app, app.RootCmd)
+
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
 		brancheLesRoutes(se.Router)
 
@@ -51,6 +67,12 @@ func main() {
 
 	if err := app.Start(); err != nil {
 		log.Fatal(err)
+	}
+
+	// PocketBase avale l'erreur rendue par la sous-commande : sans ce témoin,
+	// une fusion refusée sortirait sur zéro et passerait pour réussie.
+	if commandeAEchoue() {
+		os.Exit(1)
 	}
 }
 

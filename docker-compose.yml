@@ -1,0 +1,32 @@
+# Le fichier que l'on copie pour installer Patachoo.
+#
+# Il doit marcher tel quel : déposé seul dans un répertoire vide, `docker compose
+# up -d` suffit. Pas de variable à définir, pas de fichier .env à créer, pas de
+# répertoire à préparer — c'est la raison d'être de ce fichier, et toute
+# modification qui la remet en cause est à refuser.
+
+services:
+  patachoo:
+    image: ghcr.io/pol128/patachoo:latest
+    restart: unless-stopped
+    ports:
+      # Gauche : le port sur la machine hôte, le seul que l'on change. Le
+      # préfixer par 127.0.0.1 le rendrait injoignable depuis le reste du
+      # réseau local, ce qui n'est pas ce que l'on veut d'un carnet de recettes
+      # familial installé sur un NAS.
+      - "8090:8090"
+    volumes:
+      # Toutes les données de Patachoo : la base, les images téléversées, les
+      # sauvegardes. C'est le seul répertoire à conserver.
+      #
+      # Un volume nommé, et non un bind mount : il hérite du propriétaire de
+      # /pb_data dans l'image, donc l'application y écrit sans qu'on ait rien à
+      # régler. Un bind mount garde le propriétaire de l'hôte et demande un
+      # chown — voir INSTALL.md.
+      - pb_data:/pb_data
+
+    # Pas de healthcheck: ici. L'image en porte un, et le répéter en donnerait
+    # deux à maintenir, dont un seul serait juste.
+
+volumes:
+  pb_data:
