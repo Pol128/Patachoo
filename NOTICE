@@ -34,6 +34,13 @@ Dépendances liées, non redistribuées sous forme de source
 PocketBase (https://github.com/pocketbase/pocketbase) — licence MIT.
     Utilisé comme bibliothèque Go et compilé dans le binaire livré.
 
+moteur (https://github.com/Pol128/moteur) — licence Apache-2.0.
+    Le moteur de lecture des lignes d'ingrédients, extrait de Patachoo dans son
+    propre dépôt pour être réutilisable. Compilé dans le binaire livré.
+    Il embarque son pack de langue et le lexique d'aliments foods_fr.json —
+    ce dernier, issu de MealieSync sous licence MIT, est bien redistribué par
+    Patachoo : voir sa mention plus haut.
+
 golang.org/x/net (https://pkg.go.dev/golang.org/x/net) — licence BSD-3-Clause.
     Son paquet html analyse les pages dont on extrait les recettes. Déjà tiré
     par PocketBase ; il est devenu une dépendance directe avec l'extracteur.
