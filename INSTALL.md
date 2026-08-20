@@ -170,14 +170,18 @@ supprimée, la restauration, la recette de retour — image comprise.
 
 ```sh
 ESSAI=$(mktemp -d)
+echo "$ESSAI"   # recopiez ce chemin : le second terminal en aura besoin
 go build -o "$ESSAI/patachoo" .
 "$ESSAI/patachoo" superuser upsert essai@exemple.fr 'mot-de-passe-jetable-32' --dir "$ESSAI/pb_data"
 "$ESSAI/patachoo" serve --dir "$ESSAI/pb_data" --http 127.0.0.1:8137
 ```
 
-Dans un second terminal, avec la même variable `ESSAI` :
+Dans un second terminal, en replaçant `ESSAI` — c'est une variable de
+shell, elle ne franchit pas la fenêtre, et sans elle les commandes qui suivent
+viseraient `/pb_data` :
 
 ```sh
+ESSAI=<le chemin affiché par le echo ci-dessus>
 BASE=http://127.0.0.1:8137
 JETON=$(curl -s -X POST "$BASE/api/collections/_superusers/auth-with-password" \
   -H 'Content-Type: application/json' \
