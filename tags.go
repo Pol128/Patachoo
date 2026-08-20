@@ -17,7 +17,8 @@ import (
 // créerait des tags qu'aucune recette ne pourrait ensuite référencer.
 const maxTags = 20
 
-// brancheLesHooks accroche nos règles de modèle à l'app.
+// brancheLesHooks accroche nos hooks à l'app — un seul point de branchement,
+// que main() appelle et que les tests appellent à l'identique.
 //
 // Sur l'app et non sur OnServe : un tag créé par une commande — une fusion,
 // une migration — doit être normalisé lui aussi, et OnServe ne se déclenche
@@ -27,6 +28,7 @@ func brancheLesHooks(app core.App, a *analyseur) {
 	app.OnRecordUpdate("tags").BindFunc(normaliseLeTag)
 
 	brancheLIngredient(app, a)
+	brancheLAcces(app)
 }
 
 // normaliseLeTag met le nom en forme et recalcule le slug avant l'écriture.
