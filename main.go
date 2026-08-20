@@ -40,6 +40,10 @@ func main() {
 	// tag créé par une commande, où le serveur ne tourne pas.
 	brancheLesHooks(app, analyseur)
 
+	// Avant app.Start() : c'est Execute() qui amorce l'application puis exécute
+	// la sous-commande demandée, laquelle dispose donc d'une base ouverte.
+	brancheLesCommandes(app, app.RootCmd)
+
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
 		se.Router.GET("/", pageAccueil)
 		se.Router.POST("/api/import", importDepuisURL)
