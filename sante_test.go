@@ -5,6 +5,9 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -107,4 +110,100 @@ func adresseMorte(t *testing.T) string {
 		t.Fatalf("impossible de relâcher le port : %v", err)
 	}
 	return a
+}
+
+// Le HEALTHCHECK de l'image lance `/patachoo healthcheck` toutes les trente
+// secondes, sans --dir, donc sur /pb_data : le volume vivant, celui que sert le
+// processus en cours. La sonde ne doit donc rien y écrire ni rien y supprimer —
+// en particulier pas .pb_temp_to_delete, où PocketBase dépose l'archive d'une
+// sauvegarde en cours et l'extraction d'une restauration en cours.
+//
+// Ce test exerce le binaire entier plutôt qu'une fonction : c'est main() qui
+// décide si `healthcheck` passe par l'amorçage de l'application ou non, et
+// aucun appel direct à la sonde ne verrait cette décision-là. Il couvre du même
+// coup le nom de la sous-commande et ses drapeaux, qui sont la couture entre le
+// Dockerfile et le code Go.
+func TestSanteNeTouchePasAuRepertoireDeDonnees(t *testing.T) {
+	sonde := make(chan string, 1)
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case sonde <- r.URL.Path:
+		default:
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer s.Close()
+
+	donnees := t.TempDir()
+	temoin := filepath.Join(donnees, ".pb_temp_to_delete", "temoin")
+	if err := os.MkdirAll(filepath.Dir(temoin), 0o755); err != nil {
+		t.Fatalf("impossible de préparer le répertoire de données : %v", err)
+	}
+	if err := os.WriteFile(temoin, []byte("sauvegarde en cours"), 0o644); err != nil {
+		t.Fatalf("impossible de déposer le témoin : %v", err)
+	}
+
+	sortie, code := lancePatachoo(t, "healthcheck", "--dir="+donnees, "--http="+adresse(t, s))
+
+	if code != 0 {
+		t.Errorf("code de sortie %d alors que l'application a répondu 200 : %s", code, sortie)
+	}
+	// Sans cette vérification, un binaire qui ne connaîtrait pas la commande
+	// passerait le test : PocketBase jette l'erreur d'une commande inconnue et
+	// sort 0, donc « sain » sans avoir rien mesuré. C'est ce qui tient le nom
+	// que le HEALTHCHECK du Dockerfile appelle.
+	select {
+	case vu := <-sonde:
+		if vu != "/api/health" {
+			t.Errorf("la sonde a interrogé %q, attendu /api/health", vu)
+		}
+	default:
+		t.Errorf("le binaire n'a interrogé personne : la commande %q n'a pas été exécutée : %s",
+			"healthcheck", sortie)
+	}
+	if _, err := os.Stat(temoin); err != nil {
+		t.Errorf("la sonde a effacé le travail en cours dans .pb_temp_to_delete : %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(donnees, "data.db")); err == nil {
+		t.Error("la sonde a créé data.db : elle amorce l'application au lieu de faire un GET")
+	}
+}
+
+// Un drapeau que la sonde ne connaît pas ne doit pas se solder par un « sain ».
+// C'est le cas d'une erreur d'analyse : rien n'a été mesuré, donc rien ne
+// permet de dire que l'application répond.
+func TestSanteRendNonZeroSurUnDrapeauInconnu(t *testing.T) {
+	sortie, code := lancePatachoo(t, "healthcheck", "--inconnu")
+
+	if code == 0 {
+		t.Errorf("code de sortie 0 sur un drapeau inconnu, sans qu'aucune sonde ait eu lieu : %s", sortie)
+	}
+}
+
+// lancePatachoo relance le binaire de test avec PATACHOO_SOUS_PROCESSUS=1 :
+// TestMain appelle alors main() au lieu de lancer les tests. C'est le seul
+// moyen d'observer le chemin d'exécution réel d'une commande qui sort par
+// os.Exit, code de sortie compris.
+func lancePatachoo(t *testing.T, args ...string) (string, int) {
+	t.Helper()
+
+	cmd := exec.Command(os.Args[0], args...)
+	cmd.Env = append(os.Environ(), "PATACHOO_SOUS_PROCESSUS=1")
+
+	sortie, err := cmd.CombinedOutput()
+	if cmd.ProcessState == nil {
+		t.Fatalf("le binaire n'a pas pu être lancé : %v", err)
+	}
+	return string(sortie), cmd.ProcessState.ExitCode()
+}
+
+// TestMain donne au binaire de test un second rôle : lancé avec
+// PATACHOO_SOUS_PROCESSUS=1, il est le programme lui-même. Sans la variable,
+// il se comporte en binaire de test ordinaire.
+func TestMain(m *testing.M) {
+	if os.Getenv("PATACHOO_SOUS_PROCESSUS") == "1" {
+		main()
+		return
+	}
+	os.Exit(m.Run())
 }
