@@ -67,12 +67,7 @@ func TestLesReglesDAccesSontPosees(t *testing.T) {
 func TestLeDownRemetLesReglesANil(t *testing.T) {
 	app := baseNeuve(t)
 
-	liste := core.MigrationsList{}
-	liste.Copy(core.SystemMigrations)
-	liste.Copy(core.AppMigrations)
-	if _, err := core.NewMigrationsRunner(app, liste).Down(1); err != nil {
-		t.Fatalf("retour en arrière : %v", err)
-	}
+	defaitJusqua(t, app, "1787242977_regles_acces.go")
 
 	for nom := range reglesAttendues {
 		for verbe, regle := range reglesDe(t, app, nom) {
