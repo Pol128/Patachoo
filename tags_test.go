@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -287,6 +288,31 @@ func TestTagsDepuisSaisieAccepteVingtTags(t *testing.T) {
 	}
 	if n := nombreDeTags(t, app); n != 20 {
 		t.Errorf("%d tag(s) en base, attendu 20", n)
+	}
+}
+
+// Un tag peut échouer à l'écriture après que les précédents sont passés :
+// une insertion concurrente du même slug, glissée entre la recherche et
+// l'enregistrement, suffit. Sans transaction, la saisie laisserait derrière
+// elle les tags créés avant l'échec, que rien ne référencerait.
+//
+// L'échec est provoqué par un hook plutôt que par une course : le
+// comportement vérifié est le retour en arrière, pas le hasard qui l'appelle.
+func TestUneSaisieQuiEchoueEnCoursNeLaisseRienDerriere(t *testing.T) {
+	app := baseNeuve(t)
+
+	app.OnRecordCreate("tags").BindFunc(func(e *core.RecordEvent) error {
+		if e.Record.GetString("slug") == "boum" {
+			return errors.New("écriture refusée pour le test")
+		}
+		return e.Next()
+	})
+
+	if _, err := tagsDepuisSaisie(app, "a, b, boum"); err == nil {
+		t.Fatal("la saisie a été acceptée alors qu'un tag ne peut pas s'écrire")
+	}
+	if n := nombreDeTags(t, app); n != 0 {
+		t.Errorf("%d tag(s) en base après un échec, attendu 0", n)
 	}
 }
 
