@@ -1,0 +1,40 @@
+# Ce que le contexte de construction ne doit jamais porter.
+#
+# Le répertoire de travail contient des fichiers que git ignore mais qui sont
+# bien là : le jeton d'API du suivi de projet, la base de données locale. Un
+# COPY . . sans ce fichier les ferait entrer dans une couche d'image, c'est-à-dire
+# dans un artefact destiné à être publié. C'est pourquoi il est écrit avant le
+# premier docker build, et pas après.
+#
+# Il double .gitignore sans le remplacer : les deux protègent des diffusions
+# différentes, et un fichier retiré de l'un ne doit pas sortir de l'autre.
+
+# Suivi de projet — jeton d'API en clair
+vikunja/
+
+# Données PocketBase : base SQLite, fichiers téléversés, sauvegardes
+pb_data/
+
+# L'historique complet du dépôt n'a rien à faire dans une couche d'image
+.git/
+.gitignore
+
+# Outillage local
+.claude/
+
+# Binaires déjà compilés : ceux de l'hôte, donc de la mauvaise architecture
+# pour deux cibles sur trois — et 23 Mo de contexte transférés pour rien.
+/Patachoo
+/patachoo
+
+# Secrets et configuration locale
+.env
+*.local
+
+# Ce qui décrit la construction, mais ne sert pas à construire
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# Systèmes de fichiers
+.DS_Store

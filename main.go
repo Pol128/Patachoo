@@ -22,6 +22,17 @@ import (
 )
 
 func main() {
+	// La sonde du HEALTHCHECK, traitée avant tout le reste. Enregistrée sur
+	// app.RootCmd, elle serait une commande connue de PocketBase, et
+	// app.Start() amorcerait l'application entière avant de la lancer : data.db
+	// et auxiliary.db ouvertes puis jamais refermées, migrations système
+	// jouées, et pb_data/.pb_temp_to_delete effacé — le répertoire de travail
+	// d'une sauvegarde ou d'une restauration en cours. Toutes les trente
+	// secondes, sur le volume vivant, pour un GET sur la boucle locale.
+	if santeDemandee(os.Args[1:]) {
+		os.Exit(lanceSante(os.Args[1:], os.Stderr))
+	}
+
 	app := pocketbase.New()
 
 	// Automigrate à false : les migrations s'écrivent à la main et se relisent
