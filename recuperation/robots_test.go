@@ -61,6 +61,7 @@ func TestLesReglesDeRobots(t *testing.T) {
 		{"ancre de fin laisse passer", "User-agent: *\nDisallow: /a$\n", "/ab", true},
 		{"règle la plus longue", "User-agent: *\nDisallow: /dossier\nAllow: /dossier/ok\n", "/dossier/ok", true},
 		{"règle la plus longue, l'autre chemin", "User-agent: *\nDisallow: /dossier\nAllow: /dossier/ok\n", "/dossier/autre", false},
+		{"à égalité, Allow gagne", "User-agent: *\nDisallow: /dossier\nAllow: /dossier\n", "/dossier/ok", true},
 		{"disallow vide n'interdit rien", "User-agent: *\nDisallow:\n", "/recettes/tarte", true},
 		{"commentaire ignoré", "# rien à voir\nUser-agent: *\nDisallow: / # tout\n", "/recettes/tarte", false},
 	}

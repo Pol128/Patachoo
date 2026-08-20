@@ -3,6 +3,7 @@ package recuperation
 import (
 	"fmt"
 	"net/http"
+	"net/netip"
 	"testing"
 )
 
@@ -125,5 +126,47 @@ func TestLesRedirectionsSontComptees(t *testing.T) {
 	_, err = recupere(t, srv.URL+"/saut/6", autorise(srv))
 	if cause := echec(t, err).Cause; cause != Injoignable {
 		t.Errorf("cause %q, attendu %q", cause, Injoignable)
+	}
+}
+
+// TestUneAdressePubliqueEstAcceptee : sans lui, une politique qui refuserait
+// tout passerait tous les tests précédents — les serveurs de test vivent sur la
+// boucle locale, qu'une exception autorise, et non sur ce que la politique
+// laisse sortir.
+func TestUneAdressePubliqueEstAcceptee(t *testing.T) {
+	for _, brute := range []string{"93.184.216.34", "2606:2800:220:1:248:1893:25c8:1946"} {
+		if adresseInterdite(netip.MustParseAddr(brute)) {
+			t.Errorf("%s refusée : la politique n'a plus rien à autoriser", brute)
+		}
+	}
+}
+
+// TestLesFormesMappeesSontRamenees : une adresse v4 écrite en v6 doit être
+// examinée pour ce qu'elle est. Le cas se juge ici plutôt qu'à travers Recupere,
+// parce que le composeur ramène la plupart de ces formes à leur écriture v4
+// avant même que la politique les voie : le test passerait alors sans rien
+// prouver.
+func TestLesFormesMappeesSontRamenees(t *testing.T) {
+	for _, brute := range []string{"::ffff:127.0.0.1", "::ffff:10.0.0.1", "::ffff:0.0.0.0", "::ffff:169.254.169.254"} {
+		if !adresseInterdite(netip.MustParseAddr(brute)) {
+			t.Errorf("%s acceptée : la forme mappée doit être ramenée avant l'examen", brute)
+		}
+	}
+}
+
+// TestAucunProxyNEstConsulte : un proxy déclaré dans l'environnement irait
+// chercher la page à notre place, et la politique d'IP ne porterait plus que sur
+// lui — le proxy, lui, atteindrait ce que nous refusons.
+//
+// Le cas se juge sur le transport monté, et non à travers Recupere : Go ne
+// passe jamais par un proxy pour la boucle locale, où vivent nos serveurs de
+// test, et un test de bout en bout passerait donc sans rien prouver.
+func TestAucunProxyNEstConsulte(t *testing.T) {
+	pile, estTransport := (&recuperateur{}).pile().(*http.Transport)
+	if !estTransport {
+		t.Fatalf("pile de type %T, attendu *http.Transport", pile)
+	}
+	if pile.Proxy != nil {
+		t.Error("le transport consulte un proxy : la politique d'IP porterait sur lui plutôt que sur la vraie destination")
 	}
 }
