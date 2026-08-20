@@ -10,6 +10,8 @@ import (
 
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
+
+	"github.com/Pol128/Patachoo/internal/texte"
 )
 
 // typesDePlatInitiaux : une base fraîche doit être utilisable sans
@@ -150,7 +152,7 @@ func init() {
 		for i, nom := range typesDePlatInitiaux {
 			enregistrement := core.NewRecord(typesDePlat)
 			enregistrement.Set("name", nom)
-			enregistrement.Set("slug", slug(nom))
+			enregistrement.Set("slug", texte.Slug(nom))
 			enregistrement.Set("position", (i+1)*10)
 			if err := app.Save(enregistrement); err != nil {
 				return fmt.Errorf("type de plat %q : %w", nom, err)
