@@ -17,6 +17,17 @@ htmx 2.0.10 — bibliothèque JavaScript
     Il est servi depuis nos propres assets et jamais depuis un CDN — Patachoo
     doit fonctionner sur un réseau coupé d'Internet.
 
+ca-certificates 20260611 — magasin de certificats racine
+    Paquet ca-certificates d'Alpine Linux, dont le contenu est la liste des
+    autorités de certification tenue par Mozilla.
+    Licences MPL-2.0 AND MIT, telles que le paquet les déclare.
+    Le fichier /etc/ssl/certs/ca-certificates.crt est copié tel quel dans
+    l'image Docker, qui est construite FROM scratch et n'en fournirait aucun :
+    sans lui, tout appel HTTPS sortant échoue — import d'une recette,
+    connexion par un fournisseur externe, sauvegarde distante.
+    Il est donc redistribué par l'image, et par elle seule : le binaire installé
+    hors conteneur se sert du magasin du système hôte.
+
 foods_fr.json — lexique d'aliments
     Issu du projet MealieSync (https://github.com/Rouzax/MealieSync).
     Licence MIT, Copyright (c) 2025 Rouzax.
