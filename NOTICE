@@ -34,6 +34,10 @@ Dépendances liées, non redistribuées sous forme de source
 PocketBase (https://github.com/pocketbase/pocketbase) — licence MIT.
     Utilisé comme bibliothèque Go et compilé dans le binaire livré.
 
+golang.org/x/net (https://pkg.go.dev/golang.org/x/net) — licence BSD-3-Clause.
+    Son paquet html analyse les pages dont on extrait les recettes. Déjà tiré
+    par PocketBase ; il est devenu une dépendance directe avec l'extracteur.
+
 Les autres dépendances Go sont déclarées dans go.mod ; leurs licences
 respectives s'appliquent au code qu'elles couvrent.
 
