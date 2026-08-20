@@ -46,13 +46,13 @@ func connexion(e *core.RequestEvent) error {
 	if err != nil {
 		return err
 	}
-	e.SetCookie(cookieDeSession(jeton, compte.Collection().AuthToken.DurationTime()))
+	poseLeCookieDeSession(e, cookieDeSession(jeton, compte.Collection().AuthToken.DurationTime()))
 
 	return e.Redirect(http.StatusSeeOther, "/")
 }
 
 // deconnexion efface le cookie et renvoie à l'accueil.
 func deconnexion(e *core.RequestEvent) error {
-	e.SetCookie(cookieDeSessionEfface())
+	poseLeCookieDeSession(e, cookieDeSessionEfface())
 	return e.Redirect(http.StatusSeeOther, "/")
 }

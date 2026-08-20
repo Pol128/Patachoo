@@ -70,7 +70,7 @@ func renouvelleLaSession() *hook.Handler[*core.RequestEvent] {
 		Priority: prioriteRenouvellement,
 		Func: func(e *core.RequestEvent) error {
 			if jeton, duree, ok := sessionARenouveler(e); ok {
-				e.SetCookie(cookieDeSession(jeton, duree))
+				poseLeCookieDeSession(e, cookieDeSession(jeton, duree))
 			}
 			return e.Next()
 		},
@@ -145,6 +145,32 @@ func cookieDeSession(jeton string, duree time.Duration) *http.Cookie {
 		Secure:   true,
 		SameSite: http.SameSiteLaxMode,
 	}
+}
+
+// poseLeCookieDeSession écrit le cookie en retirant d'abord celui qu'une
+// étape antérieure aurait déjà posé.
+//
+// http.SetCookie ajoute un en-tête au lieu de le remplacer. Sans ce ménage,
+// une déconnexion faite sous la mi-vie part avec deux Set-Cookie de même nom
+// — le jeton frais du renouvellement, qui s'exécute avant le gestionnaire,
+// puis l'effacement. Un navigateur applique le dernier, mais la réponse qui
+// révoque une session y transporte quand même un jeton vivant, et tout ce qui
+// lit le premier reste connecté.
+func poseLeCookieDeSession(e *core.RequestEvent, cookie *http.Cookie) {
+	entetes := e.Response.Header()
+
+	gardes := make([]string, 0, len(entetes.Values("Set-Cookie")))
+	for _, pose := range entetes.Values("Set-Cookie") {
+		if !strings.HasPrefix(pose, nomCookieSession+"=") {
+			gardes = append(gardes, pose)
+		}
+	}
+
+	entetes.Del("Set-Cookie")
+	for _, pose := range gardes {
+		entetes.Add("Set-Cookie", pose)
+	}
+	e.SetCookie(cookie)
 }
 
 // cookieDeSessionEfface ordonne l'oubli du cookie.
