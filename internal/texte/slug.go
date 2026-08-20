@@ -1,4 +1,11 @@
-package migrations
+// Package texte porte les mises en forme partagées entre le schéma, les hooks
+// et le code des routes.
+//
+// Il vit à part parce que le slug a deux appelants qui n'ont rien à voir : les
+// migrations, qui l'appliquent aux données initiales, et la normalisation des
+// tags à l'enregistrement. Deux copies divergeraient au premier cas
+// particulier, et l'index d'unicité ne rapprocherait plus rien.
+package texte
 
 import (
 	"strings"
@@ -15,23 +22,23 @@ var ligatures = strings.NewReplacer(
 	"ß", "ss",
 )
 
-// slug rend la forme d'une valeur qui sert de clé : minuscules, sans accent,
+// Slug rend la forme d'une valeur qui sert de clé : minuscules, sans accent,
 // mots joints par un tiret.
 //
 // Sans ça « Petit-déjeuner » et « petit dejeuner » seraient deux entrées
 // distinctes, et l'index d'unicité ne les rapprocherait jamais.
-func slug(texte string) string {
+func Slug(valeur string) string {
 	// Les ligatures ne se décomposent pas : NFD laisse « œ » entier, et un
 	// « Cœur d'artichaut » ressortait « c-ur-d-artichaut ». Elles se remplacent
 	// donc à la main, avant la décomposition.
-	texte = ligatures.Replace(texte)
+	valeur = ligatures.Replace(valeur)
 
 	sansAccents, _, err := transform.String(
 		transform.Chain(norm.NFD, runes.Remove(runes.In(unicode.Mn)), norm.NFC),
-		texte,
+		valeur,
 	)
 	if err != nil {
-		sansAccents = texte
+		sansAccents = valeur
 	}
 
 	var b strings.Builder
