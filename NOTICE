@@ -56,6 +56,11 @@ golang.org/x/net (https://pkg.go.dev/golang.org/x/net) — licence BSD-3-Clause.
     Son paquet html analyse les pages dont on extrait les recettes. Déjà tiré
     par PocketBase ; il est devenu une dépendance directe avec l'extracteur.
 
+github.com/spf13/cobra (https://github.com/spf13/cobra) — licence Apache-2.0.
+    Porte les sous-commandes du binaire. Déjà tiré par PocketBase, dont
+    app.RootCmd est un *cobra.Command ; il est devenu une dépendance directe
+    avec la commande de fusion des tags.
+
 Les autres dépendances Go sont déclarées dans go.mod ; leurs licences
 respectives s'appliquent au code qu'elles couvrent.
 
@@ -64,11 +69,13 @@ Ce qui n'est PAS dans ce dépôt, et pourquoi
 -------------------------------------------
 
 Aucune ligne de code n'est reprise de Mealie ni de Tandoor, tous deux sous
-licence AGPL-3.0. Leur analyseur d'ingrédients a été lu et documenté pour
-comprendre pourquoi il échoue sur le français (NOTE-PROJET.md §4), jamais
-recopié : en recopier ne serait-ce qu'un extrait basculerait l'ensemble de
-Patachoo sous AGPL-3.0, licence plus contraignante dont l'absorption ne se
-défait pas.
+licence AGPL-3.0. Leur analyseur d'ingrédients a été lu pour comprendre
+pourquoi il échoue sur le français — sept lignes sur huit mal analysées par
+l'un comme par l'autre, faute d'un modèle qui sache lire la préposition
+partitive et les unités multi-mots — jamais recopié : en recopier ne serait-ce
+qu'un extrait basculerait l'ensemble de Patachoo sous AGPL-3.0, licence plus
+contraignante dont l'absorption ne se défait pas. Le constat est décrit dans
+le README, section « Ce que ça sait faire que les autres ne savent pas ».
 
 Aucune page récoltée sur un site tiers n'est versionnée ici. Les jeux de test
 de l'extracteur sont écrits de toutes pièces : contenu inventé, structures

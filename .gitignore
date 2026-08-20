@@ -1,5 +1,8 @@
-# Suivi de projet — contient le jeton d'API Vikunja en clair
+# Suivi de projet — local à la machine, hors périmètre du dépôt
 vikunja/
+
+# Outillage local de l'assistant de code — réglages propres au poste
+.claude/
 
 # Données PocketBase : base SQLite, fichiers téléversés, sauvegardes
 pb_data/
