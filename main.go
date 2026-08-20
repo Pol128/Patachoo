@@ -32,6 +32,10 @@ func main() {
 		se.Router.GET("/", pageAccueil)
 		se.Router.POST("/api/import", importDepuisURL)
 
+		// Nos propres assets, embarqués dans le binaire : ni CDN, ni domaine
+		// tiers. Patachoo doit fonctionner sur un réseau coupé d'Internet.
+		se.Router.GET("/statique/{path...}", assetsStatiques())
+
 		// se.Next() laisse la main aux routes de PocketBase : sans lui,
 		// l'interface d'administration et l'API REST ne répondent plus.
 		return se.Next()
