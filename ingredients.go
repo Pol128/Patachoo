@@ -141,15 +141,11 @@ func (c champsIngredient) pose(enregistrement *core.Record) {
 // chemin d'écriture ajouté plus tard est couvert sans qu'on ait à y penser,
 // ce qui est exactement là où on oublierait.
 func brancheLIngredient(app core.App, a *analyseur) {
-	app.OnRecordCreate("ingredients").BindFunc(a.litALaCreation)
+	// À la création, les cinq champs sont remplis à partir de raw même s'ils
+	// étaient fournis dans la requête : sinon un client choisirait ce que la
+	// fiche affiche, sans rapport avec la ligne enregistrée.
+	app.OnRecordCreate("ingredients").BindFunc(a.litLaLigne)
 	app.OnRecordUpdate("ingredients").BindFunc(a.relitSiRawAChange)
-}
-
-// litALaCreation remplit les cinq champs à partir de raw, même s'ils étaient
-// fournis dans la requête : sinon un client choisirait ce que la fiche
-// affiche, sans rapport avec la ligne enregistrée.
-func (a *analyseur) litALaCreation(e *core.RecordEvent) error {
-	return a.relit(e)
 }
 
 // relitSiRawAChange ne recalcule que si la ligne brute a bougé.
@@ -161,12 +157,12 @@ func (a *analyseur) relitSiRawAChange(e *core.RecordEvent) error {
 	if e.Record.GetString("raw") == e.Record.Original().GetString("raw") {
 		return e.Next()
 	}
-	return a.relit(e)
+	return a.litLaLigne(e)
 }
 
-// relit lit la ligne brute, en pose les champs dérivés, et journalise ce que
-// le moteur n'a pas su lire.
-func (a *analyseur) relit(e *core.RecordEvent) error {
+// litLaLigne lit la ligne brute, en pose les champs dérivés, et journalise ce
+// que le moteur n'a pas su lire.
+func (a *analyseur) litLaLigne(e *core.RecordEvent) error {
 	brut := e.Record.GetString("raw")
 	if strings.TrimSpace(brut) == "" {
 		// Le champ est déclaré obligatoire, mais la validation laisserait
