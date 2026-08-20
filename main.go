@@ -28,6 +28,11 @@ func main() {
 	// d'administration décrirait un schéma que personne n'a décidé.
 	migratecmd.MustRegister(app, app.RootCmd, migratecmd.Config{Automigrate: false})
 
+	// La sonde du HEALTHCHECK de l'image Docker. Elle vit sur RootCmd, comme
+	// serve ou migrate : l'image est un scratch, sans shell ni curl, donc le
+	// seul exécutable qu'elle puisse appeler est ce binaire.
+	app.RootCmd.AddCommand(commandeSante())
+
 	// Le pack de langue et le lexique d'aliments sont lus ici, une fois, et
 	// nulle part ailleurs : les recharger sur le chemin d'une ligne mettrait
 	// le coût du chargement sur chaque ingrédient importé.
