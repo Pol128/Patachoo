@@ -1,4 +1,4 @@
-package migrations
+package texte
 
 import "testing"
 
@@ -13,8 +13,8 @@ func TestSlug(t *testing.T) {
 		"":                 "",
 	}
 	for entree, attendu := range cas {
-		if obtenu := slug(entree); obtenu != attendu {
-			t.Errorf("slug(%q) = %q, attendu %q", entree, obtenu, attendu)
+		if obtenu := Slug(entree); obtenu != attendu {
+			t.Errorf("Slug(%q) = %q, attendu %q", entree, obtenu, attendu)
 		}
 	}
 }
