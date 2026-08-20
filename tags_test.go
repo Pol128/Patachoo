@@ -18,18 +18,7 @@ import (
 func baseNeuve(t *testing.T) core.App {
 	t.Helper()
 
-	app := core.NewBaseApp(core.BaseAppConfig{DataDir: t.TempDir()})
-	t.Cleanup(func() { _ = app.ResetBootstrapState() })
-
-	brancheLesHooks(app)
-
-	if err := app.Bootstrap(); err != nil {
-		t.Fatalf("amorçage : %v", err)
-	}
-	if err := app.RunAllMigrations(); err != nil {
-		t.Fatalf("migrations : %v", err)
-	}
-	return app
+	return baseNeuveAvec(t, analyseurDeTest(t))
 }
 
 func tagNeuf(t *testing.T, app core.App) *core.Record {
