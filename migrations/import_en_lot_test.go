@@ -36,11 +36,14 @@ var champsDuLot = map[string]map[string]string{
 // Les deux jeux de statuts, dans l'ordre du contrat. La comparaison porte sur
 // la liste entière : une valeur ajoutée en passant est une valeur que
 // l'ouvrier de la sous-tâche 3 ne saura pas traiter.
+//
+// Réécrits ici plutôt que lus depuis la migration : un test qui compare une
+// variable à elle-même passe quoi qu'on y mette.
 var (
-	statutsDUnLot    = []string{"en_cours", "termine"}
-	statutsDUneURL   = []string{"a_faire", "en_cours", "importee", "deja_presente", "echec"}
-	migrationDuLot   = "1787329500_import_en_lot.go"
-	collectionsDuLot = []string{"import_urls", "imports"}
+	statutsAttendusDUnLot  = []string{"en_cours", "termine"}
+	statutsAttendusDUneURL = []string{"a_faire", "en_cours", "importee", "deja_presente", "echec"}
+	migrationDuLot         = "1787329500_import_en_lot.go"
+	collectionsDuLot       = []string{"import_urls", "imports"}
 )
 
 func TestLesCollectionsDuLotOntLeursChamps(t *testing.T) {
@@ -69,8 +72,8 @@ func TestLesStatutsDuLotSontExactementCeuxDuContrat(t *testing.T) {
 	app := baseNeuve(t)
 
 	for nom, attendues := range map[string][]string{
-		"imports":     statutsDUnLot,
-		"import_urls": statutsDUneURL,
+		"imports":     statutsAttendusDUnLot,
+		"import_urls": statutsAttendusDUneURL,
 	} {
 		collection, err := app.FindCollectionByNameOrId(nom)
 		if err != nil {
