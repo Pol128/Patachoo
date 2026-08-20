@@ -1,6 +1,7 @@
 package migrations
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -126,5 +127,33 @@ func estObligatoire(champ core.Field) bool {
 		return f.Required
 	default:
 		return false
+	}
+}
+
+// defaitJusqua rejoue vers le bas jusqu'à défaire la migration du fichier
+// donné, celle-ci comprise.
+//
+// Le nombre de migrations à défaire se calcule, il ne se code pas : un
+// « Down(1) » écrit quand la migration visée était la dernière défait la
+// suivante à sa place le jour où on en ajoute une, et le test rougit sans que
+// rien ne soit cassé.
+func defaitJusqua(t *testing.T, app core.App, fichier string) {
+	t.Helper()
+
+	liste := core.MigrationsList{}
+	liste.Copy(core.SystemMigrations)
+	liste.Copy(core.AppMigrations)
+
+	// La liste est triée par nom de fichier, comme l'ordre d'application :
+	// tout ce qui suit la migration visée doit être défait avec elle.
+	rang := slices.IndexFunc(liste.Items(), func(migration *core.Migration) bool {
+		return migration.File == fichier
+	})
+	if rang < 0 {
+		t.Fatalf("migration %s introuvable", fichier)
+	}
+
+	if _, err := core.NewMigrationsRunner(app, liste).Down(len(liste.Items()) - rang); err != nil {
+		t.Fatalf("retour en arrière : %v", err)
 	}
 }
