@@ -76,9 +76,20 @@ une base de cette taille, surtout des faux positifs qu'on apprendrait vite à
 ignorer — c'est-à-dire le pire des deux mondes. À reconsidérer si le code de
 manipulation de fichiers et d'URL grossit.
 
-**Pas encore de CI**, donc la DoD s'applique à la main, et c'est sa faiblesse
-connue. Le point 5 est ce qui la rend vérifiable en attendant : le commentaire
-Vikunja est la trace. Poser la CI est une tâche à part entière (PATA-30).
+**Le point 1 tourne tout seul.** `.github/workflows/verifie.yml` lance
+`./verifie` sur chaque poussée et sur chaque demande de fusion vers `main` : le
+seul point automatisable de cette DoD ne dépend donc plus de la discipline de
+celui qui pousse. Le workflow n'y réénumère aucun contrôle, il appelle le
+script ; un critère ajouté à `./verifie` arrive en CI sans qu'on touche au YAML.
+
+**Les points 2 à 5 restent manuels**, et c'est la faiblesse connue de cette
+DoD : aucun d'eux ne se lit dans un code de retour. Le point 5 est ce qui les
+rend vérifiables — le commentaire Vikunja est la trace. Une CI verte dit que
+rien n'est cassé, pas que la tâche est faite.
+
+**Le rouge n'interdit pas encore la fusion.** Il se voit sur la demande de
+fusion, il ne la bloque pas : la protection de branche est un réglage GitHub,
+hors dépôt, à poser à la main.
 
 **Rétroactivité.** PATA-1, PATA-2 et PATA-5 ont été livrées le 19/08/2026 sous
 une version implicite de cette DoD : `gofmt`, `go vet`, tests unitaires, et un

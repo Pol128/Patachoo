@@ -1,0 +1,36 @@
+# La Definition of Done, lancée ailleurs que dans la tête de celui qui a écrit
+# le code (DOD.md §1).
+#
+# Ce fichier ne réénumère aucun des contrôles : il appelle `./verifie`, et rien
+# d'autre. Un critère ajouté au script arrive donc en CI sans qu'on touche à ce
+# YAML — sinon on entretient deux définitions du vert, dont une seule serait à
+# jour.
+
+name: verifie
+
+on:
+  # Toutes les branches : « sur chaque poussée » pris au mot. Une branche qui
+  # porte une demande de fusion déclenche donc deux fois ; c'est accepté, le
+  # dépôt est petit.
+  push:
+  pull_request:
+    branches: [main]
+
+jobs:
+  verifie:
+    runs-on: ubuntu-latest
+
+    # Le job ne pousse rien, ne publie rien, ne commente rien. Il lit le dépôt.
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Aucun numéro de version ici : go.mod est la seule source. Une version
+      # figée dans ce fichier divergerait en silence du jour où go.mod change.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - run: ./verifie
