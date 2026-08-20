@@ -2,8 +2,10 @@ package jsonld
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -12,10 +14,9 @@ import (
 // Le corpus est écrit de toutes pièces : contenu inventé, structures réelles.
 // Voir testdata/LISEZMOI.md pour le pourquoi et la manière d'ajouter un cas.
 //
-// Tant que l'extraction n'existe pas (PATA-7), ces tests vérifient le corpus
-// lui-même. C'est loin d'être inutile : un jeu de test faux se retourne contre
-// celui qui s'y fie, et il se découvre d'habitude le jour où l'on débogue le
-// code au lieu du test.
+// Le corpus juge l'extraction (PATA-7), et ces tests le jugent lui : un jeu de
+// test faux se retourne contre celui qui s'y fie, et il se découvre d'habitude
+// le jour où l'on débogue le code au lieu du test.
 
 // Attendu est le résultat qu'on exige d'une page du corpus. Soit une recette,
 // soit un échec nommé — jamais les deux, jamais aucun.
@@ -70,6 +71,102 @@ func chargeCas(t *testing.T, nom string) (string, Attendu) {
 		t.Fatalf("%s.attendu.json illisible : %v", nom, err)
 	}
 	return string(html), attendu
+}
+
+// sentinelles relie le champ « erreur » d'un attendu.json à l'erreur que
+// l'extraction doit rendre. La clé est la constante elle-même : la comparaison
+// avec le fichier reste littérale.
+var sentinelles = map[string]error{
+	SansRecette:   ErrSansRecette,
+	AucunBalisage: ErrAucunBalisage,
+	JSONInvalide:  ErrJSONInvalide,
+	TitreAbsent:   ErrTitreAbsent,
+}
+
+// Le corpus est le juge de l'extraction : chaque page y passe, et ce qui en
+// sort est comparé au fichier attendu — champ à champ, ordre des tranches
+// compris. Un cas qui ne passe pas se corrige dans le code, pas dans son
+// attendu.
+func TestChaquePageDuCorpusPasseParLExtracteur(t *testing.T) {
+	pages, err := filepath.Glob(filepath.Join("testdata", "*.html"))
+	if err != nil || len(pages) == 0 {
+		t.Fatalf("corpus introuvable : %v", err)
+	}
+
+	for _, page := range pages {
+		nom := strings.TrimSuffix(filepath.Base(page), ".html")
+		t.Run(nom, func(t *testing.T) {
+			html, attendu := chargeCas(t, nom)
+			recette, err := Extraire([]byte(html))
+
+			if attendu.Erreur != "" {
+				sentinelle, connue := sentinelles[attendu.Erreur]
+				if !connue {
+					t.Fatalf("échec %q inconnu : le corpus attend une cause que le paquet ne nomme pas", attendu.Erreur)
+				}
+				if !errors.Is(err, sentinelle) {
+					t.Fatalf("erreur %v, attendue %v", err, sentinelle)
+				}
+				if err.Error() != attendu.Erreur {
+					t.Errorf("message %q, attendu %q : la comparaison avec attendu.json doit rester littérale", err.Error(), attendu.Erreur)
+				}
+				if !reflect.DeepEqual(recette, Recette{}) {
+					t.Errorf("un échec rend une recette : %+v", recette)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("erreur inattendue : %v", err)
+			}
+			comparerRecettes(t, recette, *attendu.Recette)
+		})
+	}
+}
+
+func comparerRecettes(t *testing.T, obtenue, attendue Recette) {
+	t.Helper()
+
+	champs := []struct {
+		nom             string
+		obtenu, attendu string
+	}{
+		{"titre", obtenue.Titre, attendue.Titre},
+		{"description", obtenue.Description, attendue.Description},
+		{"image", obtenue.Image, attendue.Image},
+		{"portions", obtenue.Portions, attendue.Portions},
+	}
+	for _, champ := range champs {
+		if champ.obtenu != champ.attendu {
+			t.Errorf("%s : %q, attendu %q", champ.nom, champ.obtenu, champ.attendu)
+		}
+	}
+
+	if obtenue.PreparationMin != attendue.PreparationMin {
+		t.Errorf("préparation : %d min, attendu %d", obtenue.PreparationMin, attendue.PreparationMin)
+	}
+	if obtenue.CuissonMin != attendue.CuissonMin {
+		t.Errorf("cuisson : %d min, attendu %d", obtenue.CuissonMin, attendue.CuissonMin)
+	}
+
+	comparerTranches(t, "ingrédients", obtenue.Ingredients, attendue.Ingredients)
+	comparerTranches(t, "étapes", obtenue.Etapes, attendue.Etapes)
+}
+
+// L'ordre compte : une recette dont les étapes sont mélangées est fausse même
+// si elle les porte toutes.
+func comparerTranches(t *testing.T, nom string, obtenue, attendue []string) {
+	t.Helper()
+
+	if len(obtenue) != len(attendue) {
+		t.Errorf("%s : %d, attendu %d\n  obtenu  %q\n  attendu %q", nom, len(obtenue), len(attendue), obtenue, attendue)
+		return
+	}
+	for i := range attendue {
+		if obtenue[i] != attendue[i] {
+			t.Errorf("%s[%d] : %q, attendu %q", nom, i, obtenue[i], attendue[i])
+		}
+	}
 }
 
 func TestTousLesCasObligatoiresSontLa(t *testing.T) {
