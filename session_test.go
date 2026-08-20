@@ -95,6 +95,74 @@ func creeCompte(t *testing.T, app core.App, courriel, nom string) *core.Record {
 	return compte
 }
 
+// jetonRenouvelableCourt émet un jeton ordinaire — donc renouvelable — mais de
+// courte vie, en abaissant le temps de l'émission la durée déclarée sur la
+// collection.
+//
+// NewStaticAuthToken donnerait bien un jeton court, mais non renouvelable :
+// c'est celui de la route d'impersonation, et le renouvellement doit justement
+// le refuser. Un test du renouvellement bâti sur lui ne couvrirait pas le
+// chemin réel, celui d'une session de navigateur.
+//
+// Seule la durée change : PocketBase ne réémet le secret de signature que sur
+// un changement de règle d'authentification (core/collection_model.go), donc le
+// jeton reste valable après le rétablissement.
+func jetonRenouvelableCourt(t *testing.T, app core.App, compte *core.Record, vie time.Duration) string {
+	t.Helper()
+
+	collection := compte.Collection()
+	dureeInitiale := collection.AuthToken.Duration
+
+	collection.AuthToken.Duration = int64(vie.Seconds())
+	if err := app.Save(collection); err != nil {
+		t.Fatalf("abaissement de la durée du jeton : %v", err)
+	}
+
+	jeton, err := compte.NewAuthToken()
+	if err != nil {
+		t.Fatalf("émission du jeton court : %v", err)
+	}
+
+	collection.AuthToken.Duration = dureeInitiale
+	if err := app.Save(collection); err != nil {
+		t.Fatalf("rétablissement de la durée du jeton : %v", err)
+	}
+	return jeton
+}
+
+// poseLaRegleDAuthentification écrit la règle qui décide quels comptes ont le
+// droit d'ouvrir une session. La collection est livrée sans elle — tout le
+// monde passe —, donc un test du refus doit la poser lui-même.
+func poseLaRegleDAuthentification(t *testing.T, app core.App, regle string) {
+	t.Helper()
+
+	collection, err := app.FindCollectionByNameOrId("users")
+	if err != nil {
+		t.Fatalf("collection users : %v", err)
+	}
+
+	collection.AuthRule = &regle
+	if err := app.Save(collection); err != nil {
+		t.Fatalf("pose de la règle d'authentification : %v", err)
+	}
+}
+
+// coupeLAuthentificationParMotDePasse ferme l'interrupteur que
+// l'administration expose sur la collection.
+func coupeLAuthentificationParMotDePasse(t *testing.T, app core.App) {
+	t.Helper()
+
+	collection, err := app.FindCollectionByNameOrId("users")
+	if err != nil {
+		t.Fatalf("collection users : %v", err)
+	}
+
+	collection.PasswordAuth.Enabled = false
+	if err := app.Save(collection); err != nil {
+		t.Fatalf("coupure de l'authentification par mot de passe : %v", err)
+	}
+}
+
 // seConnecte poste le formulaire de connexion.
 func seConnecte(t *testing.T, mux http.Handler, courriel, motDePasse string) *httptest.ResponseRecorder {
 	t.Helper()
@@ -346,10 +414,10 @@ func TestUneSessionPorteeParLEnTeteNestPasRenouvelee(t *testing.T) {
 	app, mux := serveurDeTest(t, sonde)
 	compte := compteDeTest(t, app)
 
-	court, err := compte.NewStaticAuthToken(30 * time.Second)
-	if err != nil {
-		t.Fatalf("émission du jeton court : %v", err)
-	}
+	// Renouvelable, et non statique : c'est la garde du cookie que ce test
+	// exerce, et un jeton que le renouvellement refuserait de toute façon la
+	// laisserait passer sans rien prouver.
+	court := jetonRenouvelableCourt(t, app, compte, time.Minute)
 
 	rec := avecEnTete(mux, http.MethodGet, "/sonde", court, nil)
 
@@ -421,6 +489,45 @@ func TestUnEchecDeConnexionNeDitPasQuelsCourrielsExistent(t *testing.T) {
 	}
 }
 
+// La règle d'authentification de la collection décide quels comptes ont le
+// droit d'ouvrir une session : un compte non vérifié, suspendu, restreint. Elle
+// se pose dans l'administration, et PocketBase la lit sur sa propre route
+// (apis/record_helpers.go, recordAuthResponse) — pas au chargement du jeton.
+// Une page de connexion qui ne la lit pas la laisse échouer en silence, du bon
+// côté pour l'attaquant, et le jeton qu'elle émet reste valable cinq jours.
+func TestUneConnexionEstRefuseeParLaRegleDAuthentification(t *testing.T) {
+	app, mux := serveurDeTest(t)
+	compteDeTest(t, app)
+	poseLaRegleDAuthentification(t, app, "verified = true")
+
+	rec := seConnecte(t, mux, courrielDeTest, motDePasseDeTest)
+
+	if cookie := cookieEventuelDe(rec); cookie != nil {
+		t.Fatalf("une session a été ouverte pour un compte que la règle refuse : %q", cookie.Value)
+	}
+	if !strings.Contains(rec.Body.String(), messageEchecConnexion) {
+		t.Errorf("le refus n'annonce pas l'échec :\n%s", rec.Body.String())
+	}
+}
+
+// L'interrupteur que l'administration expose doit couper quelque chose. Sans
+// cette lecture, il ne coupe que la route de PocketBase, et la nôtre continue
+// d'authentifier par mot de passe.
+func TestUneConnexionEstRefuseeQuandLeMotDePasseEstCoupe(t *testing.T) {
+	app, mux := serveurDeTest(t)
+	compteDeTest(t, app)
+	coupeLAuthentificationParMotDePasse(t, app)
+
+	rec := seConnecte(t, mux, courrielDeTest, motDePasseDeTest)
+
+	if cookie := cookieEventuelDe(rec); cookie != nil {
+		t.Fatalf("une session a été ouverte alors que le mot de passe est coupé : %q", cookie.Value)
+	}
+	if !strings.Contains(rec.Body.String(), messageEchecConnexion) {
+		t.Errorf("le refus n'annonce pas l'échec :\n%s", rec.Body.String())
+	}
+}
+
 func TestLeMotDePasseNapparaitNiDansLaPageNiDansLesJournaux(t *testing.T) {
 	const saisi = "sirop-de-liege-mal-tape"
 
@@ -480,10 +587,9 @@ func TestLaDeconnexionSousLaMiVieNeRenvoieQueLEffacement(t *testing.T) {
 	app, mux := serveurDeTest(t, sonde)
 	compte := compteDeTest(t, app)
 
-	court, err := compte.NewStaticAuthToken(30 * time.Second)
-	if err != nil {
-		t.Fatalf("émission du jeton court : %v", err)
-	}
+	// Renouvelable : c'est la rencontre du renouvellement et de l'effacement
+	// que ce test garde, et elle n'a lieu que si le premier se déclenche.
+	court := jetonRenouvelableCourt(t, app, compte, time.Minute)
 
 	rec := avecCookie(mux, http.MethodPost, "/deconnexion", &http.Cookie{Name: nomCookieSession, Value: court})
 
@@ -521,13 +627,10 @@ func TestUnJetonSousLaMiVieEstRenouvele(t *testing.T) {
 	app, mux := serveurDeTest(t, sonde)
 	compte := compteDeTest(t, app)
 
-	// La durée réduite que demande le critère : un jeton émis pour trente
-	// secondes est, par construction, très en deçà de la mi-vie de la
-	// collection — cinq jours — sans qu'aucun test ait à attendre.
-	court, err := compte.NewStaticAuthToken(30 * time.Second)
-	if err != nil {
-		t.Fatalf("émission du jeton court : %v", err)
-	}
+	// La durée réduite que demande le critère, obtenue sans changer la nature
+	// du jeton : celui-ci est ordinaire, donc renouvelable, et c'est le chemin
+	// d'une session de navigateur — le seul que le renouvellement serve.
+	court := jetonRenouvelableCourt(t, app, compte, time.Minute)
 
 	rec := avecCookie(mux, http.MethodGet, "/sonde", &http.Cookie{Name: nomCookieSession, Value: court})
 
@@ -542,6 +645,35 @@ func TestUnJetonSousLaMiVieEstRenouvele(t *testing.T) {
 		t.Errorf("Max-Age %d, attendu %d", frais.MaxAge, attendu)
 	}
 	attributsDeSession(t, frais)
+}
+
+// Un jeton statique porte une borne choisie à l'émission — c'est tout le sens
+// du paramètre de durée de NewStaticAuthToken, qu'emploie la route
+// d'impersonation. Le remplacer par un jeton ordinaire de cinq jours effacerait
+// cette borne, et la session se prolongerait ensuite de renouvellement en
+// renouvellement.
+//
+// PocketBase pose la même règle sur sa propre route de renouvellement
+// (apis/record_auth_refresh.go) : pas de revendication refreshable, pas de
+// réémission.
+func TestUnJetonNonRenouvelableNestPasRenouvele(t *testing.T) {
+	app, mux := serveurDeTest(t, sonde)
+	compte := compteDeTest(t, app)
+
+	statique, err := compte.NewStaticAuthToken(30 * time.Second)
+	if err != nil {
+		t.Fatalf("émission du jeton statique : %v", err)
+	}
+
+	rec := avecCookie(mux, http.MethodGet, "/sonde", &http.Cookie{Name: nomCookieSession, Value: statique})
+
+	if rec.Body.String() != compte.Id {
+		t.Fatalf("la sonde a reconnu %q, attendu %q : un jeton statique reste valable, il ne se renouvelle simplement pas",
+			rec.Body.String(), compte.Id)
+	}
+	if pose := cookieEventuelDe(rec); pose != nil {
+		t.Errorf("un jeton non renouvelable a été renouvelé : %q", pose.Value)
+	}
 }
 
 // --- Les règles d'accès ---------------------------------------------------
