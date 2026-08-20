@@ -73,6 +73,22 @@ func ingredientNeuf(t *testing.T, app core.App, recette *core.Record, brut strin
 	return ligne
 }
 
+// relit relit la ligne depuis la base.
+//
+// Toute mise à jour passe par là, et c'est le chemin réel : l'API REST, le
+// formulaire et l'administration relisent l'enregistrement avant de le
+// modifier. C'est aussi ce qui peuple Original(), sur quoi le hook s'appuie
+// pour savoir si raw a bougé.
+func relit(t *testing.T, app core.App, id string) *core.Record {
+	t.Helper()
+
+	ligne, err := app.FindRecordById("ingredients", id)
+	if err != nil {
+		t.Fatalf("relecture de %s : %v", id, err)
+	}
+	return ligne
+}
+
 func nombreDIngredients(t *testing.T, app core.App) int {
 	t.Helper()
 
@@ -236,10 +252,7 @@ func TestRawEstConserveMotPourMot(t *testing.T) {
 				t.Fatalf("enregistrement : %v", err)
 			}
 
-			relue, err := app.FindRecordById("ingredients", ligne.Id)
-			if err != nil {
-				t.Fatalf("relecture : %v", err)
-			}
+			relue := relit(t, app, ligne.Id)
 			if obtenu := relue.GetString("raw"); obtenu != brut {
 				t.Errorf("raw = %q, attendu %q", obtenu, brut)
 			}
@@ -261,16 +274,14 @@ func TestUneCorrectionManuelleSurvitATantQueRawNeBougePas(t *testing.T) {
 		t.Fatalf("enregistrement : %v", err)
 	}
 
-	ligne.Set("food", "ail dégermé")
-	ligne.Set("quantity", 3)
-	if err := app.Save(ligne); err != nil {
+	corrigee := relit(t, app, ligne.Id)
+	corrigee.Set("food", "ail dégermé")
+	corrigee.Set("quantity", 3)
+	if err := app.Save(corrigee); err != nil {
 		t.Fatalf("ré-enregistrement : %v", err)
 	}
 
-	relue, err := app.FindRecordById("ingredients", ligne.Id)
-	if err != nil {
-		t.Fatalf("relecture : %v", err)
-	}
+	relue := relit(t, app, ligne.Id)
 	if f := relue.GetString("food"); f != "ail dégermé" {
 		t.Errorf("food = %q, attendu %q — la correction a été écrasée", f, "ail dégermé")
 	}
@@ -287,20 +298,20 @@ func TestRawModifieRecalculeLesCinqChamps(t *testing.T) {
 	if err := app.Save(ligne); err != nil {
 		t.Fatalf("enregistrement : %v", err)
 	}
-	ligne.Set("food", "ail dégermé")
-	if err := app.Save(ligne); err != nil {
+
+	corrigee := relit(t, app, ligne.Id)
+	corrigee.Set("food", "ail dégermé")
+	if err := app.Save(corrigee); err != nil {
 		t.Fatalf("correction manuelle : %v", err)
 	}
 
-	ligne.Set("raw", "1 c. à s. rase de sucre")
-	if err := app.Save(ligne); err != nil {
+	reecrite := relit(t, app, ligne.Id)
+	reecrite.Set("raw", "1 c. à s. rase de sucre")
+	if err := app.Save(reecrite); err != nil {
 		t.Fatalf("changement de raw : %v", err)
 	}
 
-	relue, err := app.FindRecordById("ingredients", ligne.Id)
-	if err != nil {
-		t.Fatalf("relecture : %v", err)
-	}
+	relue := relit(t, app, ligne.Id)
 	if q := relue.GetFloat("quantity"); q != 1 {
 		t.Errorf("quantity = %v, attendu 1", q)
 	}
@@ -367,8 +378,10 @@ func TestLeCompteurIgnoreUneMiseAJourSansChangementDeRaw(t *testing.T) {
 	if err := app.Save(ligne); err != nil {
 		t.Fatalf("enregistrement : %v", err)
 	}
-	ligne.Set("food", "poivre")
-	if err := app.Save(ligne); err != nil {
+
+	corrigee := relit(t, app, ligne.Id)
+	corrigee.Set("food", "poivre")
+	if err := app.Save(corrigee); err != nil {
 		t.Fatalf("ré-enregistrement : %v", err)
 	}
 
@@ -392,10 +405,7 @@ func TestUneLigneHostileRessortEchappee(t *testing.T) {
 		t.Fatalf("enregistrement : %v", err)
 	}
 
-	relue, err := app.FindRecordById("ingredients", ligne.Id)
-	if err != nil {
-		t.Fatalf("relecture : %v", err)
-	}
+	relue := relit(t, app, ligne.Id)
 	if brut := relue.GetString("raw"); brut != hostile {
 		t.Fatalf("raw = %q, attendu %q", brut, hostile)
 	}

@@ -28,9 +28,17 @@ func main() {
 	// d'administration décrirait un schéma que personne n'a décidé.
 	migratecmd.MustRegister(app, app.RootCmd, migratecmd.Config{Automigrate: false})
 
+	// Le pack de langue et le lexique d'aliments sont lus ici, une fois, et
+	// nulle part ailleurs : les recharger sur le chemin d'une ligne mettrait
+	// le coût du chargement sur chaque ingrédient importé.
+	analyseur, err := analyseurFR()
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	// Sur l'app, pas dans OnServe : les règles de modèle valent aussi pour un
 	// tag créé par une commande, où le serveur ne tourne pas.
-	brancheLesHooks(app)
+	brancheLesHooks(app, analyseur)
 
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
 		se.Router.GET("/", pageAccueil)

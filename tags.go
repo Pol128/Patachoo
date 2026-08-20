@@ -22,9 +22,11 @@ const maxTags = 20
 // Sur l'app et non sur OnServe : un tag créé par une commande — une fusion,
 // une migration — doit être normalisé lui aussi, et OnServe ne se déclenche
 // que pour le serveur.
-func brancheLesHooks(app core.App) {
+func brancheLesHooks(app core.App, a *analyseur) {
 	app.OnRecordCreate("tags").BindFunc(normaliseLeTag)
 	app.OnRecordUpdate("tags").BindFunc(normaliseLeTag)
+
+	brancheLIngredient(app, a)
 }
 
 // normaliseLeTag met le nom en forme et recalcule le slug avant l'écriture.
