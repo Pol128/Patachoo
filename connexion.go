@@ -34,6 +34,12 @@ func connexion(e *core.RequestEvent) error {
 
 	compte, err := e.App.FindAuthRecordByEmail("users", courriel)
 	if err != nil || !compte.ValidatePassword(motDePasse) {
+		// Un courriel inconnu n'offre aucun mot de passe à vérifier, donc rien
+		// à hacher : sans le contrôle factice, il sort d'ici en quelques
+		// microsecondes quand un courriel connu paie le bcrypt complet.
+		if err != nil {
+			controleFacticeDuMotDePasse(e)
+		}
 		return echecDeConnexion(e)
 	}
 
@@ -51,6 +57,29 @@ func connexion(e *core.RequestEvent) error {
 	poseLeCookieDeSession(e, cookieDeSession(jeton, compte.Collection().AuthToken.DurationTime()))
 
 	return e.Redirect(http.StatusSeeOther, "/")
+}
+
+// controleFacticeDuMotDePasse paie le coût d'un hachage alors qu'il n'y a rien
+// à vérifier.
+//
+// C'est le seul moyen d'égaliser le temps de réponse des deux refus : le
+// message est déjà identique, mais un écart d'un ou deux ordres de grandeur se
+// mesure sur le réseau et fait de la page de connexion un annuaire des comptes
+// existants par un autre canal. PocketBase pose la même parade au même endroit
+// de sa propre route (apis/record_auth_with_password.go, dummyPasswordCheck) ;
+// elle n'y est pas exportée, d'où cette reprise.
+//
+// Une collection introuvable ou vide ne laisse rien à hacher et le refus repart
+// aussitôt : sans compte, il n'y a aucune existence à déduire du temps.
+func controleFacticeDuMotDePasse(e *core.RequestEvent) {
+	quelconque := &core.Record{}
+	if err := e.App.RecordQuery("users").Limit(1).One(quelconque); err != nil {
+		return
+	}
+
+	// Ni la valeur soumise ni le résultat n'importent : seul le temps passé
+	// dans bcrypt est l'objet de l'appel.
+	_ = quelconque.ValidatePassword("")
 }
 
 // laConnexionEstAutorisee applique les deux contrôles que PocketBase pose sur
