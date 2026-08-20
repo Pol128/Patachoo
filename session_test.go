@@ -176,6 +176,32 @@ func seConnecte(t *testing.T, mux http.Handler, courriel, motDePasse string) *ht
 	return rec
 }
 
+// plusCourtEchecDeConnexion joue plusieurs fois le même échec de connexion et
+// rend la plus courte des durées mesurées.
+//
+// Le minimum, et non la moyenne : c'est le plancher qui dit le travail
+// réellement fait, là où une moyenne mêle le coût du hachage aux aléas
+// d'ordonnancement de la machine. Chaque mesure vérifie au passage que la
+// connexion a bien échoué — une réussite mesurerait un autre chemin.
+func plusCourtEchecDeConnexion(t *testing.T, mux http.Handler, courriel string, mesures int) time.Duration {
+	t.Helper()
+
+	var plusCourt time.Duration
+	for i := 0; i < mesures; i++ {
+		debut := time.Now()
+		rec := seConnecte(t, mux, courriel, "pas-le-bon-mot-de-passe")
+		ecoule := time.Since(debut)
+
+		if cookie := cookieEventuelDe(rec); cookie != nil {
+			t.Fatalf("la connexion de %q a réussi : la mesure ne porte pas sur un échec", courriel)
+		}
+		if i == 0 || ecoule < plusCourt {
+			plusCourt = ecoule
+		}
+	}
+	return plusCourt
+}
+
 // avecCookie joue une requête portant ce seul cookie, sans en-tête
 // Authorization : c'est ce que fait un navigateur qui demande une page.
 func avecCookie(mux http.Handler, methode, cible string, cookie *http.Cookie) *httptest.ResponseRecorder {
@@ -522,6 +548,35 @@ func TestUnEchecDeConnexionNeDitPasQuelsCourrielsExistent(t *testing.T) {
 	}
 }
 
+// Le message est le même, mais le temps de réponse, lui, parlait : un courriel
+// inconnu sortait avant tout hachage quand un courriel connu payait le bcrypt
+// complet. L'écart se mesure sur le réseau, et fait de la page de connexion un
+// annuaire des comptes existants par un autre canal que son message.
+//
+// La parade est celle que PocketBase pose sur sa propre route
+// (apis/record_auth_with_password.go, dummyPasswordCheck) : hacher quand même,
+// sur un enregistrement quelconque de la collection.
+func TestUnEchecDeConnexionNeDitPasParLeTempsQuelsCourrielsExistent(t *testing.T) {
+	const mesures = 5
+
+	app, mux := serveurDeTest(t)
+	compteDeTest(t, app)
+
+	connu := plusCourtEchecDeConnexion(t, mux, courrielDeTest, mesures)
+	inconnu := plusCourtEchecDeConnexion(t, mux, "personne@exemple.fr", mesures)
+
+	// Le hachage domine tout le reste d'un ordre de grandeur. Si le refus de
+	// référence ne coûte rien, c'est la mesure qui est fausse, pas le code : le
+	// test s'arrête plutôt que de conclure.
+	if connu < 5*time.Millisecond {
+		t.Fatalf("un refus sur courriel connu ne coûte que %s : la mesure ne prouverait rien", connu)
+	}
+	if inconnu < connu/2 {
+		t.Errorf("refus en %s sur courriel inconnu contre %s sur courriel connu : le temps de réponse dit quels comptes existent",
+			inconnu, connu)
+	}
+}
+
 // La règle d'authentification de la collection décide quels comptes ont le
 // droit d'ouvrir une session : un compte non vérifié, suspendu, restreint. Elle
 // se pose dans l'administration, et PocketBase la lit sur sa propre route
@@ -767,6 +822,27 @@ func TestLEnTeteEchappeLeNomDuCompte(t *testing.T) {
 	}
 	if !strings.Contains(corps, "&lt;script&gt;alert(1)&lt;/script&gt;") {
 		t.Errorf("nom de compte absent de l'en-tête :\n%s", corps)
+	}
+}
+
+// Le champ name n'est pas requis sur la collection users : un compte peut
+// exister sans nom, et l'en-tête doit malgré tout désigner qui est connecté. Il
+// retombe alors sur le courriel — retirer ce repli laisse l'en-tête annoncer
+// « Connecté en tant que » suivi de rien.
+func TestLEnTeteRetombeSurLeCourrielQuandLeCompteNaPasDeNom(t *testing.T) {
+	const courrielSansNom = "sans-nom@exemple.fr"
+
+	app, mux := serveurDeTest(t)
+	creeCompte(t, app, courrielSansNom, "")
+
+	cookie := cookieDe(t, seConnecte(t, mux, courrielSansNom, motDePasseDeTest))
+	corps := avecCookie(mux, http.MethodGet, "/", cookie).Body.String()
+
+	if !strings.Contains(corps, courrielSansNom) {
+		t.Errorf("en-tête sans le courriel du compte dépourvu de nom :\n%s", corps)
+	}
+	if !strings.Contains(corps, `action="/deconnexion"`) {
+		t.Errorf("en-tête sans lien de déconnexion : le compte n'est pas reconnu :\n%s", corps)
 	}
 }
 
