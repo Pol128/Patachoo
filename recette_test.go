@@ -622,6 +622,43 @@ func TestLesChampsRenseignesSontRendusAvecLeurLibelle(t *testing.T) {
 	}
 }
 
+// --- Les saisons mènent à la liste filtrée (PATA-18) -----------------------
+
+// PATA-14 rend déjà les saisons en texte ; ce qui est en jeu ici est qu'elles
+// mènent quelque part. Le texte reste le nom accentué, l'URL non.
+func TestLesSaisonsDeLaFicheSontDesLiens(t *testing.T) {
+	app, mux, cookie := serveurConnecte(t)
+	recette := recetteEnBase(t, app, map[string]any{"seasons": []string{"automne", "hiver"}})
+
+	corps := fiche(mux, cookie, recette.Id).Body.String()
+
+	for _, attendu := range []string{
+		`href="/recettes?saison=automne"`,
+		`href="/recettes?saison=hiver"`,
+		">automne<",
+		">hiver<",
+	} {
+		if !strings.Contains(corps, attendu) {
+			t.Errorf("fiche sans %q :\n%s", attendu, corps)
+		}
+	}
+}
+
+// Une recette sans saison ne laisse ni libellé orphelin ni séparateur seul :
+// c'est la règle du bandeau, et les imports arriveront tous ainsi.
+func TestUneFicheSansSaisonNeRendAucunLienDeSaison(t *testing.T) {
+	app, mux, cookie := serveurConnecte(t)
+	recette := recetteEnBase(t, app, map[string]any{})
+
+	corps := fiche(mux, cookie, recette.Id).Body.String()
+
+	for _, interdit := range []string{"Saisons", "/recettes?saison="} {
+		if strings.Contains(corps, interdit) {
+			t.Errorf("fiche sans saison portant %q :\n%s", interdit, corps)
+		}
+	}
+}
+
 // TestUnAuteurSansNomNePubliePasSonCourriel : la fiche est lisible par tout
 // compte connecté, et l'auteur d'une recette est un autre compte que son
 // lecteur. PocketBase protège cette adresse partout ailleurs — users porte
