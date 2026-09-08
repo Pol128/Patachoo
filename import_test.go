@@ -257,6 +257,32 @@ func TestImportPreRemplitLesDureesEtLesPortions(t *testing.T) {
 	}
 }
 
+// Déroulé n° 5 : l'image extraite est montrée à distance dans l'aperçu, pas
+// attachée — le téléchargement est PATA-10. Les deux formes que le corpus
+// porte, l'ImageObject et le tableau, se lisent pareil à l'arrivée.
+func TestImportPreRemplitLImageDistante(t *testing.T) {
+	cas := []struct {
+		cas     string
+		attendu string
+	}{
+		{"image-objet", "https://fourneaux-de-perlimpinpin.example/images/veloute-panais.jpg"},
+		{"image-tableau", "https://fourneaux-de-perlimpinpin.example/images/clafoutis-16x9.jpg"},
+	}
+
+	for _, c := range cas {
+		t.Run(c.cas, func(t *testing.T) {
+			_, mux, cookie := carnetDeTest(t)
+			sert(t, pageDuCorpus(t, c.cas), urlSource)
+
+			corps := corpsImporte(t, mux, cookie)
+
+			if !strings.Contains(corps, `src="`+c.attendu+`"`) {
+				t.Errorf("l'image extraite n'est pas affichée dans l'aperçu :\n%s", corps)
+			}
+		})
+	}
+}
+
 // Critère 4 : source_url est l'URL finale suivie, pas celle qui a été collée.
 func TestImportPorteLURLFinaleSuivie(t *testing.T) {
 	const finale = "https://apres-redirection.example/vrai-lien"
@@ -292,6 +318,37 @@ func TestImportPorteLeNomDuSite(t *testing.T) {
 
 			if site := valeurEventuelleDe(corps, "source-nom"); site != c.attendu {
 				t.Errorf("source_name %q, attendu %q", site, c.attendu)
+			}
+		})
+	}
+}
+
+// Le formulaire pré-rempli poste sur la route d'enregistrement de PATA-15 :
+// c'est la charnière du parcours, « l'utilisateur valide ou corrige → la
+// recette est enregistrée ». Les deux parcours rendent ce formulaire, les deux
+// doivent le poster au bon endroit.
+func TestLeFormulairePreRempliPosteVersLEnregistrement(t *testing.T) {
+	cas := []struct {
+		nom  string
+		page []byte
+	}{
+		{"parcours nominal", pageAvecRecette("", `{"@type":"Recipe","name":"Gratin"}`)},
+		{"parcours d'échec", []byte(`<!doctype html><html lang="fr"><head><meta charset="utf-8">` +
+			`<title>Tarte aux poireaux imaginaire</title></head><body></body></html>`)},
+	}
+
+	for _, c := range cas {
+		t.Run(c.nom, func(t *testing.T) {
+			_, mux, cookie := carnetDeTest(t)
+			sert(t, c.page, urlSource)
+
+			corps := corpsImporte(t, mux, cookie)
+
+			if !estLeFormulaireDeRecette(corps) {
+				t.Fatalf("le formulaire de recette n'a pas été rendu :\n%s", corps)
+			}
+			if !strings.Contains(corps, `action="/recettes"`) {
+				t.Errorf("le formulaire pré-rempli ne poste pas sur /recettes :\n%s", corps)
 			}
 		})
 	}
@@ -531,13 +588,23 @@ func TestImportEchappeLeTitreDuSite(t *testing.T) {
 
 // L'image aussi vient du site : une adresse en javascript: ne doit pas
 // atterrir telle quelle dans un attribut src.
+//
+// La page ne porte pas de Recipe : c'est le chemin d'échec qui lit og:image,
+// et une page balisée n'y passerait jamais. Le test exige donc d'abord que
+// l'image soit rendue, faute de quoi il vérifierait l'absence d'une URL dans
+// une page sans balise <img — c'est-à-dire rien.
 func TestImportNeRendPasUneImageEnSchemaExecutable(t *testing.T) {
 	_, mux, cookie := carnetDeTest(t)
-	sert(t, pageAvecRecette(`<meta property="og:image" content="javascript:alert(1)">`,
-		`{"@type":"Recipe","name":"Gratin"}`), urlSource)
+	sert(t, []byte(`<!doctype html><html lang="fr"><head><meta charset="utf-8">`+
+		`<meta property="og:title" content="Gratin">`+
+		`<meta property="og:image" content="javascript:alert(1)">`+
+		`</head><body></body></html>`), urlSource)
 
 	corps := corpsImporte(t, mux, cookie)
 
+	if !strings.Contains(corps, "<img") {
+		t.Fatalf("aucune image rendue : le test ne vérifierait rien\n%s", corps)
+	}
 	if strings.Contains(corps, "javascript:alert(1)") {
 		t.Errorf("une URL exécutable est rendue telle quelle :\n%s", corps)
 	}
