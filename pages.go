@@ -25,9 +25,15 @@ var statique embed.FS
 var registre = template.NewRegistry()
 
 // donneesPage porte ce que la mise en page et le contenu ont en commun.
+//
+// Utilisateur n'est pas rempli par les pages : c'est rendre qui le pose depuis
+// e.Auth. Une page qui oublierait de le recopier afficherait un en-tête de
+// visiteur à un compte connecté, et personne ne s'en apercevrait avant la mise
+// en ligne.
 type donneesPage struct {
-	Titre   string
-	Message string
+	Titre       string
+	Message     string
+	Utilisateur *utilisateur
 }
 
 // pageAccueil sert la page d'accueil.
@@ -60,7 +66,9 @@ func pageAccueil(e *core.RequestEvent) error {
 // Le rendu passe par un tampon avant d'être écrit : une erreur de gabarit
 // remonte comme erreur et ne peut pas produire une demi-page déjà partie sur
 // le réseau.
-func rendre(e *core.RequestEvent, page, fragment string, donnees any) error {
+func rendre(e *core.RequestEvent, page, fragment string, donnees donneesPage) error {
+	donnees.Utilisateur = utilisateurCourant(e)
+
 	motifs := []string{"vues/" + fragment}
 	if !estHTMX(e) {
 		motifs = []string{"vues/mise-en-page.html", "vues/" + page, "vues/" + fragment}
