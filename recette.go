@@ -92,10 +92,18 @@ func pageRecette(e *core.RequestEvent) error {
 		return err
 	}
 
+	// Les notes sont un bloc de la fiche : elles se lisent avec elle, et les
+	// quatre routes de PATA-22 renvoient ce même bloc seul.
+	notes, err := blocDesNotes(e, recette, "")
+	if err != nil {
+		return err
+	}
+
 	return rendre(e, "recette.html", "recette-corps.html", &donneesPage{
-		Titre:   recette.GetString("title") + " — Patachoo",
-		Recette: donnees,
-	})
+		Titre:        recette.GetString("title") + " — Patachoo",
+		Recette:      donnees,
+		Commentaires: notes,
+	}, "commentaires.html")
 }
 
 // pageRecetteIntrouvable répond par une page lisible, et non par une 500 ni une

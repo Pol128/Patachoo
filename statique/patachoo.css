@@ -304,3 +304,58 @@ footer {
 	margin-top: 0.75rem;
 	border: 1px solid var(--trait);
 }
+
+/* Les notes de cuisine : un journal, pas une discussion. Pas d'avatar, pas de
+   fil indenté, pas de cadre — la signature en petit, le texte à la ligne, et
+   un trait pour séparer deux notes. */
+.commentaires {
+	margin-top: 2.5rem;
+	border-top: 1px solid var(--trait);
+}
+
+.notes {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+
+.note-de-cuisine {
+	padding: 1rem 0;
+	border-bottom: 1px solid var(--trait);
+}
+
+.signature {
+	margin: 0 0 0.5rem;
+	font-size: 0.9rem;
+	color: #6b6459;
+}
+
+/* Le lien et le bouton de la même note sur une seule ligne : le formulaire de
+   suppression est un bloc, et l'empilerait sinon sous le lien de modification. */
+.actions {
+	display: flex;
+	align-items: baseline;
+	gap: 1rem;
+	font-size: 0.9rem;
+}
+
+.ajout-de-note {
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+	margin-top: 1.5rem;
+}
+
+.ajout-de-note textarea {
+	font: inherit;
+	padding: 0.4rem;
+	border: 1px solid var(--trait);
+	background: var(--papier);
+	color: inherit;
+}
+
+.ajout-de-note button {
+	font: inherit;
+	padding: 0.5rem 1rem;
+	align-self: flex-start;
+}

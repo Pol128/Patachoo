@@ -546,7 +546,10 @@ func TestUneModificationNeChangeQueLeTexte(t *testing.T) {
 	recette := recetteEnregistree(t, app, nil)
 	compte := compteDeLaSession(t, app)
 	note := noteEnBase(t, app, recette, compte, "Texte d'origine.")
-	cree := note.GetDateTime("created")
+	// La date est relue en base, et non prise sur l'enregistrement en mémoire :
+	// SQLite la stocke à la milliseconde, l'horloge de l'autodate la pose à la
+	// nanoseconde, et les deux ne seraient jamais égales.
+	cree := relitLaNote(t, app, note.Id).GetDateTime("created")
 
 	posteNote(t, mux, "/recettes/"+recette.Id+"/commentaires/"+note.Id, cookie,
 		corpsDe("Texte corrigé."), nil)
