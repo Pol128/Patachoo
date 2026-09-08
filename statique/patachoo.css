@@ -88,3 +88,74 @@ footer {
 	background: var(--alerte-fond);
 	color: var(--alerte);
 }
+
+/* La photo occupe la largeur de la colonne sans jamais la dépasser, et garde
+   ses proportions : la miniature 800x0 n'a qu'une largeur imposée, sa hauteur
+   dépend de l'original. */
+.illustration {
+	display: block;
+	width: 100%;
+	height: auto;
+	border-radius: 4px;
+}
+
+/* Portions, durées, type de plat, saisons, tags, auteur : des couples
+   libellé/valeur qui se lisent en diagonale, donc sur une ligne chacun plutôt
+   qu'en colonnes — un tableau à deux colonnes casserait sur un téléphone. */
+.faits {
+	margin: 1rem 0;
+}
+
+.faits dt {
+	display: inline;
+	font-weight: 600;
+}
+
+.faits dt::after {
+	content: " : ";
+}
+
+.faits dd {
+	display: inline;
+	margin: 0;
+}
+
+.faits dd::after {
+	content: "";
+	display: block;
+}
+
+/* Les puces n'apportent rien à une liste d'ingrédients déjà alignée, et
+   mangent de la marge sur un écran étroit. */
+.ingredients {
+	list-style: none;
+	padding: 0;
+}
+
+.ingredients li {
+	padding: 0.15rem 0;
+	border-bottom: 1px solid var(--trait);
+}
+
+.aliment {
+	font-weight: 600;
+}
+
+/* La note se distingue de l'aliment sans être reléguée : c'est de
+   l'information utile en cuisine, pas une annotation de bas de page. */
+.note {
+	font-style: italic;
+}
+
+.facultatif {
+	color: #6b675f;
+	font-size: 0.9em;
+}
+
+.etapes {
+	padding-left: 1.5rem;
+}
+
+.etapes li {
+	margin-bottom: 0.5rem;
+}

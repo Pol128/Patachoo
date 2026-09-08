@@ -260,16 +260,24 @@ type utilisateur struct {
 }
 
 // utilisateurCourant traduit e.Auth pour les gabarits, ou rend nil pour un
-// visiteur. Le nom retombe sur le courriel : un compte créé sans nom doit
-// quand même s'afficher dans l'en-tête.
+// visiteur.
 func utilisateurCourant(e *core.RequestEvent) *utilisateur {
 	if e.Auth == nil {
 		return nil
 	}
+	return &utilisateur{Nom: nomAffichable(e.Auth)}
+}
 
-	nom := strings.TrimSpace(e.Auth.GetString("name"))
+// nomAffichable rend de quoi désigner un compte dans une page.
+//
+// Le nom retombe sur le courriel : le champ name n'est pas requis sur users, et
+// un compte créé sans nom doit quand même s'afficher — dans l'en-tête comme
+// dans l'auteur d'une recette, qui sont deux pages différentes et une seule
+// règle.
+func nomAffichable(compte *core.Record) string {
+	nom := strings.TrimSpace(compte.GetString("name"))
 	if nom == "" {
-		nom = e.Auth.Email()
+		return compte.Email()
 	}
-	return &utilisateur{Nom: nom}
+	return nom
 }

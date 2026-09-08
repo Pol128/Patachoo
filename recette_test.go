@@ -55,7 +55,25 @@ func recetteEnBase(t *testing.T, app core.App, champs map[string]any) *core.Reco
 	return recette
 }
 
-// ligneEnBase enregistre un ingrédient rattaché à la recette.
+// champsDuParser sont les colonnes que le moteur d'analyse alimente, et les
+// seules dont la fiche tire son mode d'affichage.
+var champsDuParser = map[string]any{
+	"quantity": nil,
+	"unit":     "",
+	"food":     "",
+	"note":     "",
+	"optional": false,
+}
+
+// ligneEnBase enregistre un ingrédient rattaché à la recette, avec exactement
+// les colonnes de parser demandées — vides par défaut.
+//
+// Deux écritures, et c'est le cœur du montage : le hook d'ingredients.go
+// remplit quantity, unit, food, note et optional depuis raw à la création,
+// quoi qu'on lui passe. Il ne recalcule plus tant que raw n'a pas bougé — le
+// chemin d'une correction manuelle — et c'est par lui que ces tests posent
+// l'état qu'ils veulent éprouver. Sans ça, le repli sur raw dépendrait de ce
+// que le moteur sait lire, c'est-à-dire de PATA-6 et du pack de langue.
 func ligneEnBase(t *testing.T, app core.App, recette *core.Record, champs map[string]any) *core.Record {
 	t.Helper()
 
@@ -66,13 +84,24 @@ func ligneEnBase(t *testing.T, app core.App, recette *core.Record, champs map[st
 
 	ligne := core.NewRecord(collection)
 	ligne.Set("recipe", recette.Id)
-	for nom, valeur := range champs {
-		ligne.Set(nom, valeur)
-	}
+	ligne.Set("raw", champs["raw"])
+	ligne.Set("position", champs["position"])
 	if err := app.Save(ligne); err != nil {
 		t.Fatalf("enregistrement de l'ingrédient : %v", err)
 	}
-	return ligne
+
+	relue := relit(t, app, ligne.Id)
+	for nom, defaut := range champsDuParser {
+		valeur, donne := champs[nom]
+		if !donne {
+			valeur = defaut
+		}
+		relue.Set(nom, valeur)
+	}
+	if err := app.Save(relue); err != nil {
+		t.Fatalf("pose des colonnes de parser : %v", err)
+	}
+	return relue
 }
 
 // tagEnBase crée un tag et rend son identifiant.
@@ -616,9 +645,13 @@ func TestLaFicheEchappeToutCeQuiVientDuDehors(t *testing.T) {
 
 	corps := fiche(mux, cookie, recette.Id).Body.String()
 
-	for _, interdit := range []string{"<script>", "onerror=", "<img src=x"} {
+	// Les formes exécutables, et non les sous-chaînes : « onerror= » figure
+	// légitimement dans la page, en texte, puisque la ligne brute y est rendue
+	// entière. Ce qui la rendrait exécutable est le chevron non échappé qui
+	// ouvrirait ou refermerait une balise.
+	for _, interdit := range []string{"<script>", "<img src=x", "onerror=alert(1)>"} {
 		if strings.Contains(corps, interdit) {
-			t.Errorf("%q ressort tel quel dans la page :\n%s", interdit, corps)
+			t.Errorf("%q ressort exécutable dans la page :\n%s", interdit, corps)
 		}
 	}
 	for _, attendu := range []string{
@@ -646,8 +679,11 @@ func TestLAttributTitreDeLaLigneBruteEstEchappe(t *testing.T) {
 	ligne := ingredientsDe(t, fiche(mux, cookie, recette.Id).Body.String())[0]
 	ouvrante := baliseOuvrante.FindString(ligne)
 
-	if strings.Contains(ouvrante, `onmouseover=`) {
-		t.Errorf("l'attribut title a été refermé par la donnée : %q", ouvrante)
+	// Deux guillemets doubles dans la balise ouvrante, et deux seulement :
+	// ceux qui bornent title. Un troisième serait un guillemet venu de la
+	// donnée, donc l'attribut refermé et onmouseover devenu un vrai attribut.
+	if guillemets := strings.Count(ouvrante, `"`); guillemets != 2 {
+		t.Errorf("%d guillemets doubles dans la balise ouvrante, attendus 2 : %q", guillemets, ouvrante)
 	}
 	if !strings.Contains(ouvrante, "&#34;") {
 		t.Errorf("guillemet double non échappé dans l'attribut title : %q", ouvrante)
