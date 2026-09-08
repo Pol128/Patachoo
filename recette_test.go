@@ -805,7 +805,9 @@ func TestUneAdresseDeSourceEnJavascriptNeSortAucunHrefExecutable(t *testing.T) {
 // d'une ligne d'ingrédient.
 func TestUnGuillemetDansLAdresseDeSourceNeRefermePasLAttribut(t *testing.T) {
 	app, mux, cookie := serveurConnecte(t)
-	recette := recetteEnBase(t, app, map[string]any{
+	// Sans validation : le validateur refuse déjà cette adresse, et c'est
+	// justement ce qu'on ne veut pas prendre pour un rempart d'affichage.
+	recette := recetteEnBaseSansValidation(t, app, map[string]any{
 		"source_url": `https://exemple.fr/x" onmouseover="alert(1)`,
 	})
 

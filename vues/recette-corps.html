@@ -4,7 +4,7 @@
 {{with .Faits}}<dl class="faits">
 {{range .}}<dt>{{.Libelle}}</dt><dd>{{.Valeur}}</dd>
 {{end}}</dl>{{end}}
-{{with .Source}}<p>Source : <a href="{{.URL}}" rel="noreferrer">{{.Nom}}</a></p>{{end}}
+{{with .Source}}<p>Source : {{if .URL}}<a href="{{.URL}}" rel="noreferrer">{{.Nom}}</a>{{else}}{{.Nom}}{{end}}</p>{{end}}
 {{with .Ingredients}}<h2>Ingrédients</h2>
 <ul class="ingredients">
 {{range .}}<li title="{{.Brut}}">{{if .Aliment}}{{with .Quantite}}{{.}} {{end}}{{with .Unite}}{{.}} {{end}}<span class="aliment">{{.Aliment}}</span>{{with .Note}} <span class="note">{{.}}</span>{{end}}{{else}}{{.Brut}}{{end}}{{if .Facultatif}} <span class="facultatif">(facultatif)</span>{{end}}</li>
