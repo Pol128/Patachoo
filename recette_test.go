@@ -310,6 +310,27 @@ func TestUnIngredientSansAlimentSAfficheParSaLigneBrute(t *testing.T) {
 	}
 }
 
+// Un aliment réduit à des espaces n'est pas un aliment reconnu : le mode
+// structuré rendrait un <span class="aliment"> vide, là où raw porte encore
+// toute la ligne. C'est « non vide une fois les espaces rognés », pris au mot.
+func TestUnIngredientDontLAlimentNEstQueDesEspacesSAfficheParSaLigneBrute(t *testing.T) {
+	const brut = "2 cuillères à soupe de crème, ou de yaourt"
+
+	app, mux, cookie := serveurConnecte(t)
+	recette := recetteEnBase(t, app, nil)
+	ligneEnBase(t, app, recette, map[string]any{"raw": brut, "position": 1, "food": "   "})
+
+	corps := fiche(mux, cookie, recette.Id).Body.String()
+	lignes := ingredientsDe(t, corps)
+
+	if len(lignes) != 1 {
+		t.Fatalf("%d ingrédients rendus, attendu 1 :\n%s", len(lignes), corps)
+	}
+	if got := strings.TrimSpace(contenu(lignes[0])); got != brut {
+		t.Errorf("ligne rendue %q, attendue à l'identique %q", got, brut)
+	}
+}
+
 func TestUnIngredientAvecAlimentSAfficheEnStructure(t *testing.T) {
 	app, mux, cookie := serveurConnecte(t)
 	recette := recetteEnBase(t, app, nil)
