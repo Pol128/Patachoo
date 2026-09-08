@@ -294,6 +294,16 @@ footer {
 	align-self: flex-start;
 }
 
+/* L'aperçu de l'image que le site d'origine propose. Elle est distante et
+   n'est pas encore attachée à la recette : une hauteur bornée, pour qu'une
+   bannière de 3000 pixels ne pousse pas le reste du formulaire hors de vue. */
+.apercu-distant {
+	max-width: 100%;
+	max-height: 12rem;
+	object-fit: contain;
+	align-self: flex-start;
+}
+
 /* Une case à cocher et son libellé sur la même ligne : sans cette règle, le
    flex du formulaire les empilerait l'un sous l'autre. */
 .case {
@@ -362,6 +372,29 @@ footer {
 
 .ajout-de-note button {
 	font: inherit;
+	padding: 0.5rem 1rem;
+	align-self: flex-start;
+}
+
+/* Le champ « coller l'URL » : la même colonne que le formulaire de recette,
+   pour un champ unique et son bouton. */
+.formulaire-import {
+	display: flex;
+	flex-direction: column;
+	gap: 0.25rem;
+}
+
+.formulaire-import input {
+	font: inherit;
+	padding: 0.4rem;
+	border: 1px solid var(--trait);
+	background: var(--papier);
+	color: inherit;
+}
+
+.formulaire-import button {
+	font: inherit;
+	margin-top: 1rem;
 	padding: 0.5rem 1rem;
 	align-self: flex-start;
 }

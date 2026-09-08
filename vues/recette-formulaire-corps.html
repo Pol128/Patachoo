@@ -8,6 +8,7 @@
 <label for="image">Image</label>
 <input type="file" id="image" name="image" accept="image/jpeg,image/png,image/webp,image/avif">
 {{if .Image}}<label class="case"><input type="checkbox" name="retirer-image" value="1"> Retirer l'image</label>{{end}}
+{{if .ImageDistante}}<img class="apercu-distant" src="{{.ImageDistante}}" alt="Image proposée par le site d'origine">{{end}}
 
 <label for="portions">Portions</label>
 <input type="number" id="portions" name="portions" min="0" value="{{.Portions}}">
@@ -37,6 +38,9 @@
 <legend>Saisons</legend>
 {{range .ToutesLesSaisons}}<label class="case"><input type="checkbox" name="saisons" value="{{.}}"{{if $.Formulaire.SaisonCochee .}} checked{{end}}> {{.}}</label>
 {{end}}</fieldset>
+
+{{if .SourceURL}}<input type="hidden" name="source-url" value="{{.SourceURL}}">{{end}}
+{{if .SourceNom}}<input type="hidden" name="source-nom" value="{{.SourceNom}}">{{end}}
 
 <button type="submit">Enregistrer</button>
 </form>

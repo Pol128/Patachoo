@@ -38,14 +38,18 @@ func piegeLeReseau(t *testing.T) {
 	t.Helper()
 
 	initial := http.DefaultTransport
-	http.DefaultTransport = reseauPiege{t}
+	http.DefaultTransport = transportPiege{t}
 	t.Cleanup(func() { http.DefaultTransport = initial })
 }
 
-// reseauPiege est le transport qui n'en est pas un.
-type reseauPiege struct{ t *testing.T }
+// transportPiege est le transport qui n'en est pas un.
+//
+// Nommé pour ce qu'il est : reseauPiege est déjà, dans import_test.go, la
+// fonction qui garde la couture recuperePage. Deux pièges à deux étages,
+// et un seul paquet de test pour les deux.
+type transportPiege struct{ t *testing.T }
 
-func (p reseauPiege) RoundTrip(r *http.Request) (*http.Response, error) {
+func (p transportPiege) RoundTrip(r *http.Request) (*http.Response, error) {
 	p.t.Errorf("requête sortante vers %s alors qu'aucune ne devait partir", r.URL)
 	return nil, errors.New("piège")
 }
