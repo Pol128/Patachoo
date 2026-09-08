@@ -789,16 +789,16 @@ func TestUnTypeVideRendLeCarnetEntier(t *testing.T) {
 func TestLeTypeEtLaRechercheSeCombinent(t *testing.T) {
 	app, mux, cookie := carnetDeTest(t)
 	creeRecette(t, app, recetteVoulue{titre: "Tarte aux pommes", typeDePlat: "Dessert"})
-	creeRecette(t, app, recetteVoulue{titre: "Tarte a l'oignon", typeDePlat: "Entrée"})
+	creeRecette(t, app, recetteVoulue{titre: "Tarte aux oignons", typeDePlat: "Entrée"})
 
 	// Sans le type, la recherche en ramène deux : c'est ce qui fait du
 	// restreint à une un effet du filtre, et non du terme.
-	exigeContient(t, listeDe(t, mux, cookie, "/recettes?q=tarte"), "Tarte aux pommes", "Tarte a l'oignon")
+	exigeContient(t, listeDe(t, mux, cookie, "/recettes?q=tarte"), "Tarte aux pommes", "Tarte aux oignons")
 
 	corps := listeDe(t, mux, cookie, "/recettes?q=tarte&type=dessert")
 
 	exigeContient(t, corps, "Tarte aux pommes")
-	exigeSansAucun(t, corps, "Tarte a l'oignon")
+	exigeSansAucun(t, corps, "Tarte aux oignons")
 }
 
 func TestLeTypeEtLaPaginationSeCombinent(t *testing.T) {

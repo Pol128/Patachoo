@@ -3,8 +3,15 @@
 <form class="recherche" method="get" action="/recettes" role="search">
 <label for="q">Rechercher</label>
 <input type="search" id="q" name="q" value="{{.Terme}}" placeholder="titre, ingrédient ou tag"
- hx-get="/recettes" hx-trigger="keyup changed delay:300ms" hx-target="#resultats" hx-swap="outerHTML">
+ hx-get="/recettes" hx-trigger="keyup changed delay:300ms" hx-target="#resultats" hx-swap="outerHTML" hx-include="[name='type']">
+{{with .TypeConserve}}<input type="hidden" name="type" value="{{.}}">{{end}}
 <button type="submit">Rechercher</button>
 </form>
+<nav class="types" aria-label="Types de plat">
+<ul>
+{{range .Types}}<li><a href="{{.Adresse}}">{{.Nom}}</a></li>
+{{end}}</ul>
+</nav>
+{{with .RetraitDuType}}<p class="filtre-actif">{{with $.TypeFiltre}}<span class="nom">{{.}}</span> {{end}}<a href="{{.}}">Retirer le filtre</a></p>{{end}}
 {{template "recettes-resultats.html" .}}
 {{end}}

@@ -39,6 +39,10 @@ type donneesRecette struct {
 type fait struct {
 	Libelle string
 	Valeur  string
+	// Lien n'est rempli que par le type de plat, qui renvoie vers la liste
+	// filtrée. Vide partout ailleurs, et le gabarit écrit alors la valeur
+	// telle quelle plutôt qu'un lien sans destination.
+	Lien string
 }
 
 // source est le site d'où la recette vient.
@@ -168,8 +172,17 @@ func faitsDeLaRecette(recette *core.Record) []fait {
 	ajoute("Temps de préparation", dureeLisible(recette.GetInt("prep_time")))
 	ajoute("Temps de cuisson", dureeLisible(recette.GetInt("cook_time")))
 
+	// Le type de plat est le seul fait cliquable : il mène à la liste des
+	// recettes du même type. L'adresse s'appuie sur le slug, jamais sur le
+	// libellé affiché ni sur l'identifiant PocketBase.
 	if typeDePlat := recette.ExpandedOne("meal_type"); typeDePlat != nil {
-		ajoute("Type de plat", typeDePlat.GetString("name"))
+		if nom := typeDePlat.GetString("name"); nom != "" {
+			faits = append(faits, fait{
+				Libelle: "Type de plat",
+				Valeur:  nom,
+				Lien:    lienDeFiltreParType(typeDePlat),
+			})
+		}
 	}
 	// seasons est un select, pas une relation : sa valeur se lit directement,
 	// sans passer par l'expansion.
