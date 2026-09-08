@@ -441,3 +441,45 @@ func TestUnEchecEnCoursDeLotNeLaisseRienDerriereLui(t *testing.T) {
 		t.Errorf("%d lignes import_urls après un échec, attendu 0", n)
 	}
 }
+
+// La borne de recherche d'un nom de tag libre n'est pas un ornement : les tags
+// sont créés par la saisie libre du formulaire de recette, donc un compte peut
+// occuper à la main tous les noms de la minute. Sans borne, le lot suivant
+// balaierait les discriminants sans jamais s'arrêter (DOD.md §3, « Limites »).
+func TestLaRechercheDUnNomDeTagLibreEstBornee(t *testing.T) {
+	app, _, _ := atelierDeLot(t)
+	compteDeTest := leCompteDeLaSession(t, app)
+
+	instant := time.Date(2026, 8, 21, 23, 44, 0, 0, time.UTC)
+	occupeLesNomsDeLaMinute(t, app, "Import du 21/08/2026 à 23h44", fourneesMaxParMinute)
+
+	if _, _, err := creeLeLot(app, compteDeTest, urlsDeTest(1), instant); err == nil {
+		t.Fatalf("lot créé alors que les %d noms de la minute sont pris", fourneesMaxParMinute)
+	}
+	if n := compte(t, app, "imports"); n != 0 {
+		t.Errorf("%d enregistrements imports après le refus, attendu 0", n)
+	}
+}
+
+// occupeLesNomsDeLaMinute crée les tags que le lot chercherait, du nom nu au
+// dernier discriminant.
+func occupeLesNomsDeLaMinute(t *testing.T, app core.App, base string, jusqua int) {
+	t.Helper()
+
+	collection, err := app.FindCollectionByNameOrId("tags")
+	if err != nil {
+		t.Fatalf("collection tags : %v", err)
+	}
+
+	for rang := 1; rang <= jusqua; rang++ {
+		nom := base
+		if rang > 1 {
+			nom = fmt.Sprintf("%s (%d)", base, rang)
+		}
+		tag := core.NewRecord(collection)
+		tag.Set("name", nom)
+		if err := app.Save(tag); err != nil {
+			t.Fatalf("création du tag %q : %v", nom, err)
+		}
+	}
+}
