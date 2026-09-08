@@ -117,17 +117,34 @@ func rendLaPageDImport(e *core.RequestEvent, adresse, message string) error {
 // résolue et vaut aussi après une redirection : c'est la validation de la
 // saisie, qui évite d'ouvrir une connexion pour un champ vide ou un copier-
 // coller tronqué.
+//
+// Les trois messages vivent en constantes plutôt qu'en littéraux au fil du
+// code, pour la même raison que le disclaimer du lot : ce qui est promis à
+// l'utilisateur doit être nommable par un test.
+const (
+	refusSaisieAbsente  = "Collez l'adresse de la page de la recette."
+	refusPasUnePage     = "Cette adresse n'est pas celle d'une page : il y manque le début, « https:// » et le nom du site."
+	refusSchemaNonSuivi = "Nous n'allons chercher que des pages web, en http:// ou en https://."
+)
+
 func refusDeLAdresse(adresse string) string {
 	if adresse == "" {
-		return "Collez l'adresse de la page de la recette."
+		return refusSaisieAbsente
 	}
 
 	cible, err := url.Parse(adresse)
-	if err != nil || !cible.IsAbs() || cible.Host == "" {
-		return "Cette adresse n'est pas celle d'une page : il y manque le début, « https:// » et le nom du site."
+	if err != nil || !cible.IsAbs() {
+		return refusPasUnePage
 	}
+
+	// Le schéma se juge avant l'hôte : file:///etc/passwd n'a pas d'hôte, mais
+	// il porte bien un début d'adresse. Lui répondre qu'il en manque un serait
+	// faux, et c'est précisément le schéma qu'il faut nommer ici.
 	if cible.Scheme != "http" && cible.Scheme != "https" {
-		return "Nous n'allons chercher que des pages web, en http:// ou en https://."
+		return refusSchemaNonSuivi
+	}
+	if cible.Host == "" {
+		return refusPasUnePage
 	}
 	return ""
 }
