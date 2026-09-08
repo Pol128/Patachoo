@@ -62,7 +62,7 @@ func TestLesSchemasRefusesNeFontPartirAucuneRequete(t *testing.T) {
 
 	for nom, adresse := range cas {
 		t.Run(nom, func(t *testing.T) {
-			_, err := recupere(t, adresse, avecTransport(transportPiege{t}))
+			_, err := recupere(t, adresse, AvecTransport(transportPiege{t}))
 			if cause := echec(t, err).Cause; cause != RefuseeParPolitique {
 				t.Errorf("cause %q, attendu %q", cause, RefuseeParPolitique)
 			}
