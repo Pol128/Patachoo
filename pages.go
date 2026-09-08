@@ -40,6 +40,11 @@ type donneesPage struct {
 	// ne rend rien plutôt que d'échouer à mi-parcours.
 	Recette *donneesRecette
 
+	// Commentaires porte le bloc des notes. Nil pour toute page qui n'en
+	// affiche pas — le fragment s'ouvre sur un {{with}} comme la fiche —, et
+	// c'est aussi lui que les quatre routes de PATA-22 renvoient seul à HTMX.
+	Commentaires *donneesCommentaires
+
 	// Formulaire n'est rempli que par les pages qui en portent un. Un champ
 	// par page plutôt qu'un any : le gabarit nomme ce qu'il lit, et une page
 	// qui se tromperait de forme rougirait au rendu plutôt qu'en production.
@@ -83,15 +88,17 @@ func pageAccueil(e *core.RequestEvent) error {
 //   - un bloc qu'une route peut renvoyer seul vit dans son propre fichier, au
 //     niveau racine, sans {{define}} autour. Chargé seul, un fichier réduit à
 //     un {{define}} rendrait une chaîne vide sans la moindre erreur.
+//   - une page faite de plusieurs blocs nomme les autres dans enPlus, sinon le
+//     gabarit qui les inclut ne les trouve pas. L'ordre y est indifférent :
+//     seul le premier motif décide du gabarit exécuté, et c'est ce qui permet
+//     à une route de rendre tantôt la fiche entière, tantôt le seul bloc des
+//     notes, avec le même jeu de fichiers.
 //
 // Le rendu passe par un tampon avant d'être écrit : une erreur de gabarit
 // remonte comme erreur et ne peut pas produire une demi-page déjà partie sur
 // le réseau.
-//
-// Les blocs nommés en plus sont chargés dans les deux cas : un fragment qui en
-// appelle un ne se rendrait pas sans lui, et la page complète pas davantage.
-func rendre(e *core.RequestEvent, page, fragment string, donnees donneesDePage, blocs ...string) error {
-	return rendreAvecStatut(e, http.StatusOK, page, fragment, donnees, blocs...)
+func rendre(e *core.RequestEvent, page, fragment string, donnees donneesDePage, enPlus ...string) error {
+	return rendreAvecStatut(e, http.StatusOK, page, fragment, donnees, enPlus...)
 }
 
 // rendreAvecStatut rend la même chose sous un autre code de retour.
@@ -100,15 +107,15 @@ func rendre(e *core.RequestEvent, page, fragment string, donnees donneesDePage, 
 // compte, feuille de style — et seul son statut la distingue. Un 404 rendu par
 // rendre() répondrait 200, et un navigateur comme un moteur d'indexation
 // prendraient l'erreur pour une page valide.
-func rendreAvecStatut(e *core.RequestEvent, statut int, page, fragment string, donnees donneesDePage, blocs ...string) error {
+func rendreAvecStatut(e *core.RequestEvent, statut int, page, fragment string, donnees donneesDePage, enPlus ...string) error {
 	donnees.poseUtilisateur(utilisateurCourant(e))
 
 	motifs := []string{"vues/" + fragment}
 	if !estHTMX(e) {
 		motifs = []string{"vues/mise-en-page.html", "vues/" + page, "vues/" + fragment}
 	}
-	for _, bloc := range blocs {
-		motifs = append(motifs, "vues/"+bloc)
+	for _, gabarit := range enPlus {
+		motifs = append(motifs, "vues/"+gabarit)
 	}
 
 	rendu, err := registre.LoadFS(vues, motifs...).Render(donnees)
@@ -119,13 +126,13 @@ func rendreAvecStatut(e *core.RequestEvent, statut int, page, fragment string, d
 	return e.HTML(statut, rendu)
 }
 
-// rendLeBloc écrit un bloc seul, quelle que soit l'origine de la requête.
+// rendLeBlocSeul écrit un bloc seul, quelle que soit l'origine de la requête.
 //
 // Une route qui n'a pas de page complète à proposer — le champ de tags et ses
 // suggestions n'en forment pas une — n'a pas non plus d'arbitrage à faire :
 // elle rend son fichier, et rien autour. Ses données ne sont pas celles d'une
 // page, et ne portent donc pas l'utilisateur courant.
-func rendLeBloc(e *core.RequestEvent, bloc string, donnees any) error {
+func rendLeBlocSeul(e *core.RequestEvent, bloc string, donnees any) error {
 	rendu, err := registre.LoadFS(vues, "vues/"+bloc).Render(donnees)
 	if err != nil {
 		return err

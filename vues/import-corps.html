@@ -1,0 +1,8 @@
+<h1>Importer une recette</h1>
+{{if .Message}}<p class="erreur" role="alert">{{.Message}}</p>{{end}}
+<form class="formulaire-import" method="post" action="/recettes/importer">
+<label for="url">Adresse de la page de la recette</label>
+<input type="url" id="url" name="url" value="{{.URL}}" placeholder="https://" required>
+
+<button type="submit">Importer</button>
+</form>

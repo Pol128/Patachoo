@@ -290,20 +290,25 @@ footer {
 
 /* Le formulaire est une colonne : une étiquette, son champ, et de l'air entre
    les deux. Pas de grille à deux colonnes, qui casse sur téléphone là où
-   l'essentiel de la saisie d'une recette se fait. */
-.formulaire-recette {
+   l'essentiel de la saisie d'une recette se fait. Le formulaire du lot suit les
+   mêmes règles, groupées et non recopiées : deux copies divergeraient au
+   premier réglage. */
+.formulaire-recette,
+.formulaire-lot {
 	display: flex;
 	flex-direction: column;
 	gap: 0.25rem;
 }
 
-.formulaire-recette label {
+.formulaire-recette label,
+.formulaire-lot label {
 	margin-top: 0.75rem;
 }
 
 .formulaire-recette input,
 .formulaire-recette select,
-.formulaire-recette textarea {
+.formulaire-recette textarea,
+.formulaire-lot textarea {
 	font: inherit;
 	padding: 0.4rem;
 	border: 1px solid var(--trait);
@@ -311,10 +316,21 @@ footer {
 	color: inherit;
 }
 
-.formulaire-recette button {
+.formulaire-recette button,
+.formulaire-lot button {
 	font: inherit;
 	margin-top: 1.5rem;
 	padding: 0.5rem 1rem;
+	align-self: flex-start;
+}
+
+/* L'aperçu de l'image que le site d'origine propose. Elle est distante et
+   n'est pas encore attachée à la recette : une hauteur bornée, pour qu'une
+   bannière de 3000 pixels ne pousse pas le reste du formulaire hors de vue. */
+.apercu-distant {
+	max-width: 100%;
+	max-height: 12rem;
+	object-fit: contain;
 	align-self: flex-start;
 }
 
@@ -333,4 +349,103 @@ footer {
 .saisons {
 	margin-top: 0.75rem;
 	border: 1px solid var(--trait);
+}
+
+/* Les notes de cuisine : un journal, pas une discussion. Pas d'avatar, pas de
+   fil indenté, pas de cadre — la signature en petit, le texte à la ligne, et
+   un trait pour séparer deux notes. */
+.commentaires {
+	margin-top: 2.5rem;
+	border-top: 1px solid var(--trait);
+}
+
+.notes {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+
+.note-de-cuisine {
+	padding: 1rem 0;
+	border-bottom: 1px solid var(--trait);
+}
+
+.signature {
+	margin: 0 0 0.5rem;
+	font-size: 0.9rem;
+	color: #6b6459;
+}
+
+/* Le lien et le bouton de la même note sur une seule ligne : le formulaire de
+   suppression est un bloc, et l'empilerait sinon sous le lien de modification. */
+.actions {
+	display: flex;
+	align-items: baseline;
+	gap: 1rem;
+	font-size: 0.9rem;
+}
+
+.ajout-de-note {
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+	margin-top: 1.5rem;
+}
+
+.ajout-de-note textarea {
+	font: inherit;
+	padding: 0.4rem;
+	border: 1px solid var(--trait);
+	background: var(--papier);
+	color: inherit;
+}
+
+.ajout-de-note button {
+	font: inherit;
+	padding: 0.5rem 1rem;
+	align-self: flex-start;
+}
+
+/* Le champ « coller l'URL » : la même colonne que le formulaire de recette,
+   pour un champ unique et son bouton. */
+.formulaire-import {
+	display: flex;
+	flex-direction: column;
+	gap: 0.25rem;
+}
+
+.formulaire-import input {
+	font: inherit;
+	padding: 0.4rem;
+	border: 1px solid var(--trait);
+	background: var(--papier);
+	color: inherit;
+}
+
+.formulaire-import button {
+	font: inherit;
+	margin-top: 1rem;
+	padding: 0.5rem 1rem;
+	align-self: flex-start;
+}
+
+/* Le disclaimer du lot : lisible, et collé au bouton qu'il précède. Pas la
+   couleur de l'alerte — une alerte permanente cesse d'en être une, et celle-ci
+   s'affiche à chaque visite. */
+.avertissement {
+	margin: 1.5rem 0 0;
+	padding: 0.6rem 0.8rem;
+	border-left: 3px solid var(--trait);
+	color: #6b675f;
+	font-size: 0.9rem;
+}
+
+/* Les lignes qu'un lot n'a pas retenues, et ce qu'on leur reproche. */
+.ecartees {
+	margin: 0;
+	padding-left: 1.2rem;
+}
+
+.ecartee {
+	margin-bottom: 0.3rem;
 }

@@ -55,6 +55,35 @@ func recetteEnBase(t *testing.T, app core.App, champs map[string]any) *core.Reco
 	return recette
 }
 
+// recetteEnBaseSansValidation écrit la recette en court-circuitant la
+// validation des champs.
+//
+// source_url est un URLField : « javascript:alert(1) » comme une suite
+// d'espaces y sont refusés à l'écriture, et ces valeurs ne peuvent donc pas
+// arriver par le formulaire. L'affichage ne doit pas s'appuyer là-dessus pour
+// autant — une migration, un import ou une écriture directe en base les y
+// mettent sans passer par le validateur, et c'est la page qui est alors le
+// dernier rempart. Ces tests-là posent l'état que la validation interdit,
+// précisément pour éprouver ce rempart.
+func recetteEnBaseSansValidation(t *testing.T, app core.App, champs map[string]any) *core.Record {
+	t.Helper()
+
+	collection, err := app.FindCollectionByNameOrId("recipes")
+	if err != nil {
+		t.Fatalf("collection recipes : %v", err)
+	}
+
+	recette := core.NewRecord(collection)
+	recette.Set("title", "Tarte aux pommes")
+	for nom, valeur := range champs {
+		recette.Set(nom, valeur)
+	}
+	if err := app.SaveNoValidate(recette); err != nil {
+		t.Fatalf("enregistrement sans validation : %v", err)
+	}
+	return recette
+}
+
 // champsDuParser sont les colonnes que le moteur d'analyse alimente, et les
 // seules dont la fiche tire son mode d'affichage.
 var champsDuParser = map[string]any{
@@ -156,6 +185,11 @@ var (
 	elementDeListe   = regexp.MustCompile(`(?s)<li[^>]*>.*?</li>`)
 	baliseOuvrante   = regexp.MustCompile(`(?s)^<li[^>]*>`)
 	contenuDeElement = regexp.MustCompile(`(?s)^<li[^>]*>(.*)</li>$`)
+
+	// Le href tel que le navigateur le lirait : la casse ne le protège pas, et
+	// un espace de tête est ignoré par les navigateurs.
+	hrefEnJavascript = regexp.MustCompile(`(?i)href="\s*javascript:`)
+	lienDeLaSource   = regexp.MustCompile(`(?s)<a[^>]*>`)
 )
 
 // lignesRenduesDe rend les <li> de la liste portant cette classe, dans l'ordre.
@@ -187,6 +221,14 @@ func ingredientsRendus(t *testing.T, corps string) []string {
 func etapesDe(t *testing.T, corps string) []string {
 	t.Helper()
 	return lignesRenduesDe(t, corps, "etapes", "</ol>")
+}
+
+// blocSource rend le paragraphe de la source, ou "" s'il n'y en a pas.
+//
+// Lecture textuelle comme le reste : ce qui est en jeu est ce que le navigateur
+// reçoit, attributs compris.
+func blocSource(corps string) string {
+	return entreBalises(corps, "<p>Source : ", "</p>")
 }
 
 // contenu rend l'intérieur d'un <li>, attributs exclus.
@@ -622,6 +664,8 @@ func TestLImageEstServieParSaMiniature(t *testing.T) {
 	}
 }
 
+// --- La source d'origine --------------------------------------------------
+
 func TestLaSourceEstUnLienVersLeSiteDOrigine(t *testing.T) {
 	const adresse = "https://exemple.fr/tarte-aux-pommes"
 
@@ -639,6 +683,167 @@ func TestLaSourceEstUnLienVersLeSiteDOrigine(t *testing.T) {
 	}
 	if !strings.Contains(lien, "Exemple") {
 		t.Errorf("le lien de source ne porte pas le nom du site : %q", lien)
+	}
+}
+
+// libelleSource décide seule de ce qui s'affiche ; le gabarit ne fait que le
+// rendre. C'est ce qui permet de couvrir les cas limites sans monter de base,
+// et notamment ceux que la validation de source_url interdit d'écrire.
+func TestLeLibelleDeLaSourceSuitLeNomPuisLeDomaine(t *testing.T) {
+	cas := []struct {
+		nom, adresse, attendu string
+	}{
+		// Le nom du site prime, et sort tel quel.
+		{"Marmiton", "https://www.marmiton.org/recettes/x", "Marmiton"},
+		// Faute de nom — le cas courant tant que rien ne l'extrait —, l'hôte,
+		// sans son www. et en minuscules.
+		{"", "https://www.marmiton.org/recettes/x", "marmiton.org"},
+		{"   ", "https://www.marmiton.org/recettes/x", "marmiton.org"},
+		{"", "https://WWW.Marmiton.ORG/x", "marmiton.org"},
+		// Un hôte qui ne commence pas par www. n'est pas amputé pour autant.
+		{"", "https://cuisine.journaldesfemmes.fr/x", "cuisine.journaldesfemmes.fr"},
+		// Aucun hôte dérivable : l'adresse telle quelle. On préfère un libellé
+		// laid à une source disparue — la même règle que le repli sur la ligne
+		// brute d'un ingrédient.
+		{"", "pas-une-url", "pas-une-url"},
+		// Rien à afficher : c'est le bloc entier qui disparaîtra.
+		{"", "", ""},
+		{"   ", "   ", ""},
+	}
+
+	for _, c := range cas {
+		if got := libelleSource(c.nom, c.adresse); got != c.attendu {
+			t.Errorf("libelleSource(%q, %q) = %q, attendu %q", c.nom, c.adresse, got, c.attendu)
+		}
+	}
+}
+
+// Le repli sur le domaine n'est pas un cas dégradé : rien n'extrait le nom du
+// site aujourd'hui, donc c'est ce que la plupart des recettes importées
+// afficheront.
+func TestUneSourceSansNomDeSiteSAfficheParSonDomaine(t *testing.T) {
+	const adresse = "https://www.marmiton.org/recettes/tarte-aux-pommes"
+
+	app, mux, cookie := serveurConnecte(t)
+	recette := recetteEnBase(t, app, map[string]any{"source_url": adresse})
+
+	corps := fiche(mux, cookie, recette.Id).Body.String()
+
+	// L'ancre est cherchée sur le href complet : c'est aussi l'assertion que
+	// l'adresse d'origine sort inchangée, et non réduite au domaine.
+	lien := entreBalises(corps, `<a href="`+adresse+`"`, "</a>")
+	if lien == "" {
+		t.Fatalf("aucun lien vers %q :\n%s", adresse, corps)
+	}
+	if !strings.Contains(lien, ">marmiton.org") {
+		t.Errorf("le lien ne porte pas le domaine en repli : %q", lien)
+	}
+	if strings.Contains(lien, "www.") {
+		t.Errorf("le préfixe www. subsiste dans le libellé : %q", lien)
+	}
+}
+
+// Une source sans adresse est celle d'un carnet de famille ou d'un livre : le
+// nom se lit, mais il n'y a rien où aller.
+//
+// Une adresse réduite à des espaces est le même cas : elle ne mène nulle part,
+// et un href fait d'espaces serait un lien mort que rien ne distingue à l'œil
+// d'un lien vivant.
+func TestUneSourceSansAdresseSAfficheSansLien(t *testing.T) {
+	cas := map[string]map[string]any{
+		"adresse absente":   {"source_name": "Le carnet de Mamie"},
+		"adresse d'espaces": {"source_name": "Le carnet de Mamie", "source_url": "   "},
+	}
+
+	for nom, champs := range cas {
+		t.Run(nom, func(t *testing.T) {
+			app, mux, cookie := serveurConnecte(t)
+			// Sans validation : une adresse d'espaces est refusée à
+			// l'écriture, et l'affichage ne doit pas s'appuyer là-dessus.
+			recette := recetteEnBaseSansValidation(t, app, champs)
+
+			bloc := blocSource(fiche(mux, cookie, recette.Id).Body.String())
+
+			if !strings.Contains(bloc, "Le carnet de Mamie") {
+				t.Fatalf("le nom de la source ne figure pas dans la page : %q", bloc)
+			}
+			if lienDeLaSource.MatchString(bloc) {
+				t.Errorf("lien mort rendu alors qu'aucune adresse n'est connue : %q", bloc)
+			}
+		})
+	}
+}
+
+// Les deux champs vides sont déjà couverts par
+// TestUneRecetteDepouilleeNeRendAucunLibelle, qui exige l'absence du libellé
+// « Source » sur une recette nue. Ici, la même exigence pour ce que la validation
+// ne rogne pas : des champs qui ne portent que des espaces.
+func TestUneSourceReduiteADesEspacesNeRendAucunLibelle(t *testing.T) {
+	app, mux, cookie := serveurConnecte(t)
+	recette := recetteEnBaseSansValidation(t, app, map[string]any{
+		"source_url":  "   ",
+		"source_name": "   ",
+	})
+
+	corps := fiche(mux, cookie, recette.Id).Body.String()
+
+	if strings.Contains(corps, "Source") {
+		t.Errorf("libellé « Source » rendu pour des champs vides d'espaces :\n%s", corps)
+	}
+}
+
+// L'adresse d'une source vient d'un site tiers, et un schéma javascript: y
+// donnerait un lien exécutable dans une page servie sous session. Le critère
+// porte sur ce qui sort : peu importe que ce soit html/template qui neutralise
+// ou le code qui refuse le schéma.
+func TestUneAdresseDeSourceEnJavascriptNeSortAucunHrefExecutable(t *testing.T) {
+	app, mux, cookie := serveurConnecte(t)
+	// Le nom du site est renseigné pour que le bloc existe sans rien devoir au
+	// repli sur le domaine : ce test éprouve le href, et lui seul.
+	recette := recetteEnBaseSansValidation(t, app, map[string]any{
+		"source_url":  "javascript:alert(1)",
+		"source_name": "Exemple",
+	})
+
+	corps := fiche(mux, cookie, recette.Id).Body.String()
+
+	// Le bloc doit exister : sans lui, l'absence de href se vérifierait toute
+	// seule et le test ne dirait plus rien.
+	bloc := blocSource(corps)
+	if !lienDeLaSource.MatchString(bloc) {
+		t.Fatalf("aucun lien de source rendu, le test ne prouve rien :\n%s", corps)
+	}
+	if hrefEnJavascript.MatchString(corps) {
+		t.Errorf("href exécutable rendu dans la page :\n%s", corps)
+	}
+}
+
+// Un guillemet double dans l'adresse refermerait l'attribut href et tout ce qui
+// suit deviendrait des attributs — la même menace que sur l'attribut title
+// d'une ligne d'ingrédient.
+func TestUnGuillemetDansLAdresseDeSourceNeRefermePasLAttribut(t *testing.T) {
+	app, mux, cookie := serveurConnecte(t)
+	// Sans validation : le validateur refuse déjà cette adresse, et c'est
+	// justement ce qu'on ne veut pas prendre pour un rempart d'affichage.
+	recette := recetteEnBaseSansValidation(t, app, map[string]any{
+		"source_url":  `https://exemple.fr/x" onmouseover="alert(1)`,
+		"source_name": "Exemple",
+	})
+
+	bloc := blocSource(fiche(mux, cookie, recette.Id).Body.String())
+	ouvrante := lienDeLaSource.FindString(bloc)
+	if ouvrante == "" {
+		t.Fatalf("aucun lien de source rendu : %q", bloc)
+	}
+
+	// Quatre guillemets doubles, et quatre seulement : ceux qui bornent href et
+	// rel. Un cinquième serait un guillemet venu de la donnée, donc l'attribut
+	// refermé et onmouseover devenu un vrai attribut.
+	if guillemets := strings.Count(ouvrante, `"`); guillemets != 4 {
+		t.Errorf("%d guillemets doubles dans la balise du lien, attendus 4 : %q", guillemets, ouvrante)
+	}
+	if strings.Contains(ouvrante, "onmouseover=\"") {
+		t.Errorf("attribut exécutable reconstitué depuis l'adresse : %q", ouvrante)
 	}
 }
 
@@ -741,6 +946,10 @@ func TestLaFicheEchappeToutCeQuiVientDuDehors(t *testing.T) {
 		"title":        `<script>alert(1)</script>`,
 		"instructions": `<script>alert(4)</script>`,
 		"tags":         []string{tagEnBase(t, app, `"><script>`)},
+		// Le nom du site vient d'un tiers au même titre que le reste, et il
+		// sort en texte dans le bloc de la source.
+		"source_url":  "https://exemple.fr/x",
+		"source_name": `<script>alert(5)</script>`,
 	})
 	ligneEnBase(t, app, recette, map[string]any{
 		"raw":      `<img src=x onerror=alert(1)>`,
@@ -761,6 +970,7 @@ func TestLaFicheEchappeToutCeQuiVientDuDehors(t *testing.T) {
 	for _, attendu := range []string{
 		"&lt;script&gt;alert(1)&lt;/script&gt;",
 		"&lt;script&gt;alert(4)&lt;/script&gt;",
+		"&lt;script&gt;alert(5)&lt;/script&gt;",
 		"&lt;img src=x onerror=alert(1)&gt;",
 		"&#34;&gt;&lt;script&gt;",
 	} {

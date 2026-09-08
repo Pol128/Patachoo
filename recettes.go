@@ -344,6 +344,14 @@ type formulaireRecette struct {
 	// dit seulement s'il y a quelque chose à retirer.
 	Image string
 
+	// ImageDistante, SourceURL et SourceNom ne sont remplis que par l'import
+	// (PATA-9), et le gabarit ne les écrit alors que s'ils portent quelque
+	// chose. L'image y est montrée à distance et non attachée : la télécharger
+	// est PATA-10.
+	ImageDistante string
+	SourceURL     string
+	SourceNom     string
+
 	TypesDePlat      []optionTypeDePlat
 	ToutesLesSaisons []string
 }

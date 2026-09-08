@@ -196,14 +196,14 @@ func suggestionsDeTags(e *core.RequestEvent) error {
 		// sql.ErrNoRows : le slug ne désigne rien — un bouton d'une page
 		// laissée ouverte pendant qu'un tag était fusionné. La saisie revient
 		// telle quelle plutôt qu'amputée de son dernier fragment.
-		return rendLeBloc(e, "tags-saisie.html", saisieDesTags{Valeur: saisie, Autofocus: true})
+		return rendLeBlocSeul(e, "tags-saisie.html", saisieDesTags{Valeur: saisie, Autofocus: true})
 	}
 
 	proposees, err := lesSuggestions(e.App, saisie)
 	if err != nil {
 		return err
 	}
-	return rendLeBloc(e, "tags-saisie.html", saisieDesTags{Valeur: saisie, Suggestions: proposees})
+	return rendLeBlocSeul(e, "tags-saisie.html", saisieDesTags{Valeur: saisie, Suggestions: proposees})
 }
 
 // lesSuggestions rend les tags que le dernier fragment de la saisie appelle.

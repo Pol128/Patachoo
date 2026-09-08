@@ -1,0 +1,42 @@
+{{with .Commentaires}}
+<section id="commentaires" class="commentaires">
+<h2>Notes de cuisine</h2>
+{{$recette := .RecetteId}}
+{{if .Message}}<p class="erreur" role="alert">{{.Message}}</p>{{end}}
+{{if .Notes}}
+<ul class="notes">
+{{range .Notes}}
+<li class="note-de-cuisine">
+{{if .EnEdition}}
+<form method="post" action="/recettes/{{$recette}}/commentaires/{{.Id}}"
+ hx-post="/recettes/{{$recette}}/commentaires/{{.Id}}" hx-target="#commentaires" hx-swap="outerHTML">
+<label for="corps-{{.Id}}">Modifier la note du {{.Date}}</label>
+<textarea id="corps-{{.Id}}" name="corps" rows="4">{{.Texte}}</textarea>
+<button type="submit">Enregistrer</button>
+<a href="/recettes/{{$recette}}">Annuler</a>
+</form>
+{{else}}
+<p class="signature">{{.Auteur}} — {{.Date}}{{with .Modifiee}}, modifié le {{.}}{{end}}</p>
+{{range .Paragraphes}}<p>{{.}}</p>
+{{end}}
+{{if .Sienne}}<div class="actions">
+<a href="/recettes/{{$recette}}/commentaires/{{.Id}}/modifier"
+ hx-get="/recettes/{{$recette}}/commentaires/{{.Id}}/modifier" hx-target="#commentaires" hx-swap="outerHTML">Modifier</a>
+<form method="post" action="/recettes/{{$recette}}/commentaires/{{.Id}}/supprimer"
+ hx-post="/recettes/{{$recette}}/commentaires/{{.Id}}/supprimer" hx-target="#commentaires" hx-swap="outerHTML">
+<button type="submit">Supprimer</button>
+</form>
+</div>{{end}}
+{{end}}
+</li>
+{{end}}
+</ul>
+{{end}}
+<form class="ajout-de-note" method="post" action="/recettes/{{$recette}}/commentaires"
+ hx-post="/recettes/{{$recette}}/commentaires" hx-target="#commentaires" hx-swap="outerHTML">
+<label for="corps">Ajouter une note</label>
+<textarea id="corps" name="corps" rows="4">{{.Brouillon}}</textarea>
+<button type="submit">Publier</button>
+</form>
+</section>
+{{end}}
