@@ -478,3 +478,42 @@ func TestLeBlocDeSuggestionsEchappeLesNoms(t *testing.T) {
 		t.Errorf("le nom du tag a disparu au lieu d'être échappé :\n%s", bloc)
 	}
 }
+
+// Le slug reçu dans l'URL ressort tel quel dans trois rendus quand il ne
+// désigne aucun tag — le champ caché du formulaire, le bandeau de filtre et le
+// message d'absence. C'est du contenu réfléchi, au même titre que le terme de
+// recherche : une seule requête les traverse tous les trois, puisqu'un tag
+// inconnu ne rend aucune vignette.
+func TestLeFiltreEchappeLeTagRecuDansLURL(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	recetteEtiquetee(t, app, "Gratin de courgettes", "végétarien")
+
+	const charge = `"><script>alert(1)</script>`
+	corps := listeDe(t, mux, cookie, "/recettes?"+url.Values{"tag": {charge}}.Encode())
+
+	exigeSansAucun(t, corps, `"><script>`, "<script>alert(1)</script>")
+
+	champ := entreBalises(corps, `name="tag" value="`, `"`)
+	if champ == "" {
+		t.Fatalf("champ caché du tag introuvable :\n%s", corps)
+	}
+	if !strings.Contains(champ, "&lt;script&gt;") {
+		t.Errorf("tag non échappé dans le champ caché : %q", champ)
+	}
+
+	bandeau := entreBalises(corps, `<p class="filtre">`, "</p>")
+	if bandeau == "" {
+		t.Fatalf("bandeau de filtre introuvable :\n%s", corps)
+	}
+	if !strings.Contains(bandeau, "&lt;script&gt;") {
+		t.Errorf("tag non échappé dans le bandeau de filtre : %q", bandeau)
+	}
+
+	message := entreBalises(corps, `<p class="absence">`, "</p>")
+	if message == "" {
+		t.Fatalf("message d'absence introuvable :\n%s", corps)
+	}
+	if !strings.Contains(message, "&lt;script&gt;") {
+		t.Errorf("tag non échappé dans le message d'absence : %q", message)
+	}
+}
