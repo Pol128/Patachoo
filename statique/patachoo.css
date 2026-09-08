@@ -88,3 +88,50 @@ footer {
 	background: var(--alerte-fond);
 	color: var(--alerte);
 }
+
+/* Le formulaire est une colonne : une étiquette, son champ, et de l'air entre
+   les deux. Pas de grille à deux colonnes, qui casse sur téléphone là où
+   l'essentiel de la saisie d'une recette se fait. */
+.formulaire-recette {
+	display: flex;
+	flex-direction: column;
+	gap: 0.25rem;
+}
+
+.formulaire-recette label {
+	margin-top: 0.75rem;
+}
+
+.formulaire-recette input,
+.formulaire-recette select,
+.formulaire-recette textarea {
+	font: inherit;
+	padding: 0.4rem;
+	border: 1px solid var(--trait);
+	background: var(--papier);
+	color: inherit;
+}
+
+.formulaire-recette button {
+	font: inherit;
+	margin-top: 1.5rem;
+	padding: 0.5rem 1rem;
+	align-self: flex-start;
+}
+
+/* Une case à cocher et son libellé sur la même ligne : sans cette règle, le
+   flex du formulaire les empilerait l'un sous l'autre. */
+.case {
+	display: flex;
+	align-items: baseline;
+	gap: 0.5rem;
+}
+
+.case input {
+	width: auto;
+}
+
+.saisons {
+	margin-top: 0.75rem;
+	border: 1px solid var(--trait);
+}
