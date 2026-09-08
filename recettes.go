@@ -191,9 +191,10 @@ func pageListeRecettes(e *core.RequestEvent) error {
 		// Le carnet vide se distingue de la recherche sans résultat : les
 		// confondre afficherait « votre carnet est vide » à quelqu'un qui a
 		// simplement mal orthographié un mot. Il se déduit sans compter :
-		// la première page, sans terme, ne peut être vide que si le carnet
-		// l'est.
-		CarnetVide: len(vignettes) == 0 && criteres.Terme == "" && criteres.Page == 1,
+		// la première page, sans critère, ne peut être vide que si le carnet
+		// l'est. Sans critère, et non sans terme — un filtre de saison écarte
+		// des recettes tout autant qu'une recherche.
+		CarnetVide: len(vignettes) == 0 && criteres.Terme == "" && criteres.Saison == "" && criteres.Page == 1,
 
 		Saison:       criteres.Saison,
 		SaisonNommee: valeurDeLaSaison(criteres.Saison),
