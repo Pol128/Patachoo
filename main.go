@@ -86,6 +86,7 @@ func brancheLesRoutes(routeur *router.Router[*core.RequestEvent]) {
 
 	routeur.GET("/", pageAccueil)
 	routeur.GET("/recettes", pageListeRecettes)
+	routeur.GET("/recettes/{id}", pageRecette)
 	routeur.GET("/connexion", pageConnexion)
 	routeur.POST("/connexion", connexion)
 	routeur.POST("/deconnexion", deconnexion)

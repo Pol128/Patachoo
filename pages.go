@@ -35,6 +35,11 @@ type donneesPage struct {
 	Message     string
 	Utilisateur *utilisateur
 
+	// Recette n'est rempli que par la fiche, et nil partout ailleurs : le
+	// gabarit de la fiche s'ouvre sur un {{with}}, donc une page qui l'oublie
+	// ne rend rien plutôt que d'échouer à mi-parcours.
+	Recette *donneesRecette
+
 	// Formulaire n'est rempli que par les pages qui en portent un. Un champ
 	// par page plutôt qu'un any : le gabarit nomme ce qu'il lit, et une page
 	// qui se tromperait de forme rougirait au rendu plutôt qu'en production.
@@ -83,6 +88,16 @@ func pageAccueil(e *core.RequestEvent) error {
 // remonte comme erreur et ne peut pas produire une demi-page déjà partie sur
 // le réseau.
 func rendre(e *core.RequestEvent, page, fragment string, donnees donneesDePage) error {
+	return rendreAvecStatut(e, http.StatusOK, page, fragment, donnees)
+}
+
+// rendreAvecStatut rend la même chose sous un autre code de retour.
+//
+// Une page introuvable est une page comme une autre — mise en page, en-tête du
+// compte, feuille de style — et seul son statut la distingue. Un 404 rendu par
+// rendre() répondrait 200, et un navigateur comme un moteur d'indexation
+// prendraient l'erreur pour une page valide.
+func rendreAvecStatut(e *core.RequestEvent, statut int, page, fragment string, donnees donneesDePage) error {
 	donnees.poseUtilisateur(utilisateurCourant(e))
 
 	motifs := []string{"vues/" + fragment}
@@ -95,7 +110,7 @@ func rendre(e *core.RequestEvent, page, fragment string, donnees donneesDePage) 
 		return err
 	}
 
-	return e.HTML(http.StatusOK, rendu)
+	return e.HTML(statut, rendu)
 }
 
 // estHTMX dit si la requête vient de HTMX, qui se signale par un en-tête.
