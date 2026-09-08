@@ -742,3 +742,39 @@ func chercheDansLesSources(t *testing.T, motif string) []string {
 	}
 	return trouves
 }
+
+// --- Recette introuvable ---------------------------------------------------
+
+// Le contrôle de session passe avant la recherche de la recette : un visiteur
+// ne doit pas apprendre, par un 404, quels identifiants existent.
+func TestUnVisiteurSurUneRecetteInconnueVaALaConnexion(t *testing.T) {
+	_, mux, _ := serveurConnecte(t)
+
+	rec := avecCookie(mux, http.MethodGet, "/recettes/inexistante/modifier", nil)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Errorf("statut %d, attendu %d", rec.Code, http.StatusSeeOther)
+	}
+	if destination := rec.Header().Get("Location"); destination != "/connexion" {
+		t.Errorf("Location %q, attendu %q", destination, "/connexion")
+	}
+}
+
+// Un identifiant qui ne désigne rien est un 404, pas une erreur serveur — et
+// une édition sur cet identifiant n'invente pas la recette manquante.
+func TestUneRecetteInconnueEstUn404(t *testing.T) {
+	app, mux, cookie := serveurConnecte(t)
+
+	rec := avecCookie(mux, http.MethodGet, "/recettes/inexistante/modifier", cookie)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("GET : statut %d, attendu %d", rec.Code, http.StatusNotFound)
+	}
+
+	rec = poste(t, mux, "/recettes/inexistante", cookie, champsValides())
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("POST : statut %d, attendu %d", rec.Code, http.StatusNotFound)
+	}
+	if n := len(recettes(t, app)); n != 0 {
+		t.Errorf("%d recettes créées par une édition sur un identifiant inconnu, 0 attendue", n)
+	}
+}
