@@ -89,6 +89,104 @@ footer {
 	color: var(--alerte);
 }
 
+/* Le champ de recherche et son bouton sur une ligne : le bouton n'existe que
+   pour qui n'a pas JavaScript, il ne doit pas prendre la place du champ. */
+.recherche {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 0.5rem;
+	margin: 1rem 0;
+}
+
+.recherche input {
+	flex: 1 1 14rem;
+	padding: 0.4rem 0.6rem;
+	border: 1px solid var(--trait);
+	border-radius: 3px;
+	font: inherit;
+}
+
+/* La grille se règle sur la largeur disponible plutôt que sur un nombre de
+   colonnes : la même page tient sur un téléphone et sur un écran large. */
+.grille {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
+	gap: 1.25rem;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.vignette {
+	display: flex;
+	flex-direction: column;
+	gap: 0.25rem;
+	padding-bottom: 0.75rem;
+	border-bottom: 1px solid var(--trait);
+}
+
+/* Le titre porte le lien, et l'image vit dedans : toute la vignette est
+   cliquable sans qu'un lecteur d'écran annonce deux liens pour une recette. */
+.titre {
+	display: flex;
+	flex-direction: column;
+	gap: 0.4rem;
+	font-weight: 600;
+	text-decoration: none;
+}
+
+.titre:hover,
+.titre:focus {
+	text-decoration: underline;
+}
+
+/* Hauteur fixée par le format de la miniature : sans elle, la grille saute au
+   fur et à mesure que les images arrivent. */
+.miniature {
+	width: 100%;
+	height: auto;
+	aspect-ratio: 3 / 2;
+	object-fit: cover;
+	background: var(--trait);
+	border-radius: 3px;
+}
+
+.type-de-plat {
+	margin: 0;
+	color: #6b675f;
+	font-size: 0.9rem;
+}
+
+.tags {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.35rem;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	font-size: 0.85rem;
+}
+
+.tags li {
+	padding: 0.05rem 0.45rem;
+	border: 1px solid var(--trait);
+	border-radius: 999px;
+}
+
+/* L'absence de résultat se lit comme une phrase, pas comme une erreur : ce
+   n'est pas une panne, c'est une réponse. */
+.absence {
+	color: #6b675f;
+}
+
+.pagination {
+	display: flex;
+	justify-content: space-between;
+	gap: 1rem;
+	margin-top: 1.5rem;
+}
+
 /* Le formulaire est une colonne : une étiquette, son champ, et de l'air entre
    les deux. Pas de grille à deux colonnes, qui casse sur téléphone là où
    l'essentiel de la saisie d'une recette se fait. */

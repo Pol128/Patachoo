@@ -904,7 +904,7 @@ func TestLEnTetePorteLeCompteConnecte(t *testing.T) {
 	compteParDefaut(t, app)
 
 	cookie := cookieDe(t, seConnecte(t, mux, courrielDeTest, motDePasseDeTest))
-	corps := avecCookie(mux, http.MethodGet, "/", cookie).Body.String()
+	corps := avecCookie(mux, http.MethodGet, "/recettes", cookie).Body.String()
 
 	if !strings.Contains(corps, nomDeTest) {
 		t.Errorf("en-tête sans le nom du compte connecté :\n%s", corps)
@@ -930,7 +930,7 @@ func TestLEnTeteEchappeLeNomDuCompte(t *testing.T) {
 	}
 
 	cookie := cookieDe(t, seConnecte(t, mux, courrielDeTest, motDePasseDeTest))
-	corps := avecCookie(mux, http.MethodGet, "/", cookie).Body.String()
+	corps := avecCookie(mux, http.MethodGet, "/recettes", cookie).Body.String()
 
 	if strings.Contains(corps, "<script>alert(1)</script>") {
 		t.Errorf("nom de compte non échappé :\n%s", corps)
@@ -951,7 +951,7 @@ func TestLEnTeteRetombeSurLeCourrielQuandLeCompteNaPasDeNom(t *testing.T) {
 	creeCompte(t, app, courrielSansNom, "")
 
 	cookie := cookieDe(t, seConnecte(t, mux, courrielSansNom, motDePasseDeTest))
-	corps := avecCookie(mux, http.MethodGet, "/", cookie).Body.String()
+	corps := avecCookie(mux, http.MethodGet, "/recettes", cookie).Body.String()
 
 	if !strings.Contains(corps, courrielSansNom) {
 		t.Errorf("en-tête sans le courriel du compte dépourvu de nom :\n%s", corps)
@@ -961,10 +961,13 @@ func TestLEnTeteRetombeSurLeCourrielQuandLeCompteNaPasDeNom(t *testing.T) {
 	}
 }
 
+// La page de connexion, et non la liste : celle-ci est derrière la session, et
+// un visiteur n'y voit qu'une redirection. C'est la seule page qu'il atteigne,
+// donc la seule où son en-tête se lise.
 func TestLEnTeteProposeLaConnexionAuVisiteur(t *testing.T) {
 	_, mux := serveurDeTest(t)
 
-	corps := avecCookie(mux, http.MethodGet, "/", nil).Body.String()
+	corps := avecCookie(mux, http.MethodGet, "/connexion", nil).Body.String()
 
 	if !strings.Contains(corps, `href="/connexion"`) {
 		t.Errorf("en-tête sans lien de connexion :\n%s", corps)

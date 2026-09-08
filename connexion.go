@@ -19,7 +19,7 @@ func pageConnexion(e *core.RequestEvent) error {
 	if e.Auth != nil {
 		return e.Redirect(http.StatusSeeOther, "/")
 	}
-	return rendre(e, "connexion.html", "connexion-corps.html", donneesPage{
+	return rendre(e, "connexion.html", "connexion-corps.html", &donneesPage{
 		Titre: "Connexion — Patachoo",
 	})
 }
@@ -136,7 +136,7 @@ func laRegleDAuthentificationAutorise(e *core.RequestEvent, compte *core.Record)
 // Ni le courriel saisi ni le mot de passe ne sont renvoyés à la page : le
 // second n'a rien à faire dans du HTML, fût-il le sien.
 func echecDeConnexion(e *core.RequestEvent) error {
-	return rendre(e, "connexion.html", "connexion-corps.html", donneesPage{
+	return rendre(e, "connexion.html", "connexion-corps.html", &donneesPage{
 		Titre:   "Connexion — Patachoo",
 		Message: messageEchecConnexion,
 	})

@@ -34,13 +34,21 @@ func requete(t *testing.T, methode, cible string, entetes map[string]string) (*c
 	return e, rec
 }
 
-// accueil rend la page d'accueil et renvoie le corps de la réponse.
-func accueil(t *testing.T, entetes map[string]string) (*httptest.ResponseRecorder, string) {
+// rendu exerce les deux chemins de rendre sur une page réelle, sans base ni
+// session.
+//
+// La page de connexion, et non celle des recettes : ce qui est en jeu ici est
+// la convention de rendu — mise en page, fragment, assets — et non le contenu.
+// Une page qui exige une session obligerait chacun de ces tests à monter une
+// base pour vérifier une balise <html>.
+func rendu(t *testing.T, entetes map[string]string) (*httptest.ResponseRecorder, string) {
 	t.Helper()
 
-	e, rec := requete(t, http.MethodGet, "/", entetes)
-	if err := pageAccueil(e); err != nil {
-		t.Fatalf("pageAccueil : %v", err)
+	e, rec := requete(t, http.MethodGet, "/connexion", entetes)
+	if err := rendre(e, "connexion.html", "connexion-corps.html", &donneesPage{
+		Titre: "Connexion — Patachoo",
+	}); err != nil {
+		t.Fatalf("rendre : %v", err)
 	}
 
 	return rec, rec.Body.String()
@@ -55,8 +63,10 @@ func TestGabaritsEtAssetsSontEmbarques(t *testing.T) {
 		minimum int
 	}{
 		{vues, "vues/mise-en-page.html", 1},
-		{vues, "vues/accueil.html", 1},
-		{vues, "vues/accueil-corps.html", 1},
+		{vues, "vues/recettes.html", 1},
+		{vues, "vues/recettes-resultats.html", 1},
+		{vues, "vues/connexion.html", 1},
+		{vues, "vues/connexion-corps.html", 1},
 		{statique, "statique/htmx.min.js", 1},
 		{statique, "statique/patachoo.css", 1},
 	}
@@ -73,8 +83,8 @@ func TestGabaritsEtAssetsSontEmbarques(t *testing.T) {
 	}
 }
 
-func TestAccueilRendUnDocumentComplet(t *testing.T) {
-	rec, corps := accueil(t, nil)
+func TestLeRenduProduitUnDocumentComplet(t *testing.T) {
+	rec, corps := rendu(t, nil)
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("statut %d, attendu %d", rec.Code, http.StatusOK)
@@ -97,8 +107,8 @@ func TestAccueilRendUnDocumentComplet(t *testing.T) {
 
 // Pas de CDN : l'outil doit fonctionner sur un réseau coupé d'Internet. La
 // formulation binaire, c'est l'absence de « :// » dans la page rendue.
-func TestAccueilNeSertQueDesAssetsLocaux(t *testing.T) {
-	_, corps := accueil(t, nil)
+func TestLeRenduNeSertQueDesAssetsLocaux(t *testing.T) {
+	_, corps := rendu(t, nil)
 
 	for _, attendu := range []string{"/statique/patachoo.css", "/statique/htmx.min.js"} {
 		if !strings.Contains(corps, attendu) {
@@ -110,8 +120,8 @@ func TestAccueilNeSertQueDesAssetsLocaux(t *testing.T) {
 	}
 }
 
-func TestAccueilPorteLaNavigation(t *testing.T) {
-	_, corps := accueil(t, nil)
+func TestLaMiseEnPagePorteLaNavigation(t *testing.T) {
+	_, corps := rendu(t, nil)
 
 	for _, attendu := range []string{`href="/recettes"`, `href="/recettes/nouvelle"`} {
 		if !strings.Contains(corps, attendu) {
@@ -122,8 +132,8 @@ func TestAccueilPorteLaNavigation(t *testing.T) {
 
 // Une route qui répond à HTMX rend un fragment, pas la page entière : une page
 // complète renvoyée dans un hx-target produit des pages imbriquées.
-func TestAccueilRendUnFragmentAHTMX(t *testing.T) {
-	_, corps := accueil(t, map[string]string{"HX-Request": "true"})
+func TestLeRenduEstUnFragmentPourHTMX(t *testing.T) {
+	_, corps := rendu(t, map[string]string{"HX-Request": "true"})
 
 	for _, interdit := range []string{"<html", "<body"} {
 		if strings.Contains(corps, interdit) {
@@ -137,8 +147,8 @@ func TestAccueilRendUnFragmentAHTMX(t *testing.T) {
 	}
 }
 
-func TestAccueilRendLeDocumentCompletSansHTMX(t *testing.T) {
-	_, corps := accueil(t, nil)
+func TestLeRenduEstUnDocumentCompletSansHTMX(t *testing.T) {
+	_, corps := rendu(t, nil)
 
 	for _, attendu := range []string{"<html", "<body"} {
 		if !strings.Contains(corps, attendu) {
@@ -150,9 +160,9 @@ func TestAccueilRendLeDocumentCompletSansHTMX(t *testing.T) {
 // DOD.md §3 : une recette importée est du contenu étranger par nature. Le test
 // porte sur le HTML rendu par le gabarit, pas sur un appel d'échappement.
 func TestLeGabaritEchappeSesEntrees(t *testing.T) {
-	e, rec := requete(t, http.MethodGet, "/", nil)
+	e, rec := requete(t, http.MethodGet, "/connexion", nil)
 
-	err := rendre(e, "accueil.html", "accueil-corps.html", donneesPage{
+	err := rendre(e, "connexion.html", "connexion-corps.html", &donneesPage{
 		Titre:   `<script>alert(1)</script>`,
 		Message: `Chausson aux pommes & cannelle`,
 	})
