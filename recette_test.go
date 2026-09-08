@@ -745,17 +745,32 @@ func TestUneSourceSansNomDeSiteSAfficheParSonDomaine(t *testing.T) {
 
 // Une source sans adresse est celle d'un carnet de famille ou d'un livre : le
 // nom se lit, mais il n'y a rien où aller.
+//
+// Une adresse réduite à des espaces est le même cas : elle ne mène nulle part,
+// et un href fait d'espaces serait un lien mort que rien ne distingue à l'œil
+// d'un lien vivant.
 func TestUneSourceSansAdresseSAfficheSansLien(t *testing.T) {
-	app, mux, cookie := serveurConnecte(t)
-	recette := recetteEnBase(t, app, map[string]any{"source_name": "Le carnet de Mamie"})
-
-	bloc := blocSource(fiche(mux, cookie, recette.Id).Body.String())
-
-	if !strings.Contains(bloc, "Le carnet de Mamie") {
-		t.Fatalf("le nom de la source ne figure pas dans la page : %q", bloc)
+	cas := map[string]map[string]any{
+		"adresse absente":   {"source_name": "Le carnet de Mamie"},
+		"adresse d'espaces": {"source_name": "Le carnet de Mamie", "source_url": "   "},
 	}
-	if lienDeLaSource.MatchString(bloc) {
-		t.Errorf("lien mort rendu alors qu'aucune adresse n'est connue : %q", bloc)
+
+	for nom, champs := range cas {
+		t.Run(nom, func(t *testing.T) {
+			app, mux, cookie := serveurConnecte(t)
+			// Sans validation : une adresse d'espaces est refusée à
+			// l'écriture, et l'affichage ne doit pas s'appuyer là-dessus.
+			recette := recetteEnBaseSansValidation(t, app, champs)
+
+			bloc := blocSource(fiche(mux, cookie, recette.Id).Body.String())
+
+			if !strings.Contains(bloc, "Le carnet de Mamie") {
+				t.Fatalf("le nom de la source ne figure pas dans la page : %q", bloc)
+			}
+			if lienDeLaSource.MatchString(bloc) {
+				t.Errorf("lien mort rendu alors qu'aucune adresse n'est connue : %q", bloc)
+			}
+		})
 	}
 }
 
@@ -783,8 +798,11 @@ func TestUneSourceReduiteADesEspacesNeRendAucunLibelle(t *testing.T) {
 // ou le code qui refuse le schéma.
 func TestUneAdresseDeSourceEnJavascriptNeSortAucunHrefExecutable(t *testing.T) {
 	app, mux, cookie := serveurConnecte(t)
+	// Le nom du site est renseigné pour que le bloc existe sans rien devoir au
+	// repli sur le domaine : ce test éprouve le href, et lui seul.
 	recette := recetteEnBaseSansValidation(t, app, map[string]any{
-		"source_url": "javascript:alert(1)",
+		"source_url":  "javascript:alert(1)",
+		"source_name": "Exemple",
 	})
 
 	corps := fiche(mux, cookie, recette.Id).Body.String()
@@ -808,7 +826,8 @@ func TestUnGuillemetDansLAdresseDeSourceNeRefermePasLAttribut(t *testing.T) {
 	// Sans validation : le validateur refuse déjà cette adresse, et c'est
 	// justement ce qu'on ne veut pas prendre pour un rempart d'affichage.
 	recette := recetteEnBaseSansValidation(t, app, map[string]any{
-		"source_url": `https://exemple.fr/x" onmouseover="alert(1)`,
+		"source_url":  `https://exemple.fr/x" onmouseover="alert(1)`,
+		"source_name": "Exemple",
 	})
 
 	bloc := blocSource(fiche(mux, cookie, recette.Id).Body.String())
