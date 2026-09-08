@@ -471,8 +471,16 @@ func enregistre(e *core.RequestEvent, recette *core.Record, saisie formulaireRec
 		return rendLeFormulaire(e, saisie, "Le titre est obligatoire.")
 	}
 
+	// L'image avant la transaction, et non dedans : télécharger une image
+	// distante peut prendre dix secondes, et une transaction d'écriture tenue
+	// aussi longtemps bloquerait toutes les autres. Rien n'est écrit pour
+	// autant — le fichier ne part en stockage qu'au Save, avec la recette.
+	if err := poseLImage(e, recette); err != nil {
+		return err
+	}
+
 	err := e.App.RunInTransaction(func(txApp core.App) error {
-		if err := poseLesChamps(txApp, e, recette, saisie); err != nil {
+		if err := poseLesChamps(txApp, recette, saisie); err != nil {
 			return err
 		}
 		if err := txApp.Save(recette); err != nil {
@@ -496,7 +504,7 @@ func enregistre(e *core.RequestEvent, recette *core.Record, saisie formulaireRec
 //
 // Les nombres partent en chaînes : PocketBase les convertit à la validation,
 // et c'est lui qui décide ce qu'un champ accepte.
-func poseLesChamps(txApp core.App, e *core.RequestEvent, recette *core.Record, saisie formulaireRecette) error {
+func poseLesChamps(txApp core.App, recette *core.Record, saisie formulaireRecette) error {
 	recette.Set("title", strings.TrimSpace(saisie.Titre))
 	recette.Set("servings", saisie.Portions)
 	recette.Set("prep_time", saisie.TempsPreparation)
@@ -518,13 +526,19 @@ func poseLesChamps(txApp core.App, e *core.RequestEvent, recette *core.Record, s
 	}
 	recette.Set("tags", ids)
 
-	return poseLImage(e, recette)
+	return nil
 }
 
-// poseLImage applique le téléversement, l'effacement, ou ne touche à rien.
+// poseLImage applique le téléversement, l'effacement, le téléchargement de
+// l'image que l'import a repérée, ou ne touche à rien.
 //
-// Ne rien faire est le cas ordinaire d'une édition : un formulaire renvoyé
-// sans fichier ne doit pas effacer l'image en place.
+// L'ordre est celui-là et il compte : un fichier téléversé l'emporte sur
+// l'image distante, qui l'emporte sur l'image déjà stockée. Un fichier choisi
+// par l'utilisateur ne déclenche donc aucune requête sortante — il n'y a rien à
+// aller chercher.
+//
+// Ne rien faire est le cas ordinaire d'une édition : un formulaire renvoyé sans
+// fichier ne doit pas effacer l'image en place.
 func poseLImage(e *core.RequestEvent, recette *core.Record) error {
 	if e.Request.PostFormValue("retirer-image") != "" {
 		recette.Set("image", nil)
@@ -532,19 +546,40 @@ func poseLImage(e *core.RequestEvent, recette *core.Record) error {
 	}
 
 	fichier, entete, err := e.Request.FormFile("image")
-	if err != nil {
-		if errors.Is(err, http.ErrMissingFile) || errors.Is(err, http.ErrNotMultipart) {
-			return nil
-		}
-		return err
-	}
-	defer fichier.Close()
+	if err == nil {
+		defer fichier.Close()
 
-	televerse, err := filesystem.NewFileFromMultipart(entete)
-	if err != nil {
+		televerse, err := filesystem.NewFileFromMultipart(entete)
+		if err != nil {
+			return err
+		}
+		recette.Set("image", televerse)
+		return nil
+	}
+	if !errors.Is(err, http.ErrMissingFile) && !errors.Is(err, http.ErrNotMultipart) {
 		return err
 	}
-	recette.Set("image", televerse)
+
+	// Aucun fichier téléversé : l'aperçu d'import a pu proposer l'image du site
+	// d'origine, dont l'URL traverse le formulaire dans un champ caché. Le nom
+	// du champ est en souligné là où les autres sont en tirets : c'est celui
+	// que la tâche fixe, et une règle unique se teste.
+	adresse := adresseDeLImage(e.Request.PostFormValue("image_url"), e.Request.PostFormValue("source-url"))
+	if adresse == "" {
+		return nil
+	}
+
+	distante, err := imageDistante(e.Request.Context(), adresse)
+	if err != nil {
+		// Un échec de téléchargement ne fait pas perdre l'import : la recette
+		// est enregistrée sans image, et la cause reste côté serveur. Elle est
+		// technique, et l'utilisateur a le formulaire d'édition pour téléverser
+		// l'illustration lui-même.
+		e.App.Logger().Warn("image distante non téléchargée", "url", adresse, "erreur", err)
+		return nil
+	}
+
+	recette.Set("image", distante)
 	return nil
 }
 
