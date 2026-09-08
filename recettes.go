@@ -28,18 +28,9 @@ const parPage = 24
 //
 // Ce n'est pas un confort d'affichage : le décalage se calcule par
 // (page-1)*parPage, et un « ?page=999999999999999999 » le ferait déborder en
-// négatif — que FindRecordsByFilter ignore, rendant alors la première page à
-// qui a demandé la dernière. Une borne bien au-delà de tout carnet réel.
+// négatif — que le décalage de la requête ignore, rendant alors la première
+// page à qui a demandé la dernière. Une borne bien au-delà de tout carnet réel.
 const pageMax = 1 << 20
-
-// filtreDeRecherche restreint aux recettes dont le titre, l'une des lignes
-// d'ingrédient ou l'un des noms de tag contient le terme.
-//
-// « ?~ » et non « ~ » sur les deux chemins multi-valués : sur une relation
-// multiple ou inverse, « ~ » exige que *toutes* les valeurs correspondent, et
-// « tags.name ~ {:q} » ne ramènerait qu'une recette dont chaque tag contient le
-// terme. L'opérateur « au moins une » est « ?~ ».
-const filtreDeRecherche = "title ~ {:q} || ingredients_via_recipe.raw ?~ {:q} || tags.name ?~ {:q}"
 
 // criteres porte ce que la chaîne de requête dit de la liste.
 //
@@ -128,10 +119,10 @@ func pageListeRecettes(e *core.RequestEvent) error {
 	criteres := lisLesCriteres(e.Request)
 
 	// Une vignette de plus que la page : c'est ce dépassement, et lui seul, qui
-	// dit qu'il existe un rang suivant. CountRecords n'accepte que des
-	// dbx.Expression, pas un filtre en chaîne, et reconstruire l'expression
-	// pour un simple « y en a-t-il d'autres » coûterait plus que la ligne lue
-	// en trop.
+	// dit qu'il existe un rang suivant. La requête FTS5 saurait maintenant se
+	// compter, mais un total n'est pas ce qu'on demande ici — « y en a-t-il
+	// d'autres » coûte une ligne lue en trop, une seconde requête coûterait
+	// plus.
 	trouvees, err := recettesDuRang(e.App, criteres)
 	if err != nil {
 		return err
@@ -170,38 +161,56 @@ func pageListeRecettes(e *core.RequestEvent) error {
 
 // recettesDuRang lit une page de recettes, une de plus que nécessaire.
 //
-// FindRecordsByFilter et non une requête écrite à la main : le filtre en
-// chaîne résout seul la relation inverse des ingrédients et la relation
-// multiple des tags, et il déduplique les lignes que ces jointures
-// multiplieraient.
+// Une requête construite, et non plus FindRecordsByFilter : MATCH ne s'exprime
+// pas dans le filtre en chaîne de PocketBase. Il n'y a pour autant aucune
+// jointure à écrire sur les ingrédients ni sur les tags — l'index les porte
+// déjà, une ligne par recette, et rien n'est donc à dédupliquer.
+//
+// RecordQuery rend des *core.Record comme FindRecordsByFilter : le rendu de la
+// grille ne change pas.
 func recettesDuRang(app core.App, criteres criteres) ([]*core.Record, error) {
-	filtre := ""
-	params := dbx.Params{}
-	if criteres.Terme != "" {
-		filtre = filtreDeRecherche
-		params["q"] = termeCherchable(criteres.Terme)
+	requete := app.RecordQuery("recipes")
+	if motif := motifDeRecherche(criteres.Terme); motif != "" {
+		requete = requete.
+			InnerJoin("recipes_fts", dbx.NewExp("recipes_fts.recipe_id = recipes.id")).
+			AndWhere(dbx.NewExp("recipes_fts MATCH {:q}", dbx.Params{"q": motif}))
 	}
 
-	return app.FindRecordsByFilter(
-		"recipes",
-		filtre,
-		"-created",
-		parPage+1,
-		(criteres.Page-1)*parPage,
-		params,
-	)
+	recettes := []*core.Record{}
+	err := requete.
+		OrderBy("recipes.created DESC").
+		Limit(parPage + 1).
+		Offset(int64((criteres.Page - 1) * parPage)).
+		All(&recettes)
+	return recettes, err
 }
 
-// termeCherchable neutralise les jokers de LIKE dans un terme saisi.
+// motifDeRecherche traduit le terme saisi en requête FTS5, ou rend "" si le
+// terme ne porte aucun mot — auquel cas la liste n'a pas de critère et rend le
+// carnet entier. Une chaîne MATCH vide serait une erreur de syntaxe FTS5 :
+// elle n'est jamais exécutée.
 //
-// PocketBase échappe bien « % » et « _ » dans une valeur liée — mais seulement
-// si elle ne porte aucun « % » non échappé (tools/search/filter.go,
-// wrapLikeParams) : une valeur qui en contient un est laissée telle quelle, et
-// une recherche sur « % » ramènerait tout le carnet. En échappant nous-mêmes,
-// la valeur n'entre jamais dans ce cas — et l'échappement de PocketBase, qui
-// respecte ce qui l'est déjà, la traverse sans la doubler.
-func termeCherchable(terme string) string {
-	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(terme)
+// La syntaxe de requête de FTS5 est un langage. Un terme portant un guillemet,
+// « * », « NEAR », « AND », « OR » ou « - » change le sens de la requête, voire
+// la fait échouer. Chaque mot part donc entre guillemets doubles — guillemet
+// interne doublé — et suffixé de « * », qui est la recherche par préfixe. C'est
+// le pendant de l'échappement de « % » et « _ » que le LIKE demandait.
+//
+// Citer n'est pas lier : le motif rejoint le SQL par dbx.Params, jamais par
+// concaténation. La citation répond à la syntaxe de la requête, le paramètre
+// lié à l'injection ; les deux sont nécessaires, aucune ne dispense de l'autre.
+func motifDeRecherche(terme string) string {
+	mots := strings.Fields(terme)
+	if len(mots) == 0 {
+		return ""
+	}
+
+	cites := make([]string, 0, len(mots))
+	for _, mot := range mots {
+		cites = append(cites, `"`+strings.ReplaceAll(mot, `"`, `""`)+`"*`)
+	}
+	// Les mots juxtaposés sont un ET implicite, insensible à leur ordre.
+	return strings.Join(cites, " ")
 }
 
 // vignettesDe traduit les enregistrements en ce que la grille affiche.

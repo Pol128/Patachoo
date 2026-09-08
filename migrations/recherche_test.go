@@ -14,7 +14,7 @@ const migrationDeLIndex = "1788858000_recherche_fts5.go"
 // d'écriture qui peut faire diverger l'index de la base — et pas un de plus :
 // la suppression d'un tag passe par un enregistrement des recettes qui le
 // portaient, donc par le déclencheur de mise à jour des recettes.
-var declencheursDeLIndex = []string{
+var declencheursAttendus = []string{
 	"recipes_fts_apres_insertion_recette",
 	"recipes_fts_apres_maj_recette",
 	"recipes_fts_apres_suppression_recette",
@@ -32,7 +32,7 @@ func TestLIndexDeRechercheEtSesDeclencheursSontCrees(t *testing.T) {
 	if !objetExiste(t, app, "table", "recipes_fts") {
 		t.Error("la table virtuelle recipes_fts est absente")
 	}
-	for _, declencheur := range declencheursDeLIndex {
+	for _, declencheur := range declencheursAttendus {
 		if !objetExiste(t, app, "trigger", declencheur) {
 			t.Errorf("le déclencheur %s est absent", declencheur)
 		}
@@ -49,7 +49,7 @@ func TestLeDownRetireLIndexEtSesDeclencheurs(t *testing.T) {
 	if objetExiste(t, app, "table", "recipes_fts") {
 		t.Error("recipes_fts survit au down")
 	}
-	for _, declencheur := range declencheursDeLIndex {
+	for _, declencheur := range declencheursAttendus {
 		if objetExiste(t, app, "trigger", declencheur) {
 			t.Errorf("le déclencheur %s survit au down", declencheur)
 		}
