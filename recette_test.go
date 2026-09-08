@@ -158,12 +158,15 @@ var (
 	contenuDeElement = regexp.MustCompile(`(?s)^<li[^>]*>(.*)</li>$`)
 )
 
-// lignesDe rend les <li> de la liste portant cette classe, dans l'ordre.
+// lignesRenduesDe rend les <li> de la liste portant cette classe, dans l'ordre.
+//
+// Le nom dit « rendues » parce que recettes_test.go a son propre lignesDe, qui
+// lit les ingrédients en base : ici on lit le HTML servi, pas les colonnes.
 //
 // Une lecture textuelle, et non un arbre DOM : ce qui est en jeu est ce que le
 // navigateur reçoit, y compris les attributs, et un analyseur indulgent
 // recollerait justement ce qu'un test d'échappement doit voir cassé.
-func lignesDe(t *testing.T, corps, classe, fermante string) []string {
+func lignesRenduesDe(t *testing.T, corps, classe, fermante string) []string {
 	t.Helper()
 
 	bloc := entreBalises(corps, `class="`+classe+`"`, fermante)
@@ -173,16 +176,17 @@ func lignesDe(t *testing.T, corps, classe, fermante string) []string {
 	return elementDeListe.FindAllString(bloc, -1)
 }
 
-// ingredientsDe rend les lignes d'ingrédients rendues.
-func ingredientsDe(t *testing.T, corps string) []string {
+// ingredientsRendus rend les lignes d'ingrédients du HTML servi — à ne pas
+// confondre avec l'ingredientsDe de recettes_test.go, qui lit la base.
+func ingredientsRendus(t *testing.T, corps string) []string {
 	t.Helper()
-	return lignesDe(t, corps, "ingredients", "</ul>")
+	return lignesRenduesDe(t, corps, "ingredients", "</ul>")
 }
 
 // etapesDe rend les étapes rendues.
 func etapesDe(t *testing.T, corps string) []string {
 	t.Helper()
-	return lignesDe(t, corps, "etapes", "</ol>")
+	return lignesRenduesDe(t, corps, "etapes", "</ol>")
 }
 
 // contenu rend l'intérieur d'un <li>, attributs exclus.
@@ -279,7 +283,7 @@ func TestLesIngredientsSortentTousDansLOrdreDeLeurPosition(t *testing.T) {
 	}
 
 	corps := fiche(mux, cookie, recette.Id).Body.String()
-	lignes := ingredientsDe(t, corps)
+	lignes := ingredientsRendus(t, corps)
 
 	if len(lignes) != 5 {
 		t.Fatalf("%d ingrédients rendus, attendus 5 :\n%s", len(lignes), corps)
@@ -300,7 +304,7 @@ func TestUnIngredientSansAlimentSAfficheParSaLigneBrute(t *testing.T) {
 	ligneEnBase(t, app, recette, map[string]any{"raw": brut, "position": 1})
 
 	corps := fiche(mux, cookie, recette.Id).Body.String()
-	lignes := ingredientsDe(t, corps)
+	lignes := ingredientsRendus(t, corps)
 
 	if len(lignes) != 1 {
 		t.Fatalf("%d ingrédients rendus, attendu 1 :\n%s", len(lignes), corps)
@@ -321,7 +325,7 @@ func TestUnIngredientDontLAlimentNEstQueDesEspacesSAfficheParSaLigneBrute(t *tes
 	ligneEnBase(t, app, recette, map[string]any{"raw": brut, "position": 1, "food": "   "})
 
 	corps := fiche(mux, cookie, recette.Id).Body.String()
-	lignes := ingredientsDe(t, corps)
+	lignes := ingredientsRendus(t, corps)
 
 	if len(lignes) != 1 {
 		t.Fatalf("%d ingrédients rendus, attendu 1 :\n%s", len(lignes), corps)
@@ -344,7 +348,7 @@ func TestUnIngredientAvecAlimentSAfficheEnStructure(t *testing.T) {
 	})
 
 	corps := fiche(mux, cookie, recette.Id).Body.String()
-	ligne := ingredientsDe(t, corps)[0]
+	ligne := ingredientsRendus(t, corps)[0]
 
 	for _, attendu := range []string{"200", "g", "farine de sarrasin"} {
 		if !strings.Contains(ligne, attendu) {
@@ -372,7 +376,7 @@ func TestUnIngredientSansNoteNeRendPasDElementDeNoteVide(t *testing.T) {
 		"food":     "farine",
 	})
 
-	ligne := ingredientsDe(t, fiche(mux, cookie, recette.Id).Body.String())[0]
+	ligne := ingredientsRendus(t, fiche(mux, cookie, recette.Id).Body.String())[0]
 
 	if strings.Contains(ligne, `class="note"`) {
 		t.Errorf("élément de note rendu alors que la note est vide : %q", ligne)
@@ -396,7 +400,7 @@ func TestChaqueLigneDIngredientPorteSaLigneBrute(t *testing.T) {
 	})
 	ligneEnBase(t, app, recette, map[string]any{"raw": brutNonLu, "position": 2})
 
-	lignes := ingredientsDe(t, fiche(mux, cookie, recette.Id).Body.String())
+	lignes := ingredientsRendus(t, fiche(mux, cookie, recette.Id).Body.String())
 
 	for i, brut := range []string{brutStructure, brutNonLu} {
 		if !strings.Contains(lignes[i], `title="`+brut+`"`) {
@@ -420,7 +424,7 @@ func TestUnIngredientFacultatifPorteLaMention(t *testing.T) {
 		"food":     "farine",
 	})
 
-	lignes := ingredientsDe(t, fiche(mux, cookie, recette.Id).Body.String())
+	lignes := ingredientsRendus(t, fiche(mux, cookie, recette.Id).Body.String())
 
 	if !strings.Contains(lignes[0], "(facultatif)") {
 		t.Errorf("ingrédient facultatif sans mention lisible : %q", lignes[0])
@@ -677,7 +681,7 @@ func TestUnIngredientSansQuantiteNAffichePasDeZero(t *testing.T) {
 	corps := fiche(mux, cookie, recette.Id).Body.String()
 	// Le contenu seul : la ligne brute est en attribut title, et c'est le texte
 	// affiché qui est en jeu.
-	ligne := contenu(ingredientsDe(t, corps)[0])
+	ligne := contenu(ingredientsRendus(t, corps)[0])
 
 	if strings.Contains(ligne, "0") {
 		t.Errorf("quantité absente rendue par un « 0 » : %q", ligne)
@@ -776,7 +780,7 @@ func TestLAttributTitreDeLaLigneBruteEstEchappe(t *testing.T) {
 		"position": 1,
 	})
 
-	ligne := ingredientsDe(t, fiche(mux, cookie, recette.Id).Body.String())[0]
+	ligne := ingredientsRendus(t, fiche(mux, cookie, recette.Id).Body.String())[0]
 	ouvrante := baliseOuvrante.FindString(ligne)
 
 	// Deux guillemets doubles dans la balise ouvrante, et deux seulement :
