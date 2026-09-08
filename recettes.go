@@ -319,6 +319,9 @@ func remplaceLesIngredients(txApp core.App, recette *core.Record, lignes []strin
 		// lecture des lignes, qui couvre tous les chemins d'écriture.
 		ligne.Set("raw", brut)
 		if err := txApp.Save(ligne); err != nil {
+			if message := refusDeLaLigne(i+1, err); message != "" {
+				return erreurDeSaisie{message: message}
+			}
 			return fmt.Errorf("enregistrement de l'ingrédient %q : %w", brut, err)
 		}
 	}
@@ -520,6 +523,26 @@ func refusDuChamp(champ core.Field) string {
 	)
 }
 
+// refusDeLaLigne nomme la ligne d'ingrédient que le schéma a refusée, ou rend
+// "" si le refus ne porte pas sur ce que l'utilisateur a tapé.
+//
+// raw est le seul champ de la collection qui vienne du formulaire ; recipe et
+// position sont posés ici même, et leur refus serait une panne — la remonter
+// en faute de frappe la rendrait invisible.
+func refusDeLaLigne(rang int, err error) string {
+	var refus validation.Errors
+	if !errors.As(err, &refus) {
+		return ""
+	}
+	if _, refuse := refus["raw"]; !refuse {
+		return ""
+	}
+	return fmt.Sprintf(
+		"Le champ « %s » n'a pas été accepté : la ligne n° %d est trop longue.",
+		libelleDuChamp["raw"], rang,
+	)
+}
+
 // libelleDuChamp traduit les noms du schéma en noms du formulaire : c'est le
 // champ que l'utilisateur voit qu'il faut lui désigner.
 var libelleDuChamp = map[string]string{
@@ -532,4 +555,5 @@ var libelleDuChamp = map[string]string{
 	"meal_type":    "type de plat",
 	"seasons":      "saisons",
 	"tags":         "tags",
+	"raw":          "ingrédients",
 }
