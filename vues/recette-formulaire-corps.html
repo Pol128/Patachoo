@@ -1,0 +1,43 @@
+<h1>{{.Formulaire.Legende}}</h1>
+{{if .Message}}<p class="erreur" role="alert">{{.Message}}</p>{{end}}
+{{with .Formulaire}}
+<form class="formulaire-recette" method="post" action="{{.Action}}" enctype="multipart/form-data">
+<label for="titre">Titre</label>
+<input type="text" id="titre" name="titre" value="{{.Titre}}" required>
+
+<label for="image">Image</label>
+<input type="file" id="image" name="image" accept="image/jpeg,image/png,image/webp,image/avif">
+{{if .Image}}<label class="case"><input type="checkbox" name="retirer-image" value="1"> Retirer l'image</label>{{end}}
+
+<label for="portions">Portions</label>
+<input type="number" id="portions" name="portions" min="0" value="{{.Portions}}">
+
+<label for="temps-preparation">Temps de préparation (minutes)</label>
+<input type="number" id="temps-preparation" name="temps-preparation" min="0" value="{{.TempsPreparation}}">
+
+<label for="temps-cuisson">Temps de cuisson (minutes)</label>
+<input type="number" id="temps-cuisson" name="temps-cuisson" min="0" value="{{.TempsCuisson}}">
+
+<label for="instructions">Instructions</label>
+<textarea id="instructions" name="instructions" rows="10">{{.Instructions}}</textarea>
+
+<label for="ingredients">Ingrédients — une ligne par ingrédient</label>
+<textarea id="ingredients" name="ingredients" rows="10">{{.Ingredients}}</textarea>
+
+<label for="tags">Tags — séparés par des virgules</label>
+<input type="text" id="tags" name="tags" value="{{.Tags}}">
+
+<label for="type-de-plat">Type de plat</label>
+<select id="type-de-plat" name="type-de-plat">
+<option value=""></option>
+{{range .TypesDePlat}}<option value="{{.Id}}"{{if $.Formulaire.EstLeTypeDePlat .Id}} selected{{end}}>{{.Nom}}</option>
+{{end}}</select>
+
+<fieldset class="saisons">
+<legend>Saisons</legend>
+{{range .ToutesLesSaisons}}<label class="case"><input type="checkbox" name="saisons" value="{{.}}"{{if $.Formulaire.SaisonCochee .}} checked{{end}}> {{.}}</label>
+{{end}}</fieldset>
+
+<button type="submit">Enregistrer</button>
+</form>
+{{end}}
