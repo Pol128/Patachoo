@@ -116,6 +116,22 @@ func sessionARenouveler(e *core.RequestEvent) (string, time.Duration, bool) {
 		return "", 0, false
 	}
 
+	// La règle d'authentification décide de la prolongation comme elle décide
+	// de l'ouverture. Sans cette lecture, un compte que la règle ne couvre plus
+	// garde sa session indéfiniment tant qu'il émet une requête par demi-vie :
+	// il ne se reconnecte jamais, donc laConnexionEstAutorisee ne l'atteint
+	// plus, et la borne que son commentaire invoque comme parade — « un jeton
+	// émis en la violant resterait valable jusqu'à son échéance » — ne tombe
+	// plus jamais. PocketBase rejoue la règle sur sa propre route de
+	// renouvellement (apis/record_auth_refresh.go → recordAuthResponse).
+	//
+	// Ici et pas plus haut : la règle s'évalue en base, quand tout ce qui
+	// précède se lit dans le jeton. Une session sous la mi-vie est le cas rare,
+	// et c'est le seul qui doive payer ce coût.
+	if !laRegleDAuthentificationAutorise(e, e.Auth) {
+		return "", 0, false
+	}
+
 	jeton, err := e.Auth.NewAuthToken()
 	if err != nil {
 		e.App.Logger().Error("renouvellement de la session impossible", "erreur", err)

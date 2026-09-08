@@ -88,29 +88,41 @@ func controleFacticeDuMotDePasse(e *core.RequestEvent) {
 //
 // PasswordAuth.Enabled est l'interrupteur de l'administration
 // (apis/record_auth_with_password.go) : fermé, il doit couper cette page-ci
-// aussi, et pas seulement l'API REST.
+// aussi, et pas seulement l'API REST. Il ne vaut que pour l'ouverture : une
+// session déjà tenue ne se coupe pas parce que l'un des moyens de l'ouvrir a
+// été fermé.
 //
-// AuthRule dit quels comptes ont le droit d'ouvrir une session — non vérifié,
-// suspendu, restreint par une règle de collection. PocketBase ne la lit qu'ici,
-// à l'authentification (apis/record_helpers.go, recordAuthResponse), et jamais
-// au chargement du jeton : un jeton émis en la violant resterait valable
-// jusqu'à son échéance, cinq jours durant.
+// Le second contrôle est la règle d'authentification, et il ne s'arrête pas à
+// la connexion — voir laRegleDAuthentificationAutorise.
+func laConnexionEstAutorisee(e *core.RequestEvent, compte *core.Record) bool {
+	if !compte.Collection().PasswordAuth.Enabled {
+		return false
+	}
+	return laRegleDAuthentificationAutorise(e, compte)
+}
+
+// laRegleDAuthentificationAutorise dit si la collection accorde encore une
+// session à ce compte.
+//
+// AuthRule dit quels comptes ont le droit d'en tenir une — non vérifié,
+// suspendu, restreint par une règle de collection. PocketBase ne la lit jamais
+// au chargement du jeton, mais à chacun des deux moments où il en émet un :
+// l'authentification et le renouvellement (apis/record_helpers.go,
+// recordAuthResponse, appelé par record_auth_with_password.go comme par
+// record_auth_refresh.go). Les deux, et pas seulement le premier : un contrôle
+// posé à la seule ouverture ne reverrait plus jamais un compte qui ne se
+// reconnecte pas, et chaque renouvellement repousserait son échéance.
 //
 // Le doute vaut refus : une règle illisible ferme la porte plutôt que de
 // l'ouvrir en silence.
-func laConnexionEstAutorisee(e *core.RequestEvent, compte *core.Record) bool {
-	collection := compte.Collection()
-	if !collection.PasswordAuth.Enabled {
-		return false
-	}
-
+func laRegleDAuthentificationAutorise(e *core.RequestEvent, compte *core.Record) bool {
 	infos, err := e.RequestInfo()
 	if err != nil {
 		e.App.Logger().Error("informations de requête illisibles", "erreur", err)
 		return false
 	}
 
-	autorise, err := e.App.CanAccessRecord(compte, infos, collection.AuthRule)
+	autorise, err := e.App.CanAccessRecord(compte, infos, compte.Collection().AuthRule)
 	if err != nil {
 		e.App.Logger().Error("règle d'authentification inapplicable", "erreur", err)
 		return false
