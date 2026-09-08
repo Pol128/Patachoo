@@ -613,16 +613,7 @@ func TestImportNeRendPasUneImageEnSchemaExecutable(t *testing.T) {
 // Critère 8 : une URL vide, relative ou d'un schéma que nous ne suivons pas est
 // refusée sans qu'aucune requête ne parte.
 func TestImportRefuseUneURLInexploitableSansToucherAuReseau(t *testing.T) {
-	cas := []struct{ nom, adresse string }{
-		{"vide", ""},
-		{"blancs seuls", "   "},
-		{"relative", "/recettes/gratin"},
-		{"sans schéma", "fourneaux-de-perlimpinpin.example/gratin"},
-		{"schéma ftp", "ftp://fourneaux-de-perlimpinpin.example/gratin"},
-		{"schéma file", "file:///etc/passwd"},
-	}
-
-	for _, c := range cas {
+	for _, c := range lesRefusDeSaisie() {
 		t.Run(c.nom, func(t *testing.T) {
 			_, mux, cookie := carnetDeTest(t)
 			reseauPiege(t)
@@ -642,6 +633,63 @@ func TestImportRefuseUneURLInexploitableSansToucherAuReseau(t *testing.T) {
 			if messageDErreur(t, corps) == "" {
 				t.Errorf("aucun message rendu :\n%s", corps)
 			}
+			// Le champ se rend avec ce qui a été tapé : une saisie refusée ne
+			// doit pas se retaper. Sans cette exigence, donneesImport.URL —
+			// qui n'existe que pour ça — se vide sans faire rougir personne.
+			if attendue := strings.TrimSpace(c.adresse); attendue != "" {
+				if rendue := valeurDe(t, corps, "url"); rendue != attendue {
+					t.Errorf("le champ re-rendu porte %q, attendu l'adresse soumise %q", rendue, attendue)
+				}
+			}
+		})
+	}
+}
+
+// lesRefusDeSaisie : les saisies que refusDeLAdresse écarte, chacune avec la
+// cause qui la fait écarter. Deux cas d'une même cause doivent rendre le même
+// message, deux causes distinctes jamais le même — c'est ce couple, et lui
+// seul, qui retient les trois branches de refusDeLAdresse.
+func lesRefusDeSaisie() []struct{ nom, adresse, cause string } {
+	return []struct{ nom, adresse, cause string }{
+		{"vide", "", "saisie absente"},
+		{"blancs seuls", "   ", "saisie absente"},
+		{"relative", "/recettes/gratin", "pas une adresse de page"},
+		{"sans schéma", "fourneaux-de-perlimpinpin.example/gratin", "pas une adresse de page"},
+		{"schéma ftp", "ftp://fourneaux-de-perlimpinpin.example/gratin", "schéma non suivi"},
+		{"schéma file", "file:///etc/passwd", "schéma non suivi"},
+	}
+}
+
+// Critère 8, second volet : chaque cause de refus de la saisie a son message,
+// aucune n'en partage un avec une autre, et aucun ne dit « une erreur est
+// survenue ». C'est l'intention que TestChaqueCauseRendUnMessageQuiLuiEstPropre
+// sert pour les causes de récupération, appliquée en amont, à la saisie.
+//
+// refusDeLAdresse est appelée directement, sur l'adresse ébarbée comme importe
+// l'ébarbe : c'est elle qui distingue les causes, et la traverser par le réseau
+// ne dirait rien de plus.
+func TestChaqueRefusDeSaisieRendUnMessageQuiLuiEstPropre(t *testing.T) {
+	parCause := map[string]string{}
+	parMessage := map[string]string{}
+
+	for _, c := range lesRefusDeSaisie() {
+		t.Run(c.nom, func(t *testing.T) {
+			message := refusDeLAdresse(strings.TrimSpace(c.adresse))
+
+			if message == "" {
+				t.Fatalf("%q n'est pas refusée", c.adresse)
+			}
+			if strings.Contains(strings.ToLower(message), "une erreur est survenue") {
+				t.Errorf("message creux pour %q : %q", c.nom, message)
+			}
+			if deja, vue := parCause[c.cause]; vue && deja != message {
+				t.Errorf("la cause %q rend %q pour %q, mais %q ailleurs", c.cause, message, c.nom, deja)
+			}
+			if autre, pris := parMessage[message]; pris && autre != c.cause {
+				t.Errorf("les causes %q et %q rendent le même message : %q", c.cause, autre, message)
+			}
+			parCause[c.cause] = message
+			parMessage[message] = c.cause
 		})
 	}
 }
