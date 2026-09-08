@@ -555,6 +555,36 @@ func TestLesChampsRenseignesSontRendusAvecLeurLibelle(t *testing.T) {
 	}
 }
 
+// TestUnAuteurSansNomNePubliePasSonCourriel : la fiche est lisible par tout
+// compte connecté, et l'auteur d'une recette est un autre compte que son
+// lecteur. PocketBase protège cette adresse partout ailleurs — users porte
+// ViewRule = id = @request.auth.id et emailVisibility vaut faux —, mais
+// l'expansion de created_by court-circuite la règle : c'est donc à la fiche de
+// ne pas la publier.
+//
+// Le sens inverse — un auteur nommé sort sous son nom — est couvert par
+// TestLesChampsRenseignesSontRendusAvecLeurLibelle, qui l'affirme déjà sur
+// « Marguerite ». Un second test le redirait, et retirer le bloc ferait rougir
+// deux tests au lieu d'un (DOD.md §2).
+func TestUnAuteurSansNomNePubliePasSonCourriel(t *testing.T) {
+	app, mux, cookie := serveurConnecte(t)
+
+	const courrielDeLAuteur = "sans-nom@exemple.fr"
+	auteur := creeCompte(t, app, courrielDeLAuteur, "")
+	recette := recetteEnBase(t, app, map[string]any{"created_by": auteur.Id})
+
+	corps := fiche(mux, cookie, recette.Id).Body.String()
+
+	if strings.Contains(corps, courrielDeLAuteur) {
+		t.Errorf("le courriel de l'auteur est publié à un autre compte :\n%s", corps)
+	}
+	// Faute de nom à afficher, le bloc disparaît comme n'importe quelle donnée
+	// manquante — c'est la règle du point 5 de la tâche, pas une exception.
+	if strings.Contains(corps, "Ajoutée par") {
+		t.Errorf("bloc « Ajoutée par » rendu alors qu'il n'y a pas de nom :\n%s", corps)
+	}
+}
+
 func TestLImageEstServieParSaMiniature(t *testing.T) {
 	app, mux, cookie := serveurConnecte(t)
 	recette := recetteEnBase(t, app, map[string]any{"image": imageMinimale(t)})
@@ -584,6 +614,55 @@ func TestLaSourceEstUnLienVersLeSiteDOrigine(t *testing.T) {
 	}
 	if !strings.Contains(lien, "Exemple") {
 		t.Errorf("le lien de source ne porte pas le nom du site : %q", lien)
+	}
+}
+
+// --- Les quantités --------------------------------------------------------
+
+func TestLesQuantitesSAffichentEnFrancais(t *testing.T) {
+	cas := []struct {
+		quantite float64
+		attendu  string
+	}{
+		{200, "200"},
+		// Virgule décimale : la fiche se lit en français, et « 0.5 » y est une
+		// faute d'orthographe autant qu'un anglicisme.
+		{0.5, "0,5"},
+		{1.25, "1,25"},
+		// Pas de zéro décimal traînant sur une quantité entière.
+		{3, "3"},
+		// Absente : rien du tout. quantity est facultatif et le restera pour
+		// « une pincée de sel » ; un « 0 » collé devant chaque aliment serait le
+		// cas courant tant que PATA-6 n'est pas branché.
+		{0, ""},
+	}
+
+	for _, c := range cas {
+		if got := quantiteLisible(c.quantite); got != c.attendu {
+			t.Errorf("quantiteLisible(%v) = %q, attendu %q", c.quantite, got, c.attendu)
+		}
+	}
+}
+
+func TestUnIngredientSansQuantiteNAffichePasDeZero(t *testing.T) {
+	app, mux, cookie := serveurConnecte(t)
+	recette := recetteEnBase(t, app, nil)
+	ligneEnBase(t, app, recette, map[string]any{
+		"raw":      "une pincée de sel",
+		"position": 1,
+		"food":     "sel",
+	})
+
+	corps := fiche(mux, cookie, recette.Id).Body.String()
+	// Le contenu seul : la ligne brute est en attribut title, et c'est le texte
+	// affiché qui est en jeu.
+	ligne := contenu(ingredientsDe(t, corps)[0])
+
+	if strings.Contains(ligne, "0") {
+		t.Errorf("quantité absente rendue par un « 0 » : %q", ligne)
+	}
+	if !strings.Contains(ligne, "sel") {
+		t.Errorf("ligne structurée sans son aliment : %q", ligne)
 	}
 }
 
