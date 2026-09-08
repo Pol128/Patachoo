@@ -769,6 +769,45 @@ func TestUnJetonNonRenouvelableNestPasRenouvele(t *testing.T) {
 	}
 }
 
+// Une session ouverte ne prolonge pas un droit que l'administration a retiré.
+//
+// La règle d'authentification décide de la prolongation comme elle décide de
+// l'ouverture. Sans cette lecture, un compte que la règle ne couvre plus —
+// resserrée, ou compte repassé non vérifié — garde sa session indéfiniment
+// tant qu'il émet une requête par demi-vie : il ne se reconnecte jamais, donc
+// le contrôle posé sur la route de connexion ne l'atteint plus, et chaque
+// renouvellement repousse l'échéance d'autant.
+//
+// L'ordre des trois premières lignes est ce que ce test a de délicat. Poser la
+// règle après l'émission du jeton ferait tourner le secret de signature de la
+// collection — « invalidate previously issued auth tokens on auth rule
+// change », core/collection_model.go : le cookie ne serait plus lisible, la
+// requête repartirait en visiteur, et l'absence de Set-Cookie ne prouverait
+// rien. La règle est donc posée d'abord, le compte relu ensuite pour que sa
+// collection la porte, et la sonde vérifie que le jeton authentifie toujours —
+// sans quoi ce test serait vert pour la mauvaise raison.
+func TestUneSessionQueLaRegleNautorisePlusNestPasRenouvelee(t *testing.T) {
+	app, mux := serveurDeTest(t, sonde)
+	compteParDefaut(t, app)
+	poseLaRegleDAuthentification(t, app, "verified = true")
+
+	compte, err := app.FindAuthRecordByEmail("users", courrielDeTest)
+	if err != nil {
+		t.Fatalf("relecture du compte : %v", err)
+	}
+	court := jetonRenouvelableCourt(t, app, compte, time.Minute)
+
+	rec := avecCookie(mux, http.MethodGet, "/sonde", &http.Cookie{Name: nomCookieSession, Value: court})
+
+	if rec.Body.String() != compte.Id {
+		t.Fatalf("la sonde a reconnu %q, attendu %q : le jeton doit rester valable, c'est sa prolongation qui est en cause",
+			rec.Body.String(), compte.Id)
+	}
+	if pose := cookieEventuelDe(rec); pose != nil {
+		t.Errorf("la session d'un compte que la règle refuse a été prolongée : %q", pose.Value)
+	}
+}
+
 // --- Les règles d'accès ---------------------------------------------------
 
 func TestUneRouteProtegeeExigeLaSession(t *testing.T) {
