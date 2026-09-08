@@ -380,9 +380,14 @@ func TestUneRechercheSansResultatLeDitEtNeRendPasLeCarnet(t *testing.T) {
 	}
 }
 
-// Le % et le _ sont les jokers de LIKE. Une valeur liée qui en porte un est
-// laissée telle quelle par PocketBase : sans échappement de notre côté, une
-// recherche sur « % » ramènerait tout le carnet.
+// Le % et le _ sont les jokers de LIKE, et ce test dit qu'ils n'en sont pas :
+// une recherche sur « % » ne ramène pas le carnet entier.
+//
+// Depuis la bascule vers FTS5 (PATA-31), ils ne ramènent plus rien du tout —
+// la ponctuation n'est pas indexée, donc aucun terme réduit à un signe ne
+// correspond à quoi que ce soit. L'assertion sur « Reduction 50% de sel »,
+// que le LIKE échappé satisfaisait, tombe donc avec la bascule ; ce que le
+// test protège, lui, ne bouge pas.
 func TestLesJokersSontCherchesLitteralement(t *testing.T) {
 	app, mux, cookie := carnetDeTest(t)
 	creeRecette(t, app, recetteVoulue{titre: "Tarte aux pommes"})
@@ -390,26 +395,130 @@ func TestLesJokersSontCherchesLitteralement(t *testing.T) {
 	creeRecette(t, app, recetteVoulue{titre: "Reduction 50% de sel"})
 
 	surPourcent := rechercheDe(t, mux, cookie, "%")
-	exigeContient(t, surPourcent, "Reduction 50% de sel")
-	exigeSansAucun(t, surPourcent, "Tarte aux pommes")
+	exigeSansAucun(t, surPourcent, "Tarte aux pommes", "Reduction 50% de sel")
 
 	surSoulignement := rechercheDe(t, mux, cookie, "_")
 	exigeSansAucun(t, surSoulignement, "Tarte aux pommes", ">A<")
 }
 
-// La limite assumée : LIKE ne replie pas les accents. C'est ce test que
-// PATA-31 inversera.
-func TestLaRechercheNeReplitPasLesAccents(t *testing.T) {
+// L'objet de PATA-31, et le test de PATA-13 retourné : celui-là constatait que
+// « creme » ne ramenait pas « Crème brûlée ». L'index FTS5 replie les accents,
+// et les deux graphies se retrouvent l'une l'autre.
+func TestLaRechercheReplitLesAccentsDansLeTitre(t *testing.T) {
 	app, mux, cookie := carnetDeTest(t)
 	creeRecette(t, app, recetteVoulue{titre: "Creme brulee"})
 	creeRecette(t, app, recetteVoulue{titre: "Crème brûlée"})
+	creeRecette(t, app, recetteVoulue{titre: "Soupe de potiron"})
 
 	surSansAccent := rechercheDe(t, mux, cookie, "creme")
-	exigeContient(t, surSansAccent, "Creme brulee")
-	exigeSansAucun(t, surSansAccent, "Crème brûlée")
+	exigeContient(t, surSansAccent, "Creme brulee", "Crème brûlée")
+	exigeSansAucun(t, surSansAccent, "Soupe de potiron")
 
 	surAccentue := rechercheDe(t, mux, cookie, "Crème")
-	exigeContient(t, surAccentue, "Crème brûlée")
+	exigeContient(t, surAccentue, "Creme brulee", "Crème brûlée")
+	exigeSansAucun(t, surAccentue, "Soupe de potiron")
+}
+
+// Trois sources, trois chemins d'indexation : le titre ne dit rien des deux
+// autres. Un accent qui ne vit que dans une ligne d'ingrédient.
+func TestLaRechercheReplitLesAccentsDansUneLigneDIngredient(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	creeRecette(t, app, recetteVoulue{
+		titre:       "Gateau du dimanche",
+		ingredients: []string{"200 g de farine", "20 cl de crème fraîche"},
+	})
+	creeRecette(t, app, recetteVoulue{titre: "Soupe de potiron"})
+
+	corps := rechercheDe(t, mux, cookie, "creme")
+
+	exigeContient(t, corps, "Gateau du dimanche")
+	exigeSansAucun(t, corps, "Soupe de potiron")
+}
+
+// Et un accent qui ne vit que dans un nom de tag.
+func TestLaRechercheReplitLesAccentsDansUnNomDeTag(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	creeRecette(t, app, recetteVoulue{titre: "Omelette", tags: []string{"végétarien"}})
+	creeRecette(t, app, recetteVoulue{titre: "Soupe de potiron"})
+
+	corps := rechercheDe(t, mux, cookie, "vegetari")
+
+	exigeContient(t, corps, "Omelette")
+	exigeSansAucun(t, corps, "Soupe de potiron")
+}
+
+// Le prix de la bascule, et il est réel : FTS5 cherche des mots, pas des
+// morceaux de mot. Le second cas n'est pas là par accident — il dit la limite.
+func TestLaRechercheTrouveParPrefixeEtNonParSousChaine(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	creeRecette(t, app, recetteVoulue{titre: "Crème brûlée"})
+
+	exigeContient(t, rechercheDe(t, mux, cookie, "brûl"), "Crème brûlée")
+	exigeSansAucun(t, rechercheDe(t, mux, cookie, "rûlée"), "Crème brûlée")
+}
+
+// Plusieurs mots deviennent un ET implicite, insensible à l'ordre — là où le
+// LIKE exigeait la sous-chaîne exacte.
+func TestPlusieursMotsSeCombinentQuelQueSoitLeurOrdre(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	creeRecette(t, app, recetteVoulue{
+		titre:       "Flan du dimanche",
+		ingredients: []string{"1 gousse de vanille", "50 cl de creme"},
+	})
+
+	exigeContient(t, rechercheDe(t, mux, cookie, "creme vanille"), "Flan du dimanche")
+	exigeContient(t, rechercheDe(t, mux, cookie, "vanille creme"), "Flan du dimanche")
+	exigeSansAucun(t, rechercheDe(t, mux, cookie, "vanille chocolat"), "Flan du dimanche")
+}
+
+// unicode61 replie les accents mais ne décompose pas les ligatures. Limite
+// connue et assumée, testée comme l'était celle des accents dans PATA-13.
+func TestLaLigatureNEstPasDecomposee(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	creeRecette(t, app, recetteVoulue{
+		titre:       "Gateau du dimanche",
+		ingredients: []string{"4 œufs"},
+	})
+
+	exigeContient(t, rechercheDe(t, mux, cookie, "œufs"), "Gateau du dimanche")
+	exigeSansAucun(t, rechercheDe(t, mux, cookie, "oeufs"), "Gateau du dimanche")
+}
+
+// La syntaxe de requête de FTS5 est un langage : sans citation du terme, ces
+// six formes rendent une erreur de syntaxe — donc une 500 — ou changent le
+// sens de la requête. Citées, elles ne sont plus que des mots qu'aucune
+// recette ne porte.
+func TestLaSyntaxeFTS5NEstPasInterpretee(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	creeRecette(t, app, recetteVoulue{titre: "Tarte aux pommes"})
+
+	for _, terme := range []string{"NEAR", "AND", "OR", "-creme", "*", `un"deux`} {
+		t.Run(terme, func(t *testing.T) {
+			rec := demande(mux, "/recettes?"+url.Values{"q": {terme}}.Encode(), cookie, nil)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("statut %d pour le terme %q, attendu %d", rec.Code, terme, http.StatusOK)
+			}
+
+			corps := rec.Body.String()
+			exigeSansAucun(t, corps, "Tarte aux pommes")
+			if !strings.Contains(corps, "Aucune recette") {
+				t.Errorf("pas de message d'absence de résultat pour %q :\n%s", terme, corps)
+			}
+		})
+	}
+}
+
+// Une chaîne MATCH vide est une erreur de syntaxe FTS5 : un terme sans aucun
+// mot ne doit produire aucun critère, et rendre le carnet entier comme un
+// « q » absent.
+func TestUnTermeReduitADesEspacesRendLeCarnetEntier(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	creeRecette(t, app, recetteVoulue{titre: "Tarte aux pommes"})
+	creeRecette(t, app, recetteVoulue{titre: "Soupe de potiron"})
+
+	corps := rechercheDe(t, mux, cookie, "   ")
+
+	exigeContient(t, corps, "Tarte aux pommes", "Soupe de potiron")
 }
 
 // --- La pagination ---------------------------------------------------------

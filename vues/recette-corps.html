@@ -1,0 +1,17 @@
+{{with .Recette}}
+<h1>{{.Titre}}</h1>
+{{with .Image}}<img class="illustration" src="{{.}}" alt="">{{end}}
+{{with .Faits}}<dl class="faits">
+{{range .}}<dt>{{.Libelle}}</dt><dd>{{.Valeur}}</dd>
+{{end}}</dl>{{end}}
+{{with .Source}}<p>Source : <a href="{{.URL}}" rel="noreferrer">{{.Nom}}</a></p>{{end}}
+{{with .Ingredients}}<h2>Ingrédients</h2>
+<ul class="ingredients">
+{{range .}}<li title="{{.Brut}}">{{if .Aliment}}{{with .Quantite}}{{.}} {{end}}{{with .Unite}}{{.}} {{end}}<span class="aliment">{{.Aliment}}</span>{{with .Note}} <span class="note">{{.}}</span>{{end}}{{else}}{{.Brut}}{{end}}{{if .Facultatif}} <span class="facultatif">(facultatif)</span>{{end}}</li>
+{{end}}</ul>{{end}}
+{{with .Etapes}}<h2>Instructions</h2>
+<ol class="etapes">
+{{range .}}<li>{{.}}</li>
+{{end}}</ol>{{end}}
+{{end}}
+{{template "commentaires.html" .}}
