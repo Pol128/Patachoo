@@ -870,18 +870,24 @@ func TestLaSaisonSEcritSansAccentDansLURL(t *testing.T) {
 func TestMaintenantVautLaSaisonDuJour(t *testing.T) {
 	app, mux, cookie := carnetDeTest(t)
 	carnetDesSaisons(t, app)
+	// La soupe porte automne et hiver : sur le seul carnet de la fixture, les
+	// deux saisons rendent la même chose, et l'égalité ci-dessous se
+	// vérifierait sous une horloge fausse. Cette recette-ci les sépare.
+	creeRecette(t, app, recetteVoulue{titre: "Gratin de potiron", saisons: []string{"automne"}})
 	horlogeFixee(t, time.Date(2026, time.November, 12, 9, 0, 0, 0, time.UTC))
 
-	const soupe, salade, pain = "Soupe de courge", "Salade de tomates", "Pain perdu"
-	maintenant := titresPresents(listeDe(t, mux, cookie, "/recettes?saison=maintenant"), soupe, salade, pain)
-	automne := titresPresents(listeDe(t, mux, cookie, "/recettes?saison=automne"), soupe, salade, pain)
+	const soupe, gratin, salade, pain = "Soupe de courge", "Gratin de potiron", "Salade de tomates", "Pain perdu"
+	rendus := func(cible string) []string {
+		return titresPresents(listeDe(t, mux, cookie, cible), soupe, gratin, salade, pain)
+	}
+
+	maintenant, automne, hiver := rendus("/recettes?saison=maintenant"), rendus("/recettes?saison=automne"), rendus("/recettes?saison=hiver")
 
 	if !slices.Equal(maintenant, automne) {
 		t.Errorf("« maintenant » en novembre rend %q, « automne » rend %q", maintenant, automne)
 	}
-	// Sans quoi deux listes vides se vaudraient et le test passerait à vide.
-	if !slices.Equal(automne, []string{soupe, pain}) {
-		t.Errorf("« automne » rend %q, attendu la soupe et la recette sans saison", automne)
+	if slices.Equal(automne, hiver) {
+		t.Fatalf("automne et hiver rendent tous deux %q : l'égalité ci-dessus ne prouverait rien", automne)
 	}
 }
 
@@ -977,28 +983,28 @@ func TestLaRechercheConserveLeFiltreDeSaison(t *testing.T) {
 	app, mux, cookie := carnetDeTest(t)
 	carnetDesSaisons(t, app)
 
-	corps := listeDe(t, mux, cookie, "/recettes?saison=hiver")
-	exigeContient(t, corps, `hx-include="#saison"`, `name="saison"`, `value="hiver"`)
+	corps := listeDe(t, mux, cookie, "/recettes?saison=ete")
+	exigeContient(t, corps, `hx-include="#saison"`, `name="saison"`, `value="ete"`)
 
-	rec := demande(mux, "/recettes?q=&saison=hiver", cookie, map[string]string{"HX-Request": "true"})
+	rec := demande(mux, "/recettes?q=&saison=ete", cookie, map[string]string{"HX-Request": "true"})
 	fragment := rec.Body.String()
 
-	exigeContient(t, fragment, "Soupe de courge")
-	exigeSansAucun(t, fragment, "Salade de tomates")
+	exigeContient(t, fragment, "Salade de tomates")
+	exigeSansAucun(t, fragment, "Soupe de courge")
 }
 
 func TestHTMXNeRecoitQueLeFragmentFiltre(t *testing.T) {
 	app, mux, cookie := carnetDeTest(t)
 	carnetDesSaisons(t, app)
 
-	rec := demande(mux, "/recettes?saison=hiver", cookie, map[string]string{"HX-Request": "true"})
+	rec := demande(mux, "/recettes?saison=ete", cookie, map[string]string{"HX-Request": "true"})
 	corps := rec.Body.String()
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("statut %d, attendu %d", rec.Code, http.StatusOK)
 	}
-	exigeSansAucun(t, corps, "<html", "<body", "Salade de tomates")
-	exigeContient(t, corps, "Soupe de courge")
+	exigeSansAucun(t, corps, "<html", "<body", "Soupe de courge")
+	exigeContient(t, corps, "Salade de tomates")
 }
 
 // Le critère de saison ne doit pas ouvrir une porte que PATA-13 a fermée
