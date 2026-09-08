@@ -161,8 +161,14 @@ func faitsDeLaRecette(recette *core.Record) []fait {
 	ajoute("Saisons", strings.Join(recette.GetStringSlice("seasons"), ", "))
 	ajoute("Tags", strings.Join(nomsDe(recette.ExpandedAll("tags"), "name"), ", "))
 
+	// Le nom, et rien d'autre : l'auteur d'une recette est un autre compte que
+	// son lecteur, et son courriel ne lui appartient pas. PocketBase le protège
+	// partout ailleurs — users porte ViewRule = id = @request.auth.id et
+	// emailVisibility vaut faux —, mais l'expansion de created_by passe à côté
+	// de la règle. Faute de nom, le bloc disparaît, comme toute donnée
+	// manquante.
 	if auteur := recette.ExpandedOne(champAuteur); auteur != nil {
-		ajoute("Ajoutée par", nomAffichable(auteur))
+		ajoute("Ajoutée par", strings.TrimSpace(auteur.GetString("name")))
 	}
 
 	return faits
