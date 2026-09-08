@@ -49,8 +49,12 @@ func TestLeBinaireSeulDansUnRepertoireVideSuffit(t *testing.T) {
 
 	hote, journal := lanceLeBinaire(t, repertoire, binaire)
 
+	// /connexion et non / : la racine redirige vers /recettes, que la session
+	// garde. La page de connexion est la seule qu'un binaire tout juste
+	// installé rende en entier, donc la seule qui prouve ici que les gabarits
+	// et les assets embarqués sont bien là.
 	pages := map[string]string{}
-	for _, chemin := range []string{"/", "/_/", "/api/health"} {
+	for _, chemin := range []string{"/connexion", "/_/", "/api/health"} {
 		reponse, err := clientLocal.Get("http://" + hote + chemin)
 		if err != nil {
 			t.Fatalf("%s n'a pas répondu : %v\n%s", chemin, err, journal())
@@ -71,21 +75,32 @@ func TestLeBinaireSeulDansUnRepertoireVideSuffit(t *testing.T) {
 	// convention documentée dans pages.go). Il faut donc regarder le corps —
 	// un marqueur de la mise en page, un marqueur du contenu.
 	//
-	// Le message d'attente est celui que pageAccueil rend aujourd'hui ; PATA-13
-	// le remplacera par la liste des recettes, et ce marqueur-là suivra.
 	var manquants []string
 	for _, marqueur := range []string{
 		"<!doctype html>",
 		`<html lang="fr">`,
-		"Le carnet de recettes est en construction.",
+		`<a href="/recettes">Recettes</a>`,
+		`action="/connexion"`,
 	} {
-		if !strings.Contains(pages["/"], marqueur) {
+		if !strings.Contains(pages["/connexion"], marqueur) {
 			manquants = append(manquants, marqueur)
 		}
 	}
 	if manquants != nil {
-		t.Errorf("la page d'accueil ne porte pas %q : les gabarits embarqués n'ont pas été rendus\ncorps reçu :\n%s",
-			manquants, pages["/"])
+		t.Errorf("la page de connexion ne porte pas %q : les gabarits embarqués n'ont pas été rendus\ncorps reçu :\n%s",
+			manquants, pages["/connexion"])
+	}
+
+	// La racine reste une entrée valide du produit : elle mène à la liste, et
+	// c'est ici qu'on le vérifie sur le binaire livré, redirection non suivie.
+	racine, err := clientLocal.Get("http://" + hote + "/")
+	if err != nil {
+		t.Fatalf("/ n'a pas répondu : %v\n%s", err, journal())
+	}
+	racine.Body.Close()
+	if racine.StatusCode != http.StatusFound || racine.Header.Get("Location") != "/recettes" {
+		t.Errorf("/ a répondu %d vers %q, attendu 302 vers %q",
+			racine.StatusCode, racine.Header.Get("Location"), "/recettes")
 	}
 
 	// Le binaire n'a rien réclamé à côté de lui, et n'y a rien déposé d'autre

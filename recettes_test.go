@@ -463,13 +463,17 @@ func TestUnePageMalmeneeRendLaPremiere(t *testing.T) {
 	}
 }
 
-// Une page au-delà du dernier rang est une liste vide, pas une 500 — et une
-// page démesurée ne doit pas non plus faire déborder le calcul du décalage.
+// Une page au-delà du dernier rang est une liste vide, pas une 500.
+//
+// 2305843009213693953 n'est pas un grand nombre pris au hasard : c'est 2^61+1,
+// et (page-1)*24 y vaut exactement 3×2^64, donc zéro une fois débordé. Sans la
+// borne posée sur le numéro de page, qui demande la dernière page du monde
+// reçoit la première.
 func TestUnePageAuDelaDuDernierRangEstVideSansErreur(t *testing.T) {
 	app, mux, cookie := carnetDeTest(t)
 	vingtCinqRecettes(t, app)
 
-	for _, cible := range []string{"/recettes?page=3", "/recettes?page=999999999999999999"} {
+	for _, cible := range []string{"/recettes?page=3", "/recettes?page=2305843009213693953"} {
 		corps := listeDe(t, mux, cookie, cible)
 		if strings.Contains(corps, "Recette numero ") {
 			t.Errorf("%s rend des vignettes alors qu'il n'y en a plus :\n%s", cible, corps)

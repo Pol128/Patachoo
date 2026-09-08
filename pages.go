@@ -36,16 +36,27 @@ type donneesPage struct {
 	Utilisateur *utilisateur
 }
 
-// pageAccueil sert la page d'accueil.
+// poseUtilisateur implémente donneesDePage. Sur donneesPage, donc valable pour
+// toute structure de page qui l'embarque : c'est ce qui permet à une page de
+// porter ses propres champs sans que rendre cesse de remplir celui-ci.
+func (d *donneesPage) poseUtilisateur(compte *utilisateur) {
+	d.Utilisateur = compte
+}
+
+// donneesDePage est ce que rendre sait remplir : n'importe quelle structure de
+// page, pourvu qu'elle embarque donneesPage. Un pointeur, toujours — une copie
+// recevrait l'utilisateur et le gabarit lirait l'original.
+type donneesDePage interface {
+	poseUtilisateur(*utilisateur)
+}
+
+// pageAccueil renvoie à la liste des recettes.
 //
-// Elle garde son message d'attente — la liste des recettes est PATA-13 —, mais
-// il passe désormais par les gabarits, et elle exerce les deux chemins de
-// rendu : une convention qu'aucune page n'emprunte n'est pas une convention.
+// Une seule URL canonique pour le carnet, et c'est /recettes : deux entrées
+// rendant la même page se mettraient à diverger, et c'est /recettes que les
+// pages suivantes pointent.
 func pageAccueil(e *core.RequestEvent) error {
-	return rendre(e, "accueil.html", "accueil-corps.html", donneesPage{
-		Titre:   "Patachoo",
-		Message: "Le carnet de recettes est en construction.",
-	})
+	return e.Redirect(http.StatusFound, "/recettes")
 }
 
 // rendre écrit soit le document complet, soit le seul fragment.
@@ -66,8 +77,8 @@ func pageAccueil(e *core.RequestEvent) error {
 // Le rendu passe par un tampon avant d'être écrit : une erreur de gabarit
 // remonte comme erreur et ne peut pas produire une demi-page déjà partie sur
 // le réseau.
-func rendre(e *core.RequestEvent, page, fragment string, donnees donneesPage) error {
-	donnees.Utilisateur = utilisateurCourant(e)
+func rendre(e *core.RequestEvent, page, fragment string, donnees donneesDePage) error {
+	donnees.poseUtilisateur(utilisateurCourant(e))
 
 	motifs := []string{"vues/" + fragment}
 	if !estHTMX(e) {
