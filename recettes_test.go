@@ -1034,6 +1034,22 @@ func TestLaSaisonNEstJamaisReaffichee(t *testing.T) {
 	)
 }
 
+// La distinction que PATA-13 pose entre le carnet vide et l'absence de
+// résultat vaut pour le nouveau critère : un filtre de saison qui ne ramène
+// rien n'est pas un carnet vide, et proposer « ajoutez votre première recette »
+// à qui en a déjà dix serait aussi faux ici que sur une recherche.
+func TestUnFiltreSansResultatNEstPasUnCarnetVide(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	creeRecette(t, app, recetteVoulue{titre: "Salade de tomates", saisons: []string{"été"}})
+
+	corps := listeDe(t, mux, cookie, "/recettes?saison=hiver")
+
+	exigeContient(t, corps, "Aucune recette")
+	if strings.Contains(corps, "carnet est vide") {
+		t.Errorf("l'invitation du carnet vide s'affiche sous un filtre de saison :\n%s", corps)
+	}
+}
+
 // --- Le formulaire de création et d'édition --------------------------------
 
 // --- Le montage ------------------------------------------------------------
