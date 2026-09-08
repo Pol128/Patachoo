@@ -1,0 +1,11 @@
+<h1>Import en lot</h1>
+{{if .Message}}<p class="erreur" role="alert">{{.Message}}</p>{{end}}
+<form class="formulaire-lot" method="post" action="/recettes/importer/lot">
+<label for="urls">Adresses à importer — une par ligne</label>
+<textarea id="urls" name="urls" rows="12" required>{{.Saisie}}</textarea>
+
+<p class="avertissement">{{range .Disclaimer}}{{.}}
+{{end}}</p>
+
+<button id="lancer-le-lot" type="submit">Lancer le lot</button>
+</form>

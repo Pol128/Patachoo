@@ -112,6 +112,18 @@ func leSeulLot(t *testing.T, app core.App) *core.Record {
 	return lots[0]
 }
 
+// leCompteDeLaSession relit le compte que carnetDeTest a créé : le recréer
+// buterait sur l'unicité du courriel.
+func leCompteDeLaSession(t *testing.T, app core.App) *core.Record {
+	t.Helper()
+
+	compte, err := app.FindAuthRecordByEmail("users", courrielDeTest)
+	if err != nil {
+		t.Fatalf("compte de la session : %v", err)
+	}
+	return compte
+}
+
 // urlsDeTest rend n URLs distinctes et valides.
 func urlsDeTest(n int) []string {
 	adresses := make([]string, 0, n)
@@ -186,10 +198,7 @@ func TestUnLotCreeUnEnregistrementEtUneLigneParURL(t *testing.T) {
 		t.Errorf("statut du lot %q, attendu %q", statut, "en_cours")
 	}
 
-	compteDeLaSession, err := app.FindAuthRecordByEmail("users", courrielDeTest)
-	if err != nil {
-		t.Fatalf("compte de la session : %v", err)
-	}
+	compteDeLaSession := leCompteDeLaSession(t, app)
 	if auteur := lot.GetString("created_by"); auteur != compteDeLaSession.Id {
 		t.Errorf("created_by %q, attendu %q", auteur, compteDeLaSession.Id)
 	}
@@ -210,7 +219,7 @@ func TestUnLotCreeUnEnregistrementEtUneLigneParURL(t *testing.T) {
 		}
 	}
 
-	if !strings.Contains(corps, "3") {
+	if !strings.Contains(corps, "<strong>3</strong>") {
 		t.Errorf("la réponse ne donne pas le nombre d'URLs retenues :\n%s", corps)
 	}
 }
@@ -257,8 +266,10 @@ func TestLesLignesEcarteesNEmpechentPasLesAutres(t *testing.T) {
 			t.Errorf("la réponse ne signale pas la ligne écartée %q :\n%s", ecartee, corps)
 		}
 	}
-	if strings.Contains(corps, "<li></li>") {
-		t.Errorf("une ligne vide a été listée comme écartée :\n%s", corps)
+	// Les deux lignes vides ne sont comptées nulle part : trois écartées, et
+	// pas cinq.
+	if n := strings.Count(corps, `class="ecartee"`); n != 3 {
+		t.Errorf("%d lignes écartées listées, attendu 3 :\n%s", n, corps)
 	}
 }
 
@@ -298,9 +309,9 @@ func TestLePlafondRefuseLeLotEnEntier(t *testing.T) {
 		t.Errorf("%d tags après un lot refusé, attendu %d", n, tagsAvant)
 	}
 
-	corps := rec.Body.String()
-	if !strings.Contains(corps, fmt.Sprint(plafondDuLot+1)) {
-		t.Errorf("le message ne donne pas le compte reçu (%d) :\n%s", plafondDuLot+1, corps)
+	message := entreBalises(rec.Body.String(), `<p class="erreur" role="alert">`, "</p>")
+	if !strings.Contains(message, fmt.Sprint(plafondDuLot+1)) {
+		t.Errorf("le message %q ne donne pas le compte reçu (%d)", message, plafondDuLot+1)
 	}
 }
 
@@ -310,7 +321,9 @@ func TestUneSaisieSansAucuneURLRetenueNeCreeAucunLot(t *testing.T) {
 	app, mux, cookie := atelierDeLot(t)
 
 	tagsAvant := compte(t, app, "tags")
-	rec := soumetLeLot(mux, cookie, "\n   \nftp://exemple.fr/fichier\n")
+	// Rien que des blancs : c'est le garde-fou du lot vide qui est en jeu, et
+	// lui seul. Une ligne fautive y mêlerait la règle qui l'écarte.
+	rec := soumetLeLot(mux, cookie, "\n   \n\t\n")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("statut %d, attendu %d", rec.Code, http.StatusOK)
@@ -336,7 +349,7 @@ func TestLeDisclaimerEstAuDessusDuBouton(t *testing.T) {
 	}
 	corps := rec.Body.String()
 
-	bouton := strings.Index(corps, "<button")
+	bouton := strings.Index(corps, `id="lancer-le-lot"`)
 	if bouton < 0 {
 		t.Fatalf("aucun bouton dans la page :\n%s", corps)
 	}
@@ -380,7 +393,7 @@ func TestUnLotCreeExactementUnTag(t *testing.T) {
 // le test tourne.
 func TestDeuxLotsDeLaMemeMinuteDonnentDeuxSlugsDistincts(t *testing.T) {
 	app, _, _ := atelierDeLot(t)
-	compteDeTest := compteParDefaut(t, app)
+	compteDeTest := leCompteDeLaSession(t, app)
 
 	instant := time.Date(2026, 8, 21, 23, 44, 12, 0, time.UTC)
 

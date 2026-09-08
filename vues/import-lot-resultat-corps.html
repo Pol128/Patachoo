@@ -1,0 +1,9 @@
+<h1>Lot lancé</h1>
+<p><strong>{{.Retenues}}</strong> adresses retenues, rassemblées sous le tag <strong>{{.Tag}}</strong>.</p>
+{{if .Ecartees}}
+<p>Lignes écartées :</p>
+<ul class="ecartees">
+{{range .Ecartees}}<li class="ecartee"><code>{{.Ligne}}</code> — {{.Motif}}</li>
+{{end}}</ul>
+{{end}}
+<p><a href="/recettes/importer/lot">Lancer un autre lot</a></p>
