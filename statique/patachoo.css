@@ -260,20 +260,25 @@ footer {
 
 /* Le formulaire est une colonne : une étiquette, son champ, et de l'air entre
    les deux. Pas de grille à deux colonnes, qui casse sur téléphone là où
-   l'essentiel de la saisie d'une recette se fait. */
-.formulaire-recette {
+   l'essentiel de la saisie d'une recette se fait. Le formulaire du lot suit les
+   mêmes règles, groupées et non recopiées : deux copies divergeraient au
+   premier réglage. */
+.formulaire-recette,
+.formulaire-lot {
 	display: flex;
 	flex-direction: column;
 	gap: 0.25rem;
 }
 
-.formulaire-recette label {
+.formulaire-recette label,
+.formulaire-lot label {
 	margin-top: 0.75rem;
 }
 
 .formulaire-recette input,
 .formulaire-recette select,
-.formulaire-recette textarea {
+.formulaire-recette textarea,
+.formulaire-lot textarea {
 	font: inherit;
 	padding: 0.4rem;
 	border: 1px solid var(--trait);
@@ -281,7 +286,8 @@ footer {
 	color: inherit;
 }
 
-.formulaire-recette button {
+.formulaire-recette button,
+.formulaire-lot button {
 	font: inherit;
 	margin-top: 1.5rem;
 	padding: 0.5rem 1rem;
@@ -358,4 +364,25 @@ footer {
 	font: inherit;
 	padding: 0.5rem 1rem;
 	align-self: flex-start;
+}
+
+/* Le disclaimer du lot : lisible, et collé au bouton qu'il précède. Pas la
+   couleur de l'alerte — une alerte permanente cesse d'en être une, et celle-ci
+   s'affiche à chaque visite. */
+.avertissement {
+	margin: 1.5rem 0 0;
+	padding: 0.6rem 0.8rem;
+	border-left: 3px solid var(--trait);
+	color: #6b675f;
+	font-size: 0.9rem;
+}
+
+/* Les lignes qu'un lot n'a pas retenues, et ce qu'on leur reproche. */
+.ecartees {
+	margin: 0;
+	padding-left: 1.2rem;
+}
+
+.ecartee {
+	margin-bottom: 0.3rem;
 }
