@@ -53,6 +53,12 @@ func main() {
 	// tag créé par une commande, où le serveur ne tourne pas.
 	brancheLesHooks(app, analyseur)
 
+	// L'ouvrier de l'import en lot, lui, ne vit que le temps du service : il
+	// sort sur le réseau, et une commande qui migre ou qui fusionne n'a rien à
+	// faire partir. Il s'accroche donc à OnServe et à OnTerminate, qu'il pose
+	// lui-même.
+	brancheLOuvrier(app)
+
 	// Avant app.Start() : c'est Execute() qui amorce l'application puis exécute
 	// la sous-commande demandée, laquelle dispose donc d'une base ouverte.
 	commandeAEchoue := brancheLesCommandes(app, app.RootCmd)

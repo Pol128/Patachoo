@@ -2,7 +2,9 @@ package recuperation
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // L'analyseur de robots.txt. La bibliothèque standard n'en a pas, et les
@@ -23,11 +25,22 @@ type regle struct {
 	autorise bool
 }
 
-// groupe rassemble les règles qui valent pour une liste d'agents.
+// groupe rassemble les règles qui valent pour une liste d'agents, et le
+// Crawl-delay qu'elles demandent — zéro quand le groupe n'en annonce pas.
 type groupe struct {
 	agents []string
 	regles []regle
+	delai  time.Duration
 }
+
+// delaiAnnonceMax borne ce qu'un Crawl-delay peut nous imposer.
+//
+// La valeur vient d'un tiers, et rien ne l'oblige à être raisonnable : un
+// robots.txt qui annonce une journée d'attente ne refuse rien explicitement,
+// mais tiendrait un import en lot en otage aussi sûrement. Au-delà de la
+// borne, nous appliquons la borne — et l'écart se voit dans le rythme, pas
+// dans un refus silencieux.
+const delaiAnnonceMax = 5 * time.Minute
 
 // robots est la décision d'accès d'un hôte.
 type robots struct {
@@ -62,6 +75,15 @@ func analyseRobots(texte string) robots {
 			}
 			dernier := &r.groupes[len(r.groupes)-1]
 			dernier.agents = append(dernier.agents, strings.ToLower(valeur))
+		case "crawl-delay":
+			suiteDAgents = false
+			if len(r.groupes) == 0 {
+				// Une directive avant tout User-agent ne vise personne.
+				continue
+			}
+			if annonce, lisible := dureeAnnoncee(valeur); lisible {
+				r.groupes[len(r.groupes)-1].delai = annonce
+			}
 		case "allow", "disallow":
 			suiteDAgents = false
 			if len(r.groupes) == 0 {
@@ -79,6 +101,34 @@ func analyseRobots(texte string) robots {
 		}
 	}
 	return r
+}
+
+// dureeAnnoncee lit la valeur d'un Crawl-delay, en secondes, éventuellement
+// fractionnaires — les sites en publient. Ce qu'on ne sait pas lire, et ce qui
+// ne demande rien, ne ralentit rien.
+func dureeAnnoncee(valeur string) (time.Duration, bool) {
+	secondes, err := strconv.ParseFloat(valeur, 64)
+	if err != nil || secondes <= 0 {
+		return 0, false
+	}
+	if annonce := time.Duration(secondes * float64(time.Second)); annonce < delaiAnnonceMax {
+		return annonce, true
+	}
+	return delaiAnnonceMax, true
+}
+
+// delaiPour rend le Crawl-delay que le groupe visant agent demande, ou zéro.
+//
+// Celui d'un autre agent ne nous concerne pas : nous ralentir de trente
+// secondes parce que Googlebot est prié de le faire, c'est s'infliger un refus
+// qui ne nous vise pas. C'est le même groupe que pour les règles de chemin, et
+// c'est groupePour qui le désigne — une seconde façon de le choisir finirait
+// par diverger de la première.
+func (r robots) delaiPour(agent string) time.Duration {
+	if g := r.groupePour(agent); g != nil {
+		return g.delai
+	}
+	return 0
 }
 
 // autorise dit si agent peut demander chemin.

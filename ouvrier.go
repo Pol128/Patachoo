@@ -1,0 +1,508 @@
+package main
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"net/url"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/pocketbase/dbx"
+	"github.com/pocketbase/pocketbase/core"
+
+	"github.com/Pol128/Patachoo/jsonld"
+	"github.com/Pol128/Patachoo/recuperation"
+)
+
+// L'ouvrier de l'import en lot : il consomme la file que la page de saisie
+// écrit, une URL à la fois, et n'en sort que ce que PATA-8 et PATA-7 lui
+// rendent.
+//
+// Un seul pour l'instance, et une seule file. Deux lots menés de front sur le
+// même domaine y feraient deux requêtes par seconde, et le cadencement par
+// domaine ne voudrait plus rien dire s'il était par lot.
+//
+// C'est le seul endroit du produit qui sorte sur le réseau en rafale : la
+// politesse de PATA-8 — robots.txt, plafonds de taille et de temps — s'y tient
+// ou s'y perd, et le Crawl-delay s'y ajoute.
+
+// Les statuts que la migration de la sous-tâche 1 a posés. Ils sont écrits ici
+// une fois : une chaîne recopiée au fil du code finit par diverger d'une
+// lettre, et le select de PocketBase le refuserait à l'écriture, pas à la
+// lecture.
+const (
+	statutAFaire       = "a_faire"
+	statutEnCours      = "en_cours"
+	statutImportee     = "importee"
+	statutDejaPresente = "deja_presente"
+	statutEchec        = "echec"
+	statutTermine      = "termine"
+)
+
+// causeEnregistrement est la onzième cause : ni un refus du site, ni un défaut
+// de son balisage, mais une panne de notre côté au moment d'écrire.
+//
+// Elle existe parce qu'une ligne doit toujours finir par un sort définitif :
+// laissée en cours, la reprise la rejouerait à chaque démarrage, indéfiniment.
+const causeEnregistrement = "enregistrement"
+
+// sondageDeLaFile est l'attente entre deux passages sur la file quand il n'y a
+// rien à faire. C'est aussi ce qu'un lot tout juste créé attend, au pire, avant
+// que sa première URL parte.
+const sondageDeLaFile = time.Second
+
+// filesMax borne le nombre d'hôtes menés de front.
+//
+// Une fournée de 500 URLs peut viser autant de domaines distincts, et autant de
+// requêtes sortantes simultanées ne seraient ni polies, ni tenables pour une
+// petite instance. Les hôtes se suivent donc par vagues ; à l'intérieur d'une
+// vague, ils progressent ensemble.
+const filesMax = 8
+
+// ouvrier tient l'horloge et la cadence pour toute la durée du service.
+type ouvrier struct {
+	app     core.App
+	horloge horloge
+	cadence *cadence
+}
+
+func nouvelOuvrier(app core.App, h horloge) *ouvrier {
+	return &ouvrier{app: app, horloge: h, cadence: nouvelleCadence(h)}
+}
+
+// brancheLOuvrier démarre l'ouvrier avec le serveur et l'arrête avec lui.
+//
+// L'arrêt attend que l'ouvrier ait rendu la main : ce sont ses dernières
+// écritures — la ligne en cours qui repasse à faire — qui font que la reprise
+// du démarrage suivant retrouve un état cohérent, et elles ont besoin d'une
+// base encore ouverte.
+func brancheLOuvrier(app core.App) {
+	o := nouvelOuvrier(app, horlogeSysteme{})
+	ctx, arrete := context.WithCancel(context.Background())
+	fini := make(chan struct{})
+	demarre := false
+
+	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
+		demarre = true
+		go func() {
+			defer close(fini)
+
+			o.tourne(ctx)
+		}()
+		return se.Next()
+	})
+
+	app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
+		arrete()
+		// Une sous-commande — une fusion, une migration — termine sans jamais
+		// avoir servi : il n'y a alors personne à attendre.
+		if demarre {
+			<-fini
+		}
+		return e.Next()
+	})
+}
+
+// tourne consomme la file tant que le contexte vit.
+func (o *ouvrier) tourne(ctx context.Context) {
+	if err := o.reprend(ctx); err != nil && ctx.Err() == nil {
+		o.app.Logger().Error("reprise des lots en cours", "erreur", err)
+	}
+
+	for ctx.Err() == nil {
+		if err := o.horloge.Attends(ctx, sondageDeLaFile); err != nil {
+			return
+		}
+		if err := o.traiteLesLotsEnCours(ctx); err != nil && ctx.Err() == nil {
+			o.app.Logger().Error("traitement de la file des lots", "erreur", err)
+		}
+	}
+}
+
+// reprend est ce que l'ouvrier fait au démarrage : rendre à la file les lignes
+// qu'un arrêt a laissées en cours, puis traiter les lots ouverts.
+func (o *ouvrier) reprend(ctx context.Context) error {
+	if err := o.rendLesLignesInterrompues(); err != nil {
+		return err
+	}
+	return o.traiteLesLotsEnCours(ctx)
+}
+
+// rendLesLignesInterrompues remet à faire les lignes qu'un processus arrêté au
+// mauvais moment a laissées en cours.
+//
+// Sans ce geste, elles ne seraient plus réclamées par personne : l'ouvrier ne
+// prend que ce qui est à faire, et le lot n'atteindrait jamais son terme.
+func (o *ouvrier) rendLesLignesInterrompues() error {
+	lignes, err := o.app.FindAllRecords("import_urls", dbx.HashExp{"status": statutEnCours})
+	if err != nil {
+		return fmt.Errorf("lecture des lignes interrompues : %w", err)
+	}
+
+	for _, ligne := range lignes {
+		ligne.Set("status", statutAFaire)
+		if err := o.app.Save(ligne); err != nil {
+			return fmt.Errorf("reprise de la ligne %s : %w", ligne.Id, err)
+		}
+	}
+	return nil
+}
+
+// traiteLesLotsEnCours mène les lots ouverts, dans l'ordre de leur création :
+// une fournée commencée finit avant que la suivante ne démarre.
+func (o *ouvrier) traiteLesLotsEnCours(ctx context.Context) error {
+	lots, err := o.app.FindRecordsByFilter("imports", "status = {:statut}", "created", 0, 0,
+		dbx.Params{"statut": statutEnCours})
+	if err != nil {
+		return fmt.Errorf("lecture des lots en cours : %w", err)
+	}
+
+	for _, lot := range lots {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if err := o.traiteLeLot(ctx, lot); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// traiteLeLot mène les lignes restantes d'un lot, une file par hôte.
+func (o *ouvrier) traiteLeLot(ctx context.Context, lot *core.Record) error {
+	lignes, err := o.app.FindRecordsByFilter("import_urls",
+		"batch = {:lot} && status = {:statut}", "position", 0, 0,
+		dbx.Params{"lot": lot.Id, "statut": statutAFaire})
+	if err != nil {
+		return fmt.Errorf("lecture des lignes du lot %s : %w", lot.Id, err)
+	}
+
+	files := parHote(lignes)
+	for debut := 0; debut < len(files); debut += filesMax {
+		vague := files[debut:min(debut+filesMax, len(files))]
+
+		taches := make([]func(), 0, len(vague))
+		for _, file := range vague {
+			taches = append(taches, func() { o.traiteLaFile(ctx, lot, file) })
+		}
+		enFiles(o.horloge, taches)
+
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+	}
+
+	return o.clotSiTermine(lot)
+}
+
+// parHote range les lignes en une file par hôte : chaque file dans l'ordre de
+// position, les files dans l'ordre d'apparition de leur première ligne.
+//
+// L'ordre importe : c'est la liste que l'utilisateur a collée, et le rapport de
+// la sous-tâche 4 la relira dans le même sens.
+func parHote(lignes []*core.Record) [][]*core.Record {
+	rang := map[string]int{}
+	var files [][]*core.Record
+
+	for _, ligne := range lignes {
+		hote := hoteDe(ligne.GetString("url"))
+		if _, vu := rang[hote]; !vu {
+			rang[hote] = len(files)
+			files = append(files, nil)
+		}
+		files[rang[hote]] = append(files[rang[hote]], ligne)
+	}
+	return files
+}
+
+// hoteDe rend l'hôte d'une adresse, en minuscules : c'est la clé du
+// cadencement, et Example.com est le même site qu'example.com.
+func hoteDe(adresse string) string {
+	cible, err := url.Parse(adresse)
+	if err != nil {
+		// La validation de la saisie a déjà écarté ce cas ; s'il revenait,
+		// l'adresse entière fait une clé qui ne se confond avec aucune autre.
+		return adresse
+	}
+	return strings.ToLower(cible.Hostname())
+}
+
+// traiteLaFile mène les lignes d'un même hôte, l'une après l'autre.
+func (o *ouvrier) traiteLaFile(ctx context.Context, lot *core.Record, lignes []*core.Record) {
+	for _, ligne := range lignes {
+		if ctx.Err() != nil {
+			return
+		}
+		if err := o.traiteLaLigne(ctx, lot, ligne); err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			// L'échec d'une URL n'arrête pas la fournée : c'est le cas
+			// ordinaire, et le rapport de fin le dira ligne à ligne.
+			o.app.Logger().Error("import en lot", "url", ligne.GetString("url"), "erreur", err)
+		}
+	}
+}
+
+// traiteLaLigne mène une URL de bout en bout : PATA-8, puis PATA-7, puis la
+// recette.
+func (o *ouvrier) traiteLaLigne(ctx context.Context, lot, ligne *core.Record) error {
+	adresse := ligne.GetString("url")
+	if err := o.poseLeStatut(ligne, statutEnCours); err != nil {
+		return err
+	}
+
+	// Déduplication, premier bout : sur l'adresse soumise, et avant tout
+	// appel. Une URL déjà connue ne mérite pas qu'on dérange le site.
+	connue, err := laSourceEstConnue(o.app, adresse)
+	if err != nil {
+		return err
+	}
+	if connue {
+		return o.poseLeStatut(ligne, statutDejaPresente)
+	}
+
+	hote := hoteDe(adresse)
+	if err := o.cadence.attendSonTour(ctx, hote); err != nil {
+		return o.rendLaLigne(ligne, err)
+	}
+
+	page, err := recuperePage(ctx, adresse)
+	if err != nil {
+		if ctx.Err() != nil {
+			// Le serveur s'arrête : la ligne n'a pas échoué, elle n'a pas eu
+			// lieu. Elle repart à faire, et le lot reste en cours.
+			return o.rendLaLigne(ligne, ctx.Err())
+		}
+		return o.poseLEchec(ligne, err)
+	}
+	// Le Crawl-delay ne se lit qu'une fois la réponse obtenue : il s'applique
+	// donc à partir de la requête suivante, vers ce domaine seulement.
+	o.cadence.retiens(hote, page.DelaiAnnonce)
+
+	// Déduplication, second bout : deux adresses distinctes peuvent rediriger
+	// vers la même page, et c'est la finale qui désigne la recette.
+	connue, err = laSourceEstConnue(o.app, page.URLFinale)
+	if err != nil {
+		return err
+	}
+	if connue {
+		return o.poseLeStatut(ligne, statutDejaPresente)
+	}
+
+	trouvee, err := jsonld.Extraire(page.Corps)
+	if err != nil {
+		return o.poseLEchec(ligne, err)
+	}
+
+	return o.enregistre(lot, ligne, page, trouvee)
+}
+
+// enregistre écrit la recette et le sort de la ligne, en une transaction par
+// URL : une recette créée dont la ligne resterait en cours serait réimportée au
+// démarrage suivant.
+func (o *ouvrier) enregistre(lot, ligne *core.Record, page recuperation.Page, trouvee jsonld.Recette) error {
+	err := o.app.RunInTransaction(func(txApp core.App) error {
+		collection, err := txApp.FindCollectionByNameOrId("recipes")
+		if err != nil {
+			return fmt.Errorf("collection recipes : %w", err)
+		}
+
+		recette := core.NewRecord(collection)
+		if err := creeLaRecetteImportee(txApp, recette, lot, page, trouvee); err != nil {
+			return err
+		}
+
+		ligne.Set("status", statutImportee)
+		ligne.Set("cause", "")
+		ligne.Set("code", 0)
+		ligne.Set("recipe", recette.Id)
+		return txApp.Save(ligne)
+	})
+	if err == nil {
+		return nil
+	}
+
+	// L'écriture a échoué et la transaction est défaite ; la ligne, elle, garde
+	// en mémoire ce qu'on lui avait posé. Elle est remise à plat et marquée en
+	// échec : rien ne dit qu'une seconde tentative ferait mieux, et la laisser
+	// en cours la ferait rejouer à chaque démarrage.
+	o.app.Logger().Error("enregistrement d'une recette importée",
+		"url", ligne.GetString("url"), "erreur", err)
+	ligne.Set("status", statutEchec)
+	ligne.Set("cause", causeEnregistrement)
+	ligne.Set("code", 0)
+	ligne.Set("recipe", "")
+	if err := o.app.Save(ligne); err != nil {
+		return fmt.Errorf("marquage de la ligne %s : %w", ligne.Id, err)
+	}
+	return err
+}
+
+// creeLaRecetteImportee écrit la recette que la page publie.
+//
+// La correspondance des champs est celle de PATA-9 — preRemplissageDe, écrite
+// une fois et appelée des deux côtés : l'import unitaire la rend dans un
+// formulaire, le lot l'enregistre. Ce que le lot ajoute est ici : l'auteur du
+// lot, la source suivie, et le tag de la fournée.
+func creeLaRecetteImportee(txApp core.App, recette, lot *core.Record, page recuperation.Page, trouvee jsonld.Recette) error {
+	champs := preRemplissageDe(trouvee)
+
+	recette.Set("title", strings.TrimSpace(champs.Titre))
+	recette.Set("servings", champs.Portions)
+	recette.Set("prep_time", champs.TempsPreparation)
+	recette.Set("cook_time", champs.TempsCuisson)
+	recette.Set("instructions", champs.Instructions)
+	// L'URL finale, celle du dernier saut, et non celle qui a été soumise :
+	// c'est elle qui désigne la recette, et c'est sur elle que porte la
+	// déduplication.
+	recette.Set("source_url", page.URLFinale)
+	recette.Set("source_name", nomDuSite(litOpenGraph(page.Corps).NomDuSite, page.URLFinale))
+	// L'image n'est pas téléchargée : c'est PATA-10, et le lot s'en tient à
+	// l'unitaire d'avant elle — une recette importée en fournée s'illustre
+	// depuis le formulaire d'édition.
+
+	// Une recette créée par notre propre code passe par app.Save() et ne
+	// déclenche aucun hook de requête : attribueALAppelant ne la voit pas, et
+	// poseLAuteur est écrite pour cet appel-là. Un compte introuvable — lot
+	// lancé par un superuser, compte supprimé depuis — laisse la recette sans
+	// auteur plutôt que de faire échouer l'import.
+	titulaire, err := txApp.FindRecordById("users", lot.GetString(champAuteur))
+	if err != nil {
+		titulaire = nil
+	}
+	poseLAuteur(recette, titulaire)
+
+	ajouteLeTag(recette, lot.GetString("tag"))
+
+	if err := txApp.Save(recette); err != nil {
+		return fmt.Errorf("création de la recette %q : %w", champs.Titre, err)
+	}
+
+	// raw seul : le hook de PATA-6 remplit les cinq champs dérivés à la
+	// création. Le découpage des lignes est celui du formulaire, et il n'en
+	// existe qu'un.
+	lignes := formulaireRecette{Ingredients: champs.Ingredients}.lignesDIngredients()
+	return remplaceLesIngredients(txApp, recette, lignes)
+}
+
+// ajouteLeTag ajoute le tag de la fournée à ceux que la recette porte déjà.
+//
+// Un ajout, et non un Set d'une liste d'un seul élément : aujourd'hui une
+// recette importée n'arrive avec aucun tag et le cas ne se produit pas, mais le
+// jour où la correspondance des champs en produira, ce détail sera la
+// différence entre garder et perdre.
+func ajouteLeTag(recette *core.Record, tag string) {
+	if tag == "" {
+		return
+	}
+
+	poses := recette.GetStringSlice("tags")
+	if slices.Contains(poses, tag) {
+		return
+	}
+	recette.Set("tags", append(poses, tag))
+}
+
+// laSourceEstConnue dit si une recette porte déjà cette adresse en source.
+//
+// La valeur passe par params : elle vient d'un site tiers, et un filtre
+// construit par concaténation est une habitude qu'on ne prend pas à moitié.
+func laSourceEstConnue(app core.App, adresse string) (bool, error) {
+	if adresse == "" {
+		return false, nil
+	}
+
+	_, err := app.FindFirstRecordByFilter("recipes", "source_url = {:url}", dbx.Params{"url": adresse})
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, sql.ErrNoRows):
+		return false, nil
+	default:
+		return false, fmt.Errorf("recherche de la source %q : %w", adresse, err)
+	}
+}
+
+// clotSiTermine passe le lot en terminé quand plus aucune de ses lignes
+// n'attend son tour, quel que soit le sort de chacune.
+func (o *ouvrier) clotSiTermine(lot *core.Record) error {
+	restantes, err := o.app.CountRecords("import_urls",
+		dbx.HashExp{"batch": lot.Id},
+		dbx.In("status", statutAFaire, statutEnCours))
+	if err != nil {
+		return fmt.Errorf("décompte des lignes du lot %s : %w", lot.Id, err)
+	}
+	if restantes > 0 {
+		return nil
+	}
+
+	lot.Set("status", statutTermine)
+	if err := o.app.Save(lot); err != nil {
+		return fmt.Errorf("clôture du lot %s : %w", lot.Id, err)
+	}
+	return nil
+}
+
+// --- Le sort d'une ligne ----------------------------------------------------
+
+// poseLeStatut écrit un sort sans cause : en cours, ou déjà présente.
+func (o *ouvrier) poseLeStatut(ligne *core.Record, statut string) error {
+	ligne.Set("status", statut)
+	if err := o.app.Save(ligne); err != nil {
+		return fmt.Errorf("statut %q de la ligne %s : %w", statut, ligne.Id, err)
+	}
+	return nil
+}
+
+// rendLaLigne remet la ligne à faire et rend l'erreur qui l'a interrompue.
+func (o *ouvrier) rendLaLigne(ligne *core.Record, motif error) error {
+	if err := o.poseLeStatut(ligne, statutAFaire); err != nil {
+		return err
+	}
+	return motif
+}
+
+// poseLEchec écrit le sort d'une URL qui n'a pas abouti : la cause nommée, et
+// le code HTTP quand l'échec en porte un.
+func (o *ouvrier) poseLEchec(ligne *core.Record, motif error) error {
+	cause, code := causeDe(motif)
+
+	ligne.Set("status", statutEchec)
+	ligne.Set("cause", cause)
+	ligne.Set("code", code)
+	if err := o.app.Save(ligne); err != nil {
+		return fmt.Errorf("échec de la ligne %s : %w", ligne.Id, err)
+	}
+	return nil
+}
+
+// causeDe nomme un échec dans les mots de recuperation ou de jsonld.
+//
+// Le tri se fait sur les causes nommées, jamais sur le texte de l'erreur : un
+// message technique ne doit pas décider de ce qui s'enregistre. Le code HTTP
+// se lit par errors.As, et non en cherchant trois chiffres dans une chaîne.
+func causeDe(err error) (string, int) {
+	var refus *recuperation.Erreur
+	if errors.As(err, &refus) {
+		return refus.Cause, refus.Code
+	}
+
+	switch {
+	case errors.Is(err, jsonld.ErrSansRecette):
+		return jsonld.SansRecette, 0
+	case errors.Is(err, jsonld.ErrAucunBalisage):
+		return jsonld.AucunBalisage, 0
+	case errors.Is(err, jsonld.ErrJSONInvalide):
+		return jsonld.JSONInvalide, 0
+	case errors.Is(err, jsonld.ErrTitreAbsent):
+		return jsonld.TitreAbsent, 0
+	}
+
+	// Aucune des dix : nous n'en savons pas plus que « la page n'a pas été
+	// atteinte », et c'est déjà ce que PATA-9 en dit à l'utilisateur.
+	return recuperation.Injoignable, 0
+}
