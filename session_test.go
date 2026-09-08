@@ -186,7 +186,9 @@ func seConnecte(t *testing.T, mux http.Handler, courriel, motDePasse string) *ht
 //
 // Le minimum, et non la moyenne : c'est le plancher qui dit le travail
 // réellement fait, là où une moyenne mêle le coût du hachage aux aléas
-// d'ordonnancement de la machine. Chaque mesure vérifie au passage que la
+// d'ordonnancement de la machine. C'est aussi ce qui tient ce test à l'écart du
+// rouge intermittent — le bruit ne fait qu'ajouter du temps, jamais en
+// retrancher, donc il ne survit pas au minimum d'un tirage un peu large. Chaque mesure vérifie au passage que la
 // connexion a bien échoué — une réussite mesurerait un autre chemin.
 func plusCourtEchecDeConnexion(t *testing.T, mux http.Handler, courriel string, mesures int) time.Duration {
 	t.Helper()
@@ -562,7 +564,7 @@ func TestUnEchecDeConnexionNeDitPasQuelsCourrielsExistent(t *testing.T) {
 // (apis/record_auth_with_password.go, dummyPasswordCheck) : hacher quand même,
 // sur un enregistrement quelconque de la collection.
 func TestUnEchecDeConnexionNeDitPasParLeTempsQuelsCourrielsExistent(t *testing.T) {
-	const mesures = 5
+	const mesures = 9
 
 	app, mux := serveurDeTest(t)
 	compteParDefaut(t, app)
@@ -576,7 +578,15 @@ func TestUnEchecDeConnexionNeDitPasParLeTempsQuelsCourrielsExistent(t *testing.T
 	if connu < 5*time.Millisecond {
 		t.Fatalf("un refus sur courriel connu ne coûte que %s : la mesure ne prouverait rien", connu)
 	}
-	if inconnu < connu/2 {
+
+	// Le quart, et non la moitié. C'est un test de temps mural, donc exposé au
+	// rouge intermittent, et la marge se choisit en regardant les deux échelles
+	// en présence : le défaut qu'il attrape est d'un facteur 600 — 160 µs
+	// contre 96 ms à la mesure d'origine — quand le bruit d'ordonnancement qui
+	// survit au minimum de neuf tirages se compte en pour-cent. Entre les deux,
+	// n'importe quel seuil convient ; le plus large des deux est celui qui ne
+	// rougira pas sur une machine chargée.
+	if inconnu < connu/4 {
 		t.Errorf("refus en %s sur courriel inconnu contre %s sur courriel connu : le temps de réponse dit quels comptes existent",
 			inconnu, connu)
 	}
@@ -698,6 +708,67 @@ func TestLaDeconnexionSousLaMiVieNeRenvoieQueLEffacement(t *testing.T) {
 		t.Errorf("Max-Age %d, attendu négatif", poses[0].MaxAge)
 	}
 	attributsDeSession(t, poses[0])
+}
+
+// --- Les priorités de middleware ------------------------------------------
+
+// Nos deux priorités ne doivent heurter aucune de celles que PocketBase
+// déclare. À égalité, le tri des handlers préserve l'ordre d'enregistrement
+// (tools/hook/hook.go:98, « sort handlers by Priority, preserving the original
+// order of equal items ») : deux middlewares de même priorité s'exécutent alors
+// dans un ordre qui ne se lit plus nulle part, et qu'un changement d'ordre de
+// branchement suffit à retourner.
+//
+// L'énumération est écrite à la main, et c'est voulu : PocketBase n'expose
+// aucune liste de ses priorités, donc une constante ajoutée en amont ne se
+// signalera pas toute seule. Ce test dit ce qui était vrai à la lecture de la
+// v0.39.11 ; une montée de version qui en ajoute une demande d'y revenir.
+func TestLesPrioritesDeSessionNeHeurtentAucuneDePocketBase(t *testing.T) {
+	dePocketBase := map[string]int{
+		"CORS":                    apis.DefaultCorsMiddlewarePriority,
+		"journal d'activité":      apis.DefaultActivityLoggerMiddlewarePriority,
+		"recouvrement de panique": apis.DefaultPanicRecoverMiddlewarePriority,
+		"chargement du jeton":     apis.DefaultLoadAuthTokenMiddlewarePriority,
+		"liste blanche superuser": apis.DefaultSuperuserIPsWhitelistMiddlewarePriority,
+		"en-têtes de sécurité":    apis.DefaultSecurityHeadersMiddlewarePriority,
+		"limitation de débit":     apis.DefaultRateLimitMiddlewarePriority,
+		"taille du corps":         apis.DefaultBodyLimitMiddlewarePriority,
+		"redirection www":         apis.DefaultWWWRedirectMiddlewarePriority,
+	}
+
+	lesNotres := map[string]int{
+		"recopie du cookie": prioriteRecopieDuCookie,
+		"renouvellement":    prioriteRenouvellement,
+	}
+
+	for nom, priorite := range lesNotres {
+		for nomPB, prioritePB := range dePocketBase {
+			if priorite == prioritePB {
+				t.Errorf("le middleware de %s (priorité %d) est à égalité avec celui de PocketBase pour %s : leur ordre ne tient plus qu'à celui du branchement",
+					nom, priorite, nomPB)
+			}
+		}
+	}
+}
+
+// Les deux encadrements que les priorités doivent produire, dits en toutes
+// lettres : sans eux, un écart choisi pour éviter une collision pourrait faire
+// franchir à l'un des deux middlewares la borne qui justifie son existence.
+func TestLesPrioritesDeSessionEncadrentLeChargementDuJeton(t *testing.T) {
+	if prioriteRecopieDuCookie >= apis.DefaultLoadAuthTokenMiddlewarePriority {
+		t.Errorf("la recopie du cookie (%d) doit passer avant le chargement du jeton (%d), qui ne lit que l'en-tête",
+			prioriteRecopieDuCookie, apis.DefaultLoadAuthTokenMiddlewarePriority)
+	}
+	if prioriteRenouvellement <= apis.DefaultLoadAuthTokenMiddlewarePriority {
+		t.Errorf("le renouvellement (%d) doit passer après le chargement du jeton (%d), qui peuple e.Auth",
+			prioriteRenouvellement, apis.DefaultLoadAuthTokenMiddlewarePriority)
+	}
+	// Une panique dans la recopie du cookie doit rester rattrapable : passer
+	// avant le recouvrement la ferait remonter jusqu'au serveur nu.
+	if prioriteRecopieDuCookie <= apis.DefaultPanicRecoverMiddlewarePriority {
+		t.Errorf("la recopie du cookie (%d) doit passer après le recouvrement de panique (%d)",
+			prioriteRecopieDuCookie, apis.DefaultPanicRecoverMiddlewarePriority)
+	}
 }
 
 // --- Le renouvellement ----------------------------------------------------

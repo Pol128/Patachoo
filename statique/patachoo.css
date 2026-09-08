@@ -7,6 +7,8 @@
 	--papier: #fdfdfb;
 	--trait: #d8d4cc;
 	--lien: #7a4b1e;
+	--alerte: #8c2f16;
+	--alerte-fond: #fbf0ec;
 }
 
 * {
@@ -64,4 +66,25 @@ footer {
 	border-top: 1px solid var(--trait);
 	color: #6b675f;
 	font-size: 0.9rem;
+}
+
+/* L'en-tête du compte est poussé au bout de la ligne : la marque et la
+   navigation gardent leur ordre de lecture, le compte se trouve là où on le
+   cherche. margin-left plutôt qu'un justify-content sur l'en-tête, qui
+   écarterait aussi la marque de la navigation. */
+.compte {
+	display: flex;
+	align-items: baseline;
+	gap: 0.75rem;
+	margin-left: auto;
+}
+
+/* Le message d'échec se distingue par la couleur et par le trait, pas par la
+   seule couleur : celle-ci ne se voit pas de tous les yeux, et role="alert"
+   ne porte que pour les lecteurs d'écran. */
+.erreur {
+	border-left: 3px solid var(--alerte);
+	padding: 0.5rem 0.75rem;
+	background: var(--alerte-fond);
+	color: var(--alerte);
 }

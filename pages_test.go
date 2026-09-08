@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -254,4 +255,42 @@ func entreBalises(texte, ouvrante, fermante string) string {
 	}
 
 	return texte[debut : debut+fin]
+}
+
+// Toute classe posée dans un gabarit doit avoir une règle dans la feuille de
+// style. Une classe sans règle ne se voit pas : la page s'affiche, sans erreur
+// et sans le style annoncé, et l'écart ne se remarque qu'à l'œil — c'est-à-dire
+// tard.
+//
+// La vérification est textuelle et volontairement bête : il ne s'agit pas de
+// juger le style rendu, seulement de constater qu'une règle porte ce nom.
+func TestChaqueClasseDesGabaritsAUneRegleDeStyle(t *testing.T) {
+	feuille, err := statique.ReadFile("statique/patachoo.css")
+	if err != nil {
+		t.Fatalf("lecture de la feuille de style : %v", err)
+	}
+
+	fichiers, err := fs.Glob(vues, "vues/*.html")
+	if err != nil {
+		t.Fatalf("liste des gabarits : %v", err)
+	}
+
+	attributDeClasse := regexp.MustCompile(`class="([^"]*)"`)
+	for _, fichier := range fichiers {
+		gabarit, err := vues.ReadFile(fichier)
+		if err != nil {
+			t.Fatalf("lecture de %s : %v", fichier, err)
+		}
+
+		for _, attribut := range attributDeClasse.FindAllStringSubmatch(string(gabarit), -1) {
+			for _, classe := range strings.Fields(attribut[1]) {
+				// Le sélecteur est cherché entouré de ce qui peut le borner :
+				// « .compte » ne doit pas se reconnaître dans « .compte-vide ».
+				regle := regexp.MustCompile(`(^|[\s,}])\.` + regexp.QuoteMeta(classe) + `([\s,{:]|$)`)
+				if !regle.MatchString(string(feuille)) {
+					t.Errorf("%s pose la classe %q, que patachoo.css ne stylise pas", fichier, classe)
+				}
+			}
+		}
+	}
 }

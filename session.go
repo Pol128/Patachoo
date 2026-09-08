@@ -33,9 +33,18 @@ const cleSessionPorteeParLeCookie = "patachooSessionPorteeParLeCookie"
 //   - le renouvellement passe après, puisqu'il lui faut e.Auth peuplé, et avant
 //     que le gestionnaire n'écrive la réponse : un Set-Cookie posé après le
 //     corps ne partirait pas.
+//
+// Un cran d'écart, et non dix. Dix tombait par hasard sur deux priorités que
+// PocketBase déclare — le recouvrement de panique en dessous, les en-têtes de
+// sécurité au-dessus — et le tri préserve l'ordre d'enregistrement à égalité
+// (tools/hook/hook.go) : l'ordre d'exécution ne tenait plus qu'à celui du
+// branchement, que rien ici ne fixe. Un cran dit en outre ce qu'on veut
+// vraiment, c'est-à-dire coller au chargement du jeton : plus l'écart est
+// petit, moins il reste de place pour qu'un middleware tiers vienne s'y
+// glisser.
 const (
-	prioriteRecopieDuCookie = apis.DefaultLoadAuthTokenMiddlewarePriority - 10
-	prioriteRenouvellement  = apis.DefaultLoadAuthTokenMiddlewarePriority + 10
+	prioriteRecopieDuCookie = apis.DefaultLoadAuthTokenMiddlewarePriority - 1
+	prioriteRenouvellement  = apis.DefaultLoadAuthTokenMiddlewarePriority + 1
 )
 
 // brancheLaSession pose les deux middlewares de session sur le routeur.
@@ -240,8 +249,13 @@ func cookieDeSessionEfface() *http.Cookie {
 
 // utilisateur porte ce que les gabarits ont le droit de connaître du compte
 // connecté : de quoi l'afficher, et rien de plus.
+//
+// Rien de plus, donc pas d'identifiant : aucun gabarit ne le lit, et un champ
+// qu'on renseigne sans l'employer finit par être lu comme une permission — la
+// page aurait le droit de désigner un compte, alors qu'elle n'a que celui de le
+// nommer. Il se rajoutera le jour où une page en aura besoin, avec cette
+// page-là.
 type utilisateur struct {
-	Id  string
 	Nom string
 }
 
@@ -257,5 +271,5 @@ func utilisateurCourant(e *core.RequestEvent) *utilisateur {
 	if nom == "" {
 		nom = e.Auth.Email()
 	}
-	return &utilisateur{Id: e.Auth.Id, Nom: nom}
+	return &utilisateur{Nom: nom}
 }
