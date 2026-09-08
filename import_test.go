@@ -514,7 +514,10 @@ func TestImportNeFuitPasLErreurTechnique(t *testing.T) {
 // nature. Le titre publié par le site ressort échappé.
 func TestImportEchappeLeTitreDuSite(t *testing.T) {
 	_, mux, cookie := carnetDeTest(t)
-	sert(t, pageAvecRecette("", `{"@type":"Recipe","name":"<script>alert(1)</script>"}`), urlSource)
+	// « <\/script> » est l'échappement JSON par lequel un site publie une
+	// balise fermante sans clore son propre bloc — la valeur extraite, elle,
+	// vaut bien <script>alert(1)</script>.
+	sert(t, pageAvecRecette("", `{"@type":"Recipe","name":"<script>alert(1)<\/script>"}`), urlSource)
 
 	corps := corpsImporte(t, mux, cookie)
 
