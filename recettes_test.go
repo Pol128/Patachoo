@@ -602,6 +602,34 @@ func TestUneCaseRetirerLImageLEfface(t *testing.T) {
 	}
 }
 
+// Un navigateur envoie la partie « image » même quand aucun fichier n'a été
+// choisi : elle porte un nom vide et zéro octet.
+//
+// Le code ne s'en défend pas lui-même — il s'appuie sur mime/multipart, qui ne
+// range dans les fichiers que les parties portant un nom (ReadForm). C'est
+// exactement pour ça que ce test existe : l'hypothèse est invisible dans le
+// code, et sa chute ferait échouer l'édition la plus ordinaire, celle où l'on
+// ne touche pas à l'image.
+func TestUneEditionAvecUnePartieDImageVideConserveLImage(t *testing.T) {
+	app, mux, cookie := serveurConnecte(t)
+
+	poste(t, mux, "/recettes", cookie, champsValides(), fichierPoste{nom: "tarte.png", contenu: pngDeTest(t)})
+	recette := laRecette(t, app)
+	image := recette.GetString("image")
+	if image == "" {
+		t.Fatalf("aucune image enregistrée à la création")
+	}
+
+	rec := poste(t, mux, "/recettes/"+recette.Id, cookie, champsValides(), fichierPoste{})
+
+	if rec.Code != http.StatusSeeOther {
+		t.Errorf("statut %d, attendu %d", rec.Code, http.StatusSeeOther)
+	}
+	if apres := relitLaRecette(t, app, recette.Id).GetString("image"); apres != image {
+		t.Errorf("image %q après une édition sans fichier choisi, %q attendue", apres, image)
+	}
+}
+
 // Les deux bornes du schéma se voient dans le formulaire, pas dans une 500 :
 // un téléversement refusé est une erreur de saisie ordinaire.
 func TestUnTeleversementRefuseNeCreeRien(t *testing.T) {
