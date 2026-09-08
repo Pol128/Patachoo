@@ -700,6 +700,85 @@ func TestTropDeTagsNeCreeRien(t *testing.T) {
 	}
 }
 
+// raw n'a pas de borne explicite au schéma : PocketBase lui applique la
+// sienne. Une ligne collée sans retour la dépasse, et c'est une faute de
+// saisie ordinaire — le formulaire revient, il ne part pas en 500.
+func TestUneLigneDIngredientTropLongueNeCreeRien(t *testing.T) {
+	app, mux, cookie := serveurConnecte(t)
+
+	champs := champsValides()
+	champs.Set("ingredients", "500 g de farine\n"+ligneTropLongue())
+
+	rec := poste(t, mux, "/recettes", cookie, champs)
+	corps := rec.Body.String()
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("statut %d, attendu %d", rec.Code, http.StatusOK)
+	}
+	if n := len(recettes(t, app)); n != 0 {
+		t.Errorf("%d recettes créées malgré la ligne trop longue, 0 attendue", n)
+	}
+	if n := nombreDIngredients(t, app); n != 0 {
+		t.Errorf("%d ingrédients créés malgré la ligne trop longue, 0 attendu", n)
+	}
+	if message := messageDErreur(t, corps); !strings.Contains(strings.ToLower(message), "ingrédient") {
+		t.Errorf("message d'erreur %q, attendu nommant le champ fautif", message)
+	}
+	// L'utilisateur ne retape rien : ce qu'il avait saisi lui revient.
+	for _, saisi := range []string{"Tarte aux pommes", "Éplucher, puis enfourner.", "500 g de farine"} {
+		if !strings.Contains(corps, saisi) {
+			t.Errorf("le formulaire re-rendu a perdu %q :\n%s", saisi, corps)
+		}
+	}
+}
+
+// Le même refus en édition : la recette et sa liste d'ingrédients doivent
+// sortir de là exactement comme elles y sont entrées.
+func TestUneEditionAvecUneLigneTropLongueNeChangeRien(t *testing.T) {
+	app, mux, cookie := serveurConnecte(t)
+	recette := recetteEnregistree(t, app, map[string]any{"title": "Clafoutis"})
+	poseLesIngredients(t, app, recette, "500 g de cerises", "3 œufs")
+
+	champs := champsValides()
+	champs.Set("ingredients", ligneTropLongue())
+
+	rec := poste(t, mux, "/recettes/"+recette.Id, cookie, champs)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("statut %d, attendu %d", rec.Code, http.StatusOK)
+	}
+	if titre := relitLaRecette(t, app, recette.Id).GetString("title"); titre != "Clafoutis" {
+		t.Errorf("titre %q, attendu « Clafoutis » : la recette a été modifiée malgré le refus", titre)
+	}
+	if lignes := lignesDe(t, app, recette); strings.Join(lignes, "|") != "500 g de cerises|3 œufs" {
+		t.Errorf("ingrédients %q, attendus [500 g de cerises 3 œufs] : la liste a été touchée", lignes)
+	}
+	if message := messageDErreur(t, rec.Body.String()); !strings.Contains(strings.ToLower(message), "ingrédient") {
+		t.Errorf("message d'erreur %q, attendu nommant le champ fautif", message)
+	}
+}
+
+// ligneTropLongue rend une ligne d'ingrédient au-delà de ce que le schéma
+// accepte pour raw — un copier-coller sans retour à la ligne suffit.
+func ligneTropLongue() string {
+	return strings.Repeat("a", 5001)
+}
+
+// messageDErreur extrait le message d'alerte du document rendu. Le lire dans
+// son paragraphe plutôt que dans le corps entier évite de le confondre avec
+// les libellés du formulaire, qui nomment les mêmes champs.
+func messageDErreur(t *testing.T, corps string) string {
+	t.Helper()
+
+	trouve := alerteRendue.FindStringSubmatch(corps)
+	if trouve == nil {
+		return ""
+	}
+	return trouve[1]
+}
+
+var alerteRendue = regexp.MustCompile(`(?s)<p class="erreur" role="alert">(.*?)</p>`)
+
 // --- Échappement et texte brut --------------------------------------------
 
 // DOD.md §3 : une recette est du contenu étranger par nature, y compris quand
