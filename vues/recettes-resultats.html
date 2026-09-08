@@ -1,0 +1,27 @@
+<div id="resultats">
+{{if .Vignettes}}
+<ul class="grille">
+{{range .Vignettes}}
+<li class="vignette">
+<a class="titre" href="/recettes/{{.Id}}">
+{{if .Miniature}}<img class="miniature" src="{{.Miniature}}" alt="" width="300" height="200" loading="lazy">{{end}}
+{{.Titre}}</a>
+{{if .TypeDePlat}}<p class="type-de-plat">{{.TypeDePlat}}</p>{{end}}
+{{if .Tags}}<ul class="tags">{{range .Tags}}<li>{{.}}</li>{{end}}</ul>{{end}}
+</li>
+{{end}}
+</ul>
+{{else if .CarnetVide}}
+<p class="absence">Votre carnet est vide. <a href="/recettes/nouvelle">Ajoutez votre première recette</a>.</p>
+{{else if .Terme}}
+<p class="absence">Aucune recette ne correspond à « {{.Terme}} ».</p>
+{{else}}
+<p class="absence">Aucune recette sur cette page.</p>
+{{end}}
+{{if or .Precedente .Suivante}}
+<nav class="pagination">
+{{if .Precedente}}<a rel="prev" href="{{.Precedente}}">← Précédent</a>{{end}}
+{{if .Suivante}}<a rel="next" href="{{.Suivante}}">Suivant →</a>{{end}}
+</nav>
+{{end}}
+</div>

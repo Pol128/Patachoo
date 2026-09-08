@@ -1,0 +1,10 @@
+{{define "contenu"}}
+<h1>Recettes</h1>
+<form class="recherche" method="get" action="/recettes" role="search">
+<label for="q">Rechercher</label>
+<input type="search" id="q" name="q" value="{{.Terme}}" placeholder="titre, ingrédient ou tag"
+ hx-get="/recettes" hx-trigger="keyup changed delay:300ms" hx-target="#resultats" hx-swap="outerHTML">
+<button type="submit">Rechercher</button>
+</form>
+{{template "recettes-resultats.html" .}}
+{{end}}

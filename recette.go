@@ -92,7 +92,7 @@ func pageRecette(e *core.RequestEvent) error {
 		return err
 	}
 
-	return rendre(e, "recette.html", "recette-corps.html", donneesPage{
+	return rendre(e, "recette.html", "recette-corps.html", &donneesPage{
 		Titre:   recette.GetString("title") + " — Patachoo",
 		Recette: donnees,
 	})
@@ -102,7 +102,7 @@ func pageRecette(e *core.RequestEvent) error {
 // page vide.
 func pageRecetteIntrouvable(e *core.RequestEvent) error {
 	return rendreAvecStatut(e, http.StatusNotFound,
-		"recette-introuvable.html", "recette-introuvable-corps.html", donneesPage{
+		"recette-introuvable.html", "recette-introuvable-corps.html", &donneesPage{
 			Titre: "Recette introuvable — Patachoo",
 		})
 }
@@ -159,7 +159,7 @@ func faitsDeLaRecette(recette *core.Record) []fait {
 	// seasons est un select, pas une relation : sa valeur se lit directement,
 	// sans passer par l'expansion.
 	ajoute("Saisons", strings.Join(recette.GetStringSlice("seasons"), ", "))
-	ajoute("Tags", strings.Join(nomsDe(recette.ExpandedAll("tags"), "name"), ", "))
+	ajoute("Tags", strings.Join(nomsDe(recette.ExpandedAll("tags")), ", "))
 
 	// Le nom, et rien d'autre : l'auteur d'une recette est un autre compte que
 	// son lecteur, et son courriel ne lui appartient pas. PocketBase le protège
@@ -172,15 +172,6 @@ func faitsDeLaRecette(recette *core.Record) []fait {
 	}
 
 	return faits
-}
-
-// nomsDe rend le champ donné de chaque enregistrement, dans l'ordre.
-func nomsDe(enregistrements []*core.Record, champ string) []string {
-	noms := make([]string, 0, len(enregistrements))
-	for _, enregistrement := range enregistrements {
-		noms = append(noms, enregistrement.GetString(champ))
-	}
-	return noms
 }
 
 // sourceDeLaRecette rend le bloc de source, ou nil : les deux champs sont vides
