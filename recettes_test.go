@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -666,6 +667,36 @@ func TestUnTeleversementRefuseNeCreeRien(t *testing.T) {
 				t.Errorf("message d'erreur sans le nom du champ fautif :\n%s", corps)
 			}
 		})
+	}
+}
+
+// Le schéma borne une recette à vingt tags : au-delà, la saisie est refusée
+// comme une erreur de saisie ordinaire, et non par une erreur serveur qui
+// perdrait tout ce que l'utilisateur avait tapé.
+func TestTropDeTagsNeCreeRien(t *testing.T) {
+	app, mux, cookie := serveurConnecte(t)
+
+	trop := make([]string, maxTags+1)
+	for i := range trop {
+		trop[i] = fmt.Sprintf("tag-%d", i)
+	}
+	champs := champsValides()
+	champs.Set("tags", strings.Join(trop, ","))
+
+	rec := poste(t, mux, "/recettes", cookie, champs)
+	corps := rec.Body.String()
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("statut %d, attendu %d", rec.Code, http.StatusOK)
+	}
+	if n := len(recettes(t, app)); n != 0 {
+		t.Errorf("%d recettes créées malgré les tags en trop, 0 attendue", n)
+	}
+	if !strings.Contains(corps, "<form") {
+		t.Errorf("le formulaire n'a pas été re-rendu :\n%s", corps)
+	}
+	if !strings.Contains(strings.ToLower(corps), "tags") {
+		t.Errorf("message d'erreur sans le nom du champ fautif :\n%s", corps)
 	}
 }
 

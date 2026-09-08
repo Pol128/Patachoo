@@ -266,7 +266,7 @@ func poseLesChamps(txApp core.App, e *core.RequestEvent, recette *core.Record, s
 // Ne rien faire est le cas ordinaire d'une édition : un formulaire renvoyé
 // sans fichier ne doit pas effacer l'image en place.
 func poseLImage(e *core.RequestEvent, recette *core.Record) error {
-	if e.Request.FormValue("retirer-image") != "" {
+	if e.Request.PostFormValue("retirer-image") != "" {
 		recette.Set("image", nil)
 		return nil
 	}
@@ -382,13 +382,13 @@ func formulaireVide(app core.App) (formulaireRecette, error) {
 		})
 	}
 
-	saisons, err := app.FindCollectionByNameOrId("recipes")
+	recettes, err := app.FindCollectionByNameOrId("recipes")
 	if err != nil {
 		return saisie, fmt.Errorf("collection recipes : %w", err)
 	}
 	// Les quatre valeurs sont lues sur le schéma, jamais recopiées : une
 	// liste en double finirait par diverger de celle qui valide.
-	if champ, ok := saisons.Fields.GetByName("seasons").(*core.SelectField); ok {
+	if champ, ok := recettes.Fields.GetByName("seasons").(*core.SelectField); ok {
 		saisie.ToutesLesSaisons = champ.Values
 	}
 
@@ -441,7 +441,7 @@ func formulaireDepuis(app core.App, recette *core.Record) (formulaireRecette, er
 // champ jamais renseigné : « 0 portion » est une information, un champ vide en
 // est une autre.
 func nombreAffiche(recette *core.Record, champ string) string {
-	if recette.GetString(champ) == "" || recette.GetInt(champ) == 0 {
+	if recette.GetInt(champ) == 0 {
 		return ""
 	}
 	return fmt.Sprint(recette.GetInt(champ))
