@@ -87,8 +87,11 @@ func pageAccueil(e *core.RequestEvent) error {
 // Le rendu passe par un tampon avant d'être écrit : une erreur de gabarit
 // remonte comme erreur et ne peut pas produire une demi-page déjà partie sur
 // le réseau.
-func rendre(e *core.RequestEvent, page, fragment string, donnees donneesDePage) error {
-	return rendreAvecStatut(e, http.StatusOK, page, fragment, donnees)
+//
+// Les blocs nommés en plus sont chargés dans les deux cas : un fragment qui en
+// appelle un ne se rendrait pas sans lui, et la page complète pas davantage.
+func rendre(e *core.RequestEvent, page, fragment string, donnees donneesDePage, blocs ...string) error {
+	return rendreAvecStatut(e, http.StatusOK, page, fragment, donnees, blocs...)
 }
 
 // rendreAvecStatut rend la même chose sous un autre code de retour.
@@ -97,12 +100,15 @@ func rendre(e *core.RequestEvent, page, fragment string, donnees donneesDePage) 
 // compte, feuille de style — et seul son statut la distingue. Un 404 rendu par
 // rendre() répondrait 200, et un navigateur comme un moteur d'indexation
 // prendraient l'erreur pour une page valide.
-func rendreAvecStatut(e *core.RequestEvent, statut int, page, fragment string, donnees donneesDePage) error {
+func rendreAvecStatut(e *core.RequestEvent, statut int, page, fragment string, donnees donneesDePage, blocs ...string) error {
 	donnees.poseUtilisateur(utilisateurCourant(e))
 
 	motifs := []string{"vues/" + fragment}
 	if !estHTMX(e) {
 		motifs = []string{"vues/mise-en-page.html", "vues/" + page, "vues/" + fragment}
+	}
+	for _, bloc := range blocs {
+		motifs = append(motifs, "vues/"+bloc)
 	}
 
 	rendu, err := registre.LoadFS(vues, motifs...).Render(donnees)
@@ -111,6 +117,21 @@ func rendreAvecStatut(e *core.RequestEvent, statut int, page, fragment string, d
 	}
 
 	return e.HTML(statut, rendu)
+}
+
+// rendLeBloc écrit un bloc seul, quelle que soit l'origine de la requête.
+//
+// Une route qui n'a pas de page complète à proposer — le champ de tags et ses
+// suggestions n'en forment pas une — n'a pas non plus d'arbitrage à faire :
+// elle rend son fichier, et rien autour. Ses données ne sont pas celles d'une
+// page, et ne portent donc pas l'utilisateur courant.
+func rendLeBloc(e *core.RequestEvent, bloc string, donnees any) error {
+	rendu, err := registre.LoadFS(vues, "vues/"+bloc).Render(donnees)
+	if err != nil {
+		return err
+	}
+
+	return e.HTML(http.StatusOK, rendu)
 }
 
 // estHTMX dit si la requête vient de HTMX, qui se signale par un en-tête.

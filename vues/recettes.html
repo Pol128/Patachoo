@@ -3,7 +3,9 @@
 <form class="recherche" method="get" action="/recettes" role="search">
 <label for="q">Rechercher</label>
 <input type="search" id="q" name="q" value="{{.Terme}}" placeholder="titre, ingrédient ou tag"
- hx-get="/recettes" hx-trigger="keyup changed delay:300ms" hx-target="#resultats" hx-swap="outerHTML">
+ hx-get="/recettes" hx-trigger="keyup changed delay:300ms" hx-target="#resultats" hx-swap="outerHTML"
+ hx-include="[name='tag']">
+{{if .Tag}}<input type="hidden" name="tag" value="{{.Tag}}">{{end}}
 <button type="submit">Rechercher</button>
 </form>
 {{template "recettes-resultats.html" .}}

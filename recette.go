@@ -36,9 +36,14 @@ type donneesRecette struct {
 // fait est un couple libellé/valeur du bandeau : portions, durées, type de
 // plat, saisons, tags, auteur. Une liste plutôt qu'un champ par donnée : le
 // bandeau entier disparaît quand elle est vide, sans conteneur laissé vide.
+//
+// Liens porte les valeurs cliquables — les tags, seuls à l'être. Valeur reste
+// alors vide, et c'est sur Liens que le gabarit tranche : un fait a du texte
+// ou des liens, jamais les deux.
 type fait struct {
 	Libelle string
 	Valeur  string
+	Liens   []lienDeTag
 }
 
 // source est le site d'où la recette vient. PATA-11 reprend ce bloc à fond ;
@@ -159,7 +164,13 @@ func faitsDeLaRecette(recette *core.Record) []fait {
 	// seasons est un select, pas une relation : sa valeur se lit directement,
 	// sans passer par l'expansion.
 	ajoute("Saisons", strings.Join(recette.GetStringSlice("seasons"), ", "))
-	ajoute("Tags", strings.Join(nomsDe(recette.ExpandedAll("tags")), ", "))
+
+	// Les tags sont des liens vers la liste filtrée : la fiche est l'endroit
+	// où l'on découvre un tag, et donc celui d'où l'on veut voir ce qu'il
+	// rassemble. Faute de tag, le libellé disparaît comme les autres.
+	if liens := liensDesTags(recette.ExpandedAll("tags")); len(liens) > 0 {
+		faits = append(faits, fait{Libelle: "Tags", Liens: liens})
+	}
 
 	// Le nom, et rien d'autre : l'auteur d'une recette est un autre compte que
 	// son lecteur, et son courriel ne lui appartient pas. PocketBase le protège
