@@ -161,3 +161,94 @@ func TestRobotsTropLent(t *testing.T) {
 		t.Error("la page a été demandée alors que robots.txt n'avait pas répondu")
 	}
 }
+
+// --- Le Crawl-delay ---------------------------------------------------------
+
+// Le Crawl-delay est lu ici mais respecté ailleurs : ce paquet va chercher une
+// page, il n'en enchaîne pas. C'est l'import en lot (PATA-42) qui espace ses
+// requêtes de ce que l'hôte demande, et il ne peut le faire que si on le lui
+// dit.
+
+// delaiAnnoncePar rend le Crawl-delay que ce robots.txt nous adresse, tel que
+// l'appelant le lira sur la page récupérée.
+func delaiAnnoncePar(t *testing.T, robots string) time.Duration {
+	t.Helper()
+
+	srv := serveurRobots(t, robots, func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, "page")
+	})
+
+	page, err := recupere(t, srv.URL+"/recettes/tarte", autorise(srv))
+	if err != nil {
+		t.Fatalf("la page devait être récupérée : %v", err)
+	}
+	return page.DelaiAnnonce
+}
+
+func TestLeCrawlDelayAnnonce(t *testing.T) {
+	cas := []struct {
+		nom     string
+		robots  string
+		attendu time.Duration
+	}{
+		{"aucun robots.txt", "", 0},
+		{"aucune directive", "User-agent: *\nDisallow: /prive\n", 0},
+		{"annoncé au groupe *", "User-agent: *\nCrawl-delay: 5\n", 5 * time.Second},
+		{"fractionnaire", "User-agent: *\nCrawl-delay: 0.5\n", 500 * time.Millisecond},
+		{"valeur illisible", "User-agent: *\nCrawl-delay: bientôt\n", 0},
+		{"valeur négative", "User-agent: *\nCrawl-delay: -3\n", 0},
+		{"directive avant tout groupe", "Crawl-delay: 7\nUser-agent: *\nDisallow:\n", 0},
+	}
+
+	for _, c := range cas {
+		t.Run(c.nom, func(t *testing.T) {
+			if lu := delaiAnnoncePar(t, c.robots); lu != c.attendu {
+				t.Errorf("Crawl-delay lu %v, attendu %v", lu, c.attendu)
+			}
+		})
+	}
+}
+
+// TestLeCrawlDelayEstCeluiDuGroupeQuiNousVise : celui d'un autre agent ne nous
+// concerne pas. Nous ralentir de trente secondes parce que Googlebot est prié
+// de le faire, c'est s'infliger un refus qui ne nous vise pas.
+func TestLeCrawlDelayEstCeluiDuGroupeQuiNousVise(t *testing.T) {
+	cas := []struct {
+		nom     string
+		robots  string
+		attendu time.Duration
+	}{
+		{
+			"celui d'un autre agent est ignoré",
+			"User-agent: Googlebot\nCrawl-delay: 30\n\nUser-agent: *\nDisallow:\n",
+			0,
+		},
+		{
+			"le nôtre l'emporte sur celui de l'étoile",
+			"User-agent: *\nCrawl-delay: 30\n\nUser-agent: patachoo\nCrawl-delay: 2\n",
+			2 * time.Second,
+		},
+		{
+			"celui de l'étoile s'applique faute de mieux",
+			"User-agent: Googlebot\nCrawl-delay: 30\n\nUser-agent: *\nCrawl-delay: 3\n",
+			3 * time.Second,
+		},
+	}
+
+	for _, c := range cas {
+		t.Run(c.nom, func(t *testing.T) {
+			if lu := delaiAnnoncePar(t, c.robots); lu != c.attendu {
+				t.Errorf("Crawl-delay lu %v, attendu %v", lu, c.attendu)
+			}
+		})
+	}
+}
+
+// TestLeCrawlDelayEstBorne : la valeur vient d'un tiers, et une valeur codée
+// sans test finit augmentée. Un robots.txt qui annonce une journée d'attente
+// tiendrait un lot en otage sans jamais rien refuser explicitement.
+func TestLeCrawlDelayEstBorne(t *testing.T) {
+	if lu := delaiAnnoncePar(t, "User-agent: *\nCrawl-delay: 86400\n"); lu != delaiAnnonceMax {
+		t.Errorf("Crawl-delay lu %v, attendu la borne %v", lu, delaiAnnonceMax)
+	}
+}
