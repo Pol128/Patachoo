@@ -273,6 +273,75 @@ func TestLesLignesEcarteesNEmpechentPasLesAutres(t *testing.T) {
 	}
 }
 
+// Chaque ligne écartée ressort avec le motif qui la vise, et non un refus
+// générique : quatre causes, quatre remèdes, et « adresse relative » ne se
+// corrige pas comme « schéma ftp ».
+func TestChaqueLigneEcarteeDonneSonMotif(t *testing.T) {
+	_, mux, cookie := atelierDeLot(t)
+
+	cas := []struct {
+		ligne string
+		motif string
+	}{
+		{"/recettes/relative", "adresse relative : une URL complète est attendue"},
+		// Le schéma est recopié dans le motif : ftp et file n'ont pas le même
+		// remède, et un message unique les confondrait.
+		{"ftp://exemple.fr/fichier", "schéma « ftp » : seuls http et https sont acceptés"},
+		{"file:///etc/passwd", "schéma « file » : seuls http et https sont acceptés"},
+		// url.Parse bute sur l'échappement %zz : la ligne n'est même pas une
+		// adresse.
+		{"https://exemple.fr/%zz", "adresse illisible"},
+		// L'analyse passe, mais il ne reste aucun hôte à joindre.
+		{"http://", "adresse sans nom de domaine"},
+	}
+
+	// Une URL retenue accompagne les fautives : sans elle, le lot serait
+	// refusé en entier et la liste des motifs ne serait jamais rendue.
+	saisie := []string{"https://exemple.fr/retenue"}
+	for _, c := range cas {
+		saisie = append(saisie, c.ligne)
+	}
+	corps := lotAccepte(t, mux, cookie, strings.Join(saisie, "\n"))
+
+	entrees := lignesEcarteesRendues(corps)
+	if len(entrees) != len(cas) {
+		t.Fatalf("%d lignes écartées rendues, attendu %d :\n%s", len(entrees), len(cas), corps)
+	}
+	for _, c := range cas {
+		entree := entreeDeLaLigne(entrees, c.ligne)
+		if entree == "" {
+			t.Errorf("la ligne %q n'est pas listée :\n%s", c.ligne, corps)
+			continue
+		}
+		if !strings.Contains(entree, html.EscapeString(c.motif)) {
+			t.Errorf("la ligne %q est rendue %q, sans son motif %q", c.ligne, entree, c.motif)
+		}
+	}
+}
+
+// lignesEcarteesRendues extrait le contenu de chaque entrée de la liste des
+// lignes écartées, dans l'ordre du rendu.
+func lignesEcarteesRendues(corps string) []string {
+	var entrees []string
+	for _, morceau := range strings.Split(corps, `<li class="ecartee">`)[1:] {
+		if fin := strings.Index(morceau, "</li>"); fin >= 0 {
+			entrees = append(entrees, morceau[:fin])
+		}
+	}
+	return entrees
+}
+
+// entreeDeLaLigne rend l'entrée qui porte cette ligne, ou "" si aucune ne la
+// porte.
+func entreeDeLaLigne(entrees []string, ligne string) string {
+	for _, entree := range entrees {
+		if strings.Contains(entree, html.EscapeString(ligne)) {
+			return entree
+		}
+	}
+	return ""
+}
+
 // Une ligne écartée ressort échappée : c'est du texte étranger rendu dans une
 // page (DOD.md §3).
 func TestUneLigneEcarteeEstEchappee(t *testing.T) {
@@ -333,6 +402,26 @@ func TestUneSaisieSansAucuneURLRetenueNeCreeAucunLot(t *testing.T) {
 	}
 	if n := compte(t, app, "tags"); n != tagsAvant {
 		t.Errorf("%d tags sans aucune URL retenue, attendu %d", n, tagsAvant)
+	}
+}
+
+// Un lot refusé rend la saisie dans le formulaire : une liste collée ne se
+// retape pas parce qu'une ligne sur vingt était fautive.
+func TestUnLotRefuseReproposeLaSaisie(t *testing.T) {
+	_, mux, cookie := atelierDeLot(t)
+
+	lignes := []string{"ftp://exemple.fr/fichier", "file:///etc/passwd"}
+	rec := soumetLeLot(mux, cookie, strings.Join(lignes, "\n"))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("statut %d pour un lot refusé, attendu %d", rec.Code, http.StatusOK)
+	}
+
+	champ := entreBalises(rec.Body.String(), `name="urls"`, "</textarea>")
+	for _, ligne := range lignes {
+		if !strings.Contains(champ, html.EscapeString(ligne)) {
+			t.Errorf("la ligne %q n'est pas reproposée dans le champ de saisie %q", ligne, champ)
+		}
 	}
 }
 
