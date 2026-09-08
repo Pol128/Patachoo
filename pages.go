@@ -34,6 +34,11 @@ type donneesPage struct {
 	Titre       string
 	Message     string
 	Utilisateur *utilisateur
+
+	// Formulaire n'est rempli que par les pages qui en portent un. Un champ
+	// par page plutôt qu'un any : le gabarit nomme ce qu'il lit, et une page
+	// qui se tromperait de forme rougirait au rendu plutôt qu'en production.
+	Formulaire *formulaireRecette
 }
 
 // poseUtilisateur implémente donneesDePage. Sur donneesPage, donc valable pour

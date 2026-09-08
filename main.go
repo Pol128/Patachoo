@@ -89,6 +89,7 @@ func brancheLesRoutes(routeur *router.Router[*core.RequestEvent]) {
 	routeur.GET("/connexion", pageConnexion)
 	routeur.POST("/connexion", connexion)
 	routeur.POST("/deconnexion", deconnexion)
+	brancheLesRecettes(routeur)
 	routeur.POST("/api/import", importDepuisURL)
 
 	// Nos propres assets, embarqués dans le binaire : ni CDN, ni domaine
