@@ -41,8 +41,15 @@ type fait struct {
 	Valeur  string
 }
 
-// source est le site d'où la recette vient. PATA-11 reprend ce bloc à fond ;
-// ici, le lien existe et fonctionne.
+// source est le site d'où la recette vient.
+//
+// Nom est ce qui s'affiche, pas la colonne source_name : rien n'extrait le nom
+// du site aujourd'hui, et le libellé se replie sur le domaine de l'adresse. Le
+// calcul se fait ici, à l'affichage, et jamais en base — stocker le domaine
+// dans source_name deviendrait faux le jour où le vrai nom est enfin extrait.
+//
+// URL peut être vide : une source de carnet ou de livre se lit sans qu'il y
+// ait où aller.
 type source struct {
 	URL string
 	Nom string
@@ -184,13 +191,47 @@ func faitsDeLaRecette(recette *core.Record) []fait {
 
 // sourceDeLaRecette rend le bloc de source, ou nil : les deux champs sont vides
 // sur une saisie manuelle, et c'est le cas normal.
+//
+// Un seul des deux suffit à faire un bloc. C'est le libellé qui décide : faute
+// de quoi que ce soit à écrire, il n'y a ni bloc, ni ponctuation orpheline.
 func sourceDeLaRecette(recette *core.Record) *source {
-	adresse := recette.GetString("source_url")
-	nom := recette.GetString("source_name")
-	if adresse == "" || nom == "" {
+	adresse := strings.TrimSpace(recette.GetString("source_url"))
+	nom := libelleSource(recette.GetString("source_name"), adresse)
+	if nom == "" {
 		return nil
 	}
 	return &source{URL: adresse, Nom: nom}
+}
+
+// libelleSource dit sous quel nom la source s'affiche.
+//
+// Dans l'ordre : le nom du site s'il est renseigné ; sinon l'hôte de l'adresse,
+// sans son www. et en minuscules — c'est le cas courant, puisque rien
+// n'extrait le nom du site aujourd'hui ; sinon l'adresse telle quelle.
+//
+// Ce dernier repli est délibéré : une adresse dont on ne tire aucun hôte donne
+// un libellé laid, mais la source ne disparaît pas. C'est la même règle que le
+// repli d'un ingrédient sur sa ligne brute.
+func libelleSource(nom, adresse string) string {
+	if nom := strings.TrimSpace(nom); nom != "" {
+		return nom
+	}
+
+	adresse = strings.TrimSpace(adresse)
+	if adresse == "" {
+		return ""
+	}
+
+	// url.Parse ne rejette presque rien : « pas-une-url » lui passe pour un
+	// chemin relatif, et « javascript:alert(1) » pour une URL opaque. Les deux
+	// rendent un hôte vide, et c'est là-dessus que le repli se décide — pas sur
+	// l'erreur, qui ne vient qu'exceptionnellement.
+	if analysee, err := url.Parse(adresse); err == nil {
+		if hote := analysee.Hostname(); hote != "" {
+			return strings.TrimPrefix(strings.ToLower(hote), "www.")
+		}
+	}
+	return adresse
 }
 
 // ingredientsDeLaRecette met chaque ligne en forme, dans l'ordre reçu.

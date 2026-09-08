@@ -93,6 +93,7 @@ func brancheLesRoutes(routeur *router.Router[*core.RequestEvent]) {
 	brancheLesRecettes(routeur)
 	brancheLesCommentaires(routeur)
 	brancheLImport(routeur)
+	brancheLImportEnLot(routeur)
 
 	// Nos propres assets, embarqués dans le binaire : ni CDN, ni domaine
 	// tiers. Patachoo doit fonctionner sur un réseau coupé d'Internet.
