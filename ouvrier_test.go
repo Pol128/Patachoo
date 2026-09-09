@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -222,13 +225,118 @@ func (s *siteFactice) appels() []appelSortant {
 
 // appelsVers rend les requêtes émises vers un hôte, dans l'ordre.
 func (s *siteFactice) appelsVers(hote string) []appelSortant {
+	return versLHote(s.appels(), hote)
+}
+
+// versLHote filtre des appels sur leur hôte, en gardant leur ordre.
+func versLHote(appels []appelSortant, hote string) []appelSortant {
 	var vers []appelSortant
-	for _, a := range s.appels() {
+	for _, a := range appels {
 		if a.hote == hote {
 			vers = append(vers, a)
 		}
 	}
 	return vers
+}
+
+// ecartsEntre rend les écarts entre requêtes consécutives, lus sur l'horloge
+// virtuelle.
+func ecartsEntre(appels []appelSortant) []time.Duration {
+	var ecarts []time.Duration
+	for i := 1; i < len(appels); i++ {
+		ecarts = append(ecarts, appels[i].instant.Sub(appels[i-1].instant))
+	}
+	return ecarts
+}
+
+// --- Le réseau, là où les requêtes partent vraiment -------------------------
+
+// reseauFactice tient lieu de transport HTTP. Il répond à la place du réseau et
+// note chaque requête émise — le robots.txt compris.
+//
+// C'est le seul montage qui voie ce que la couture recuperePage cache : un appel
+// de recuperation, ce sont deux requêtes sortantes, et la promesse de
+// cadencement porte sur celles-là, pas sur les appels de la couture.
+type reseauFactice struct {
+	horloge *horlogeVirtuelle
+	mu      sync.Mutex
+	corps   map[string]string
+	vus     []appelSortant
+}
+
+func (r *reseauFactice) RoundTrip(requete *http.Request) (*http.Response, error) {
+	adresse := requete.URL.String()
+
+	r.mu.Lock()
+	r.vus = append(r.vus, appelSortant{
+		url:     adresse,
+		hote:    strings.ToLower(requete.URL.Hostname()),
+		instant: r.horloge.Maintenant(),
+	})
+	corps, connu := r.corps[adresse]
+	r.mu.Unlock()
+
+	statut := http.StatusOK
+	if !connu {
+		statut, corps = http.StatusNotFound, ""
+	}
+	return &http.Response{
+		StatusCode: statut,
+		Header:     http.Header{"Content-Type": []string{"text/html; charset=utf-8"}},
+		Body:       io.NopCloser(strings.NewReader(corps)),
+		Request:    requete,
+	}, nil
+}
+
+func (r *reseauFactice) appels() []appelSortant {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return append([]appelSortant(nil), r.vus...)
+}
+
+func (r *reseauFactice) appelsVers(hote string) []appelSortant {
+	return versLHote(r.appels(), hote)
+}
+
+// robotsDemandes compte les requêtes de robots.txt émises.
+func (r *reseauFactice) robotsDemandes() int {
+	var lus int
+	for _, appel := range r.appels() {
+		if strings.HasSuffix(appel.url, "/robots.txt") {
+			lus++
+		}
+	}
+	return lus
+}
+
+// avecReseau branche le réseau factice sous recuperation, et non à sa place : la
+// couture appelle le vrai chemin, transport excepté. Les options que l'ouvrier
+// passe — cadence, robots retenus — sont donc celles de production, et ce que le
+// test lit sont les requêtes réellement émises.
+//
+// C'est ce que le site factice ne peut pas montrer : il tient lieu de
+// recuperation, et une doublure qui refait ce qu'on prétend vérifier ne prouve
+// rien.
+func avecReseau(t *testing.T, h *horlogeVirtuelle, corps map[string]string) *reseauFactice {
+	t.Helper()
+
+	r := &reseauFactice{horloge: h, corps: corps}
+	avecRecuperateur(t, func(ctx context.Context, adresse string, choix ...recuperation.Option) (recuperation.Page, error) {
+		return recuperation.Recupere(ctx, adresse, append(choix, recuperation.AvecTransport(r))...)
+	})
+	return r
+}
+
+// siteServi décrit ce que le réseau factice sert : le robots.txt donné pour
+// chaque hôte visé, et une page de recette par URL.
+func siteServi(robots string, urls ...string) map[string]string {
+	corps := map[string]string{}
+	for _, adresse := range urls {
+		corps[adresse] = string(htmlDeRecette("Tarte de "+adresse, []string{"200 g de farine"}))
+		corps["https://"+hoteDe(adresse)+"/robots.txt"] = robots
+	}
+	return corps
 }
 
 // --- Les pages servies ------------------------------------------------------
@@ -266,12 +374,6 @@ func sertLaPage(corps []byte, urlFinale string) reponseDuSite {
 		URLFinale:   urlFinale,
 		TypeContenu: "text/html",
 	}}
-}
-
-// avecDelaiAnnonce ajoute à une réponse le Crawl-delay que l'hôte demande.
-func avecDelaiAnnonce(r reponseDuSite, delai time.Duration) reponseDuSite {
-	r.page.DelaiAnnonce = delai
-	return r
 }
 
 // echoueAvec rend l'échec nommé que PATA-8 ou PATA-7 rendrait.
@@ -348,6 +450,11 @@ func traite(t *testing.T, o *ouvrier, lot *core.Record) {
 
 // TestLOuvrierEspaceLesRequetesVersUnMemeHote : au plus une par seconde. C'est
 // la politesse que le disclaimer de la page de saisie promet.
+//
+// Le compte se fait au transport, et non à la couture recuperePage : un appel de
+// recuperation émet deux requêtes — le robots.txt de l'hôte, puis la page —, et
+// la promesse porte sur celles-là. Comptée un cran plus haut, une paire partie
+// dans le même instant passerait inaperçue.
 func TestLOuvrierEspaceLesRequetesVersUnMemeHote(t *testing.T) {
 	app, titulaire, horloge, o := atelierDeLOuvrier(t)
 	urls := []string{
@@ -356,18 +463,24 @@ func TestLOuvrierEspaceLesRequetesVersUnMemeHote(t *testing.T) {
 		"https://a.example/3",
 		"https://a.example/4",
 	}
-	site := avecSite(t, horloge, recettesEn(urls))
+	reseau := avecReseau(t, horloge, siteServi("User-agent: *\nDisallow: /prive\n", urls...))
 
 	traite(t, o, lotDe(t, app, titulaire, urls...))
 
-	appels := site.appels()
-	if len(appels) != len(urls) {
-		t.Fatalf("%d requêtes émises, attendu %d", len(appels), len(urls))
+	appels := reseau.appels()
+	// Un robots.txt, puis une requête par page : il est retenu pour la durée de
+	// la fournée, et non redemandé à chaque page.
+	if len(appels) != len(urls)+1 {
+		t.Fatalf("%d requêtes émises, attendu %d — un robots.txt et %d pages :\n%v",
+			len(appels), len(urls)+1, len(urls), appels)
 	}
-	for i := 1; i < len(appels); i++ {
-		if ecart := appels[i].instant.Sub(appels[i-1].instant); ecart < delaiEntreRequetes {
-			t.Errorf("requêtes %d et %d espacées de %v, attendu au moins %v",
-				i-1, i, ecart, delaiEntreRequetes)
+	if !strings.HasSuffix(appels[0].url, "/robots.txt") {
+		t.Errorf("première requête vers %q, attendu le robots.txt", appels[0].url)
+	}
+	for i, ecart := range ecartsEntre(appels) {
+		if ecart < delaiEntreRequetes {
+			t.Errorf("requêtes %q et %q espacées de %v, attendu au moins %v",
+				appels[i].url, appels[i+1].url, ecart, delaiEntreRequetes)
 		}
 	}
 }
@@ -382,20 +495,21 @@ func TestLOuvrierMeneLesHotesDeFront(t *testing.T) {
 		"https://a.example/3", "https://b.example/3",
 		"https://a.example/4", "https://b.example/4",
 	}
-	site := avecSite(t, horloge, recettesEn(urls))
+	reseau := avecReseau(t, horloge, siteServi("User-agent: *\nDisallow: /prive\n", urls...))
 
 	traite(t, o, lotDe(t, app, titulaire, urls...))
 
-	appels := site.appels()
-	if len(appels) != len(urls) {
-		t.Fatalf("%d requêtes émises, attendu %d", len(appels), len(urls))
+	appels := reseau.appels()
+	// Un robots.txt et quatre pages par hôte.
+	if len(appels) != len(urls)+2 {
+		t.Fatalf("%d requêtes émises, attendu %d", len(appels), len(urls)+2)
 	}
-	// Quatre URLs par hôte, menées de front : trois attentes d'une seconde, et
-	// non les sept qu'une file unique imposerait.
-	attendue := 3 * delaiEntreRequetes
+	// Cinq requêtes par hôte, menées de front : quatre attentes d'une seconde,
+	// et non les neuf qu'une file unique imposerait.
+	attendue := 4 * delaiEntreRequetes
 	if totale := depuisLeDepart(appels[len(appels)-1].instant); totale != attendue {
 		t.Errorf("lot mené en %v, attendu %v (la somme des deux hôtes ferait %v)",
-			totale, attendue, 7*delaiEntreRequetes)
+			totale, attendue, 9*delaiEntreRequetes)
 	}
 }
 
@@ -420,25 +534,27 @@ func TestLOuvrierBorneLesHotesMenesDeFront(t *testing.T) {
 	}
 	urls = append(urls, "https://detrop.example/1")
 
-	site := avecSite(t, horloge, recettesEn(urls))
+	reseau := avecReseau(t, horloge, siteServi("User-agent: *\nDisallow: /prive\n", urls...))
 	traite(t, o, lotDe(t, app, titulaire, urls...))
 
-	if len(site.appels()) != len(urls) {
-		t.Fatalf("%d requêtes émises, attendu %d", len(site.appels()), len(urls))
+	// Un robots.txt par hôte, plus une page par URL.
+	attendues := len(urls) + filesMax + 1
+	if len(reseau.appels()) != attendues {
+		t.Fatalf("%d requêtes émises, attendu %d", len(reseau.appels()), attendues)
 	}
 	if sommet := horloge.sommetDesFiles(); sommet > filesMax {
 		t.Errorf("%d hôtes menés de front, attendu au plus %d : la borne ne tient pas", sommet, filesMax)
 	}
 
-	// L'hôte de trop n'a pas démarré avant que l'hôte lent de la première
-	// vague ait fini ses trois URLs, soit deux secondes de cadence.
-	enTrop := site.appelsVers("detrop.example")
-	if len(enTrop) != 1 {
-		t.Fatalf("%d requêtes vers l'hôte de trop, attendu 1", len(enTrop))
+	// L'hôte de trop n'a pas démarré avant que l'hôte lent de la première vague
+	// ait fini son robots.txt et ses trois URLs, soit trois secondes de cadence.
+	enTrop := reseau.appelsVers("detrop.example")
+	if len(enTrop) != 2 {
+		t.Fatalf("%d requêtes vers l'hôte de trop, attendu 2 — son robots.txt et sa page", len(enTrop))
 	}
-	if attente := depuisLeDepart(enTrop[0].instant); attente != 2*delaiEntreRequetes {
+	if attente := depuisLeDepart(enTrop[0].instant); attente != 3*delaiEntreRequetes {
 		t.Errorf("l'hôte au-delà de la borne a démarré à %v, attendu %v : la vague suivante ne devrait "+
-			"pas démarrer avant que la précédente soit finie", attente, 2*delaiEntreRequetes)
+			"pas démarrer avant que la précédente soit finie", attente, 3*delaiEntreRequetes)
 	}
 }
 
@@ -449,34 +565,73 @@ func TestLOuvrierSuitLeCrawlDelayAnnonce(t *testing.T) {
 	patient := []string{"https://lent.example/1", "https://lent.example/2", "https://lent.example/3"}
 	ordinaire := []string{"https://vif.example/1", "https://vif.example/2", "https://vif.example/3"}
 
-	table := recettesEn(append(append([]string{}, patient...), ordinaire...))
-	for _, adresse := range patient {
-		table[adresse] = avecDelaiAnnonce(table[adresse], 5*time.Second)
+	corps := siteServi("User-agent: *\nCrawl-delay: 5\n", patient...)
+	for adresse, contenu := range siteServi("User-agent: *\nDisallow: /prive\n", ordinaire...) {
+		corps[adresse] = contenu
 	}
-	site := avecSite(t, horloge, table)
+	reseau := avecReseau(t, horloge, corps)
 
 	traite(t, o, lotDe(t, app, titulaire, append(append([]string{}, patient...), ordinaire...)...))
 
-	ecarts := func(hote string) []time.Duration {
-		appels := site.appelsVers(hote)
-		if len(appels) != 3 {
-			t.Fatalf("%d requêtes vers %s, attendu 3", len(appels), hote)
+	// Le robots.txt en tête, puis les trois pages : ce sont les écarts entre
+	// pages qui disent le rythme que l'hôte impose à la suite.
+	ecartsEntreLesPages := func(hote string) []time.Duration {
+		appels := reseau.appelsVers(hote)
+		if len(appels) != 4 {
+			t.Fatalf("%d requêtes vers %s, attendu 4 — son robots.txt et trois pages", len(appels), hote)
 		}
-		return []time.Duration{
-			appels[1].instant.Sub(appels[0].instant),
-			appels[2].instant.Sub(appels[1].instant),
-		}
+		return ecartsEntre(appels[1:])
 	}
 
-	for _, ecart := range ecarts("lent.example") {
+	for _, ecart := range ecartsEntreLesPages("lent.example") {
 		if ecart != 5*time.Second {
 			t.Errorf("écart de %v vers l'hôte qui annonce Crawl-delay: 5, attendu 5s", ecart)
 		}
 	}
-	for _, ecart := range ecarts("vif.example") {
+	for _, ecart := range ecartsEntreLesPages("vif.example") {
 		if ecart != delaiEntreRequetes {
 			t.Errorf("écart de %v vers l'hôte qui n'annonce rien, attendu %v", ecart, delaiEntreRequetes)
 		}
+	}
+}
+
+// TestLeCrawlDelayVautDesLaPremierePage : le délai annoncé se lit dans le
+// robots.txt, donc avant la page. Rapporté après l'appel, il ne vaudrait qu'à
+// partir de la deuxième — et la première partirait à notre rythme, pas à celui
+// du site, qui vient pourtant de l'écrire.
+func TestLeCrawlDelayVautDesLaPremierePage(t *testing.T) {
+	app, titulaire, horloge, o := atelierDeLOuvrier(t)
+	const adresse = "https://lent.example/1"
+	reseau := avecReseau(t, horloge, siteServi("User-agent: *\nCrawl-delay: 5\n", adresse))
+
+	traite(t, o, lotDe(t, app, titulaire, adresse))
+
+	appels := reseau.appels()
+	if len(appels) != 2 {
+		t.Fatalf("%d requêtes émises, attendu 2 :\n%v", len(appels), appels)
+	}
+	if ecart := appels[1].instant.Sub(appels[0].instant); ecart != 5*time.Second {
+		t.Errorf("page demandée %v après le robots.txt qui annonce Crawl-delay: 5, attendu 5s", ecart)
+	}
+}
+
+// TestChaqueFourneeRelitLeRobots : le robots.txt est retenu pour la fournée, et
+// pour elle seule.
+//
+// Retenu plus longtemps — porté par l'ouvrier, donc par le service —, un site
+// qui se ferme entre deux lots continuerait d'être récolté jusqu'au redémarrage
+// du processus, quand la page de saisie promet le contraire.
+func TestChaqueFourneeRelitLeRobots(t *testing.T) {
+	app, titulaire, horloge, o := atelierDeLOuvrier(t)
+	const premiere, seconde = "https://a.example/1", "https://a.example/2"
+	reseau := avecReseau(t, horloge, siteServi("User-agent: *\nDisallow: /prive\n", premiere, seconde))
+
+	traite(t, o, lotDe(t, app, titulaire, premiere))
+	traite(t, o, lotDe(t, app, titulaire, seconde))
+
+	if lus := reseau.robotsDemandes(); lus != 2 {
+		t.Errorf("%d robots.txt demandés pour deux fournées, attendu 2 : la seconde a lu ce que "+
+			"la première avait retenu", lus)
 	}
 }
 

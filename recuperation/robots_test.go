@@ -167,10 +167,11 @@ func TestRobotsTropLent(t *testing.T) {
 // Le Crawl-delay est lu ici mais respecté ailleurs : ce paquet va chercher une
 // page, il n'en enchaîne pas. C'est l'import en lot (PATA-42) qui espace ses
 // requêtes de ce que l'hôte demande, et il ne peut le faire que si on le lui
-// dit.
+// dit — par la cadence qu'il fournit, avant que la page ne soit demandée.
 
 // delaiAnnoncePar rend le Crawl-delay que ce robots.txt nous adresse, tel que
-// l'appelant le lira sur la page récupérée.
+// l'appelant l'apprend — par sa cadence, seul chemin par lequel ce paquet le
+// rapporte.
 func delaiAnnoncePar(t *testing.T, robots string) time.Duration {
 	t.Helper()
 
@@ -178,11 +179,11 @@ func delaiAnnoncePar(t *testing.T, robots string) time.Duration {
 		fmt.Fprint(w, "page")
 	})
 
-	page, err := recupere(t, srv.URL+"/recettes/tarte", autorise(srv))
-	if err != nil {
+	rythme := &cadenceNotee{}
+	if _, err := recupere(t, srv.URL+"/recettes/tarte", autorise(srv), AvecCadence(rythme)); err != nil {
 		t.Fatalf("la page devait être récupérée : %v", err)
 	}
-	return page.DelaiAnnonce
+	return rythme.delaiRapporte()
 }
 
 func TestLeCrawlDelayAnnonce(t *testing.T) {
