@@ -15,6 +15,7 @@ import (
 	"github.com/pocketbase/pocketbase/tools/filesystem"
 	"github.com/pocketbase/pocketbase/tools/hook"
 	"github.com/pocketbase/pocketbase/tools/router"
+	"github.com/pocketbase/pocketbase/tools/search"
 )
 
 // --- La liste et la recherche ----------------------------------------------
@@ -40,6 +41,13 @@ const pageMax = 1 << 20
 type criteres struct {
 	Terme string
 	Page  int
+
+	// Saison porte la valeur d'URL reconnue — l'une des quatre, ou
+	// « maintenant » —, et "" quand le paramètre est absent ou hors table.
+	// La valeur d'URL et non la valeur stockée : c'est elle que les liens
+	// réécrivent, et « maintenant » doit y rester « maintenant » pour qu'une
+	// page mise en favori suive le calendrier.
+	Saison string
 }
 
 // lisLesCriteres est le seul endroit où la chaîne de requête est lue.
@@ -58,9 +66,19 @@ func lisLesCriteres(r *http.Request) criteres {
 		page = pageMax
 	}
 
+	// Une saison hors table est ignorée plutôt que rendue en liste vide : à la
+	// différence d'un slug de tag, l'ensemble est fermé et connu à la
+	// compilation, donc la valeur ne peut être qu'une URL tapée de travers.
+	// Même traitement que le page malmené ci-dessus.
+	saison := requete.Get("saison")
+	if valeurDeLaSaison(saison) == "" {
+		saison = ""
+	}
+
 	return criteres{
-		Terme: strings.TrimSpace(requete.Get("q")),
-		Page:  page,
+		Terme:  strings.TrimSpace(requete.Get("q")),
+		Page:   page,
+		Saison: saison,
 	}
 }
 
@@ -73,6 +91,9 @@ func (c criteres) lien(page int) string {
 	if c.Terme != "" {
 		valeurs.Set("q", c.Terme)
 	}
+	if c.Saison != "" {
+		valeurs.Set("saison", c.Saison)
+	}
 	if page > 1 {
 		valeurs.Set("page", strconv.Itoa(page))
 	}
@@ -81,6 +102,17 @@ func (c criteres) lien(page int) string {
 		return "/recettes"
 	}
 	return "/recettes?" + valeurs.Encode()
+}
+
+// sousLaSaison rend le lien de la même liste sous une autre saison — ou sans
+// saison, pour ""  —, ramenée à sa première page.
+//
+// Ramenée à la première page délibérément : changer de filtre change les rangs,
+// et rester à la page 3 en désignerait une autre. Le terme de recherche, lui,
+// est conservé — c'est le seul autre critère que la liste porte.
+func (c criteres) sousLaSaison(saison string) string {
+	c.Saison = saison
+	return c.lien(1)
 }
 
 // vignette : ce qu'une case de la grille affiche, et rien de plus.
@@ -103,6 +135,20 @@ type donneesRecettes struct {
 	CarnetVide bool
 	Precedente string
 	Suivante   string
+
+	// Saison est la valeur d'URL du filtre, celle que le champ caché emporte
+	// avec la recherche. Vide quand aucun filtre n'est posé — et c'est alors
+	// tout le bloc du filtre actif qui disparaît, sans libellé orphelin.
+	Saison string
+
+	// SaisonNommee est la même sous son nom accentué : « été », pas « ete ».
+	// Sous « maintenant », c'est la saison du jour qui se nomme.
+	SaisonNommee string
+
+	// DeSaison mène au filtre du jour, SansSaison l'enlève. Les deux
+	// conservent le terme de recherche.
+	DeSaison   string
+	SansSaison string
 }
 
 // pageListeRecettes rend la liste des recettes : la page d'accueil de l'outil,
@@ -145,9 +191,15 @@ func pageListeRecettes(e *core.RequestEvent) error {
 		// Le carnet vide se distingue de la recherche sans résultat : les
 		// confondre afficherait « votre carnet est vide » à quelqu'un qui a
 		// simplement mal orthographié un mot. Il se déduit sans compter :
-		// la première page, sans terme, ne peut être vide que si le carnet
-		// l'est.
-		CarnetVide: len(vignettes) == 0 && criteres.Terme == "" && criteres.Page == 1,
+		// la première page, sans critère, ne peut être vide que si le carnet
+		// l'est. Sans critère, et non sans terme — un filtre de saison écarte
+		// des recettes tout autant qu'une recherche.
+		CarnetVide: len(vignettes) == 0 && criteres.Terme == "" && criteres.Saison == "" && criteres.Page == 1,
+
+		Saison:       criteres.Saison,
+		SaisonNommee: valeurDeLaSaison(criteres.Saison),
+		DeSaison:     criteres.sousLaSaison("maintenant"),
+		SansSaison:   criteres.sousLaSaison(""),
 	}
 	if criteres.Page > 1 {
 		donnees.Precedente = criteres.lien(criteres.Page - 1)
@@ -176,6 +228,10 @@ func recettesDuRang(app core.App, criteres criteres) ([]*core.Record, error) {
 			AndWhere(dbx.NewExp("recipes_fts MATCH {:q}", dbx.Params{"q": motif}))
 	}
 
+	if err := restreintALaSaison(app, requete, valeurDeLaSaison(criteres.Saison)); err != nil {
+		return nil, err
+	}
+
 	recettes := []*core.Record{}
 	err := requete.
 		OrderBy("recipes.created DESC").
@@ -183,6 +239,55 @@ func recettesDuRang(app core.App, criteres criteres) ([]*core.Record, error) {
 		Offset(int64((criteres.Page - 1) * parPage)).
 		All(&recettes)
 	return recettes, err
+}
+
+// filtreDeSaison : « au moins une des saisons vaut, ou aucune n'est marquée ».
+//
+// Trois des quatre écritures plausibles ne lèvent aucune erreur et se
+// trompent en silence, d'où ce commentaire — les quatre ont été exécutées sur
+// PocketBase v0.39.11 :
+//
+//   - « seasons = {:s} » et « seasons ?= {:s} » ne ramènent jamais rien : sur
+//     un select multi-valué, ?= n'est pas l'opérateur « au moins une » qu'il
+//     est sur une relation ;
+//   - « seasons ~ {:s} » ramène, mais par LIKE sur le JSON stocké ;
+//   - « seasons:each = {:s} » veut dire « toutes les saisons valent », et perd
+//     donc la recette d'automne et d'hiver cherchée en hiver.
+//
+// La seconde moitié dit « de toute l'année » : une recette dont le champ n'a
+// jamais été renseigné stocke [], et c'est seasons:length = 0 qui la reconnaît
+// — « seasons = ” » ne ramène rien.
+const filtreDeSaison = "seasons:each ?= {:saison} || seasons:length = 0"
+
+// restreintALaSaison ajoute le critère de saison à la requête, ou ne fait rien
+// si aucune saison n'est retenue.
+//
+// Le filtre passe par le langage de filtre de PocketBase et son résolveur,
+// comme le ferait FindRecordsByFilter, plutôt que par du SQL réécrit à la
+// main : c'est l'expression ci-dessus qui a été vérifiée, et c'est elle qui
+// part telle quelle. UpdateQuery attache ensuite la jointure que :each demande.
+//
+// La valeur rejoint la requête par dbx.Params, jamais par concaténation. Sans
+// risque de joker ici — ?= est une égalité, pas un LIKE — mais la règle ne se
+// relâche pas pour autant.
+func restreintALaSaison(app core.App, requete *dbx.SelectQuery, saison string) error {
+	if saison == "" {
+		return nil
+	}
+
+	recettes, err := app.FindCollectionByNameOrId("recipes")
+	if err != nil {
+		return fmt.Errorf("collection recipes : %w", err)
+	}
+
+	resolveur := core.NewRecordFieldResolver(app, recettes, nil, false)
+	expression, err := search.FilterData(filtreDeSaison).BuildExpr(resolveur, dbx.Params{"saison": saison})
+	if err != nil {
+		return fmt.Errorf("filtre de saison : %w", err)
+	}
+
+	requete.AndWhere(expression)
+	return resolveur.UpdateQuery(requete)
 }
 
 // motifDeRecherche traduit le terme saisi en requête FTS5, ou rend "" si le

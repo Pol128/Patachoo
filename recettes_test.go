@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -81,6 +82,7 @@ type recetteVoulue struct {
 	titre       string
 	typeDePlat  string
 	tags        []string
+	saisons     []string
 	ingredients []string
 	avecImage   bool
 	cree        time.Time
@@ -106,6 +108,12 @@ func creeRecette(t *testing.T, app core.App, voulue recetteVoulue) *core.Record 
 	}
 	if len(voulue.tags) > 0 {
 		enregistrement.Set("tags", identifiants(creeTags(t, app, voulue.tags)))
+	}
+	// Les saisons sont un select, pas une relation : les valeurs accentuées du
+	// schéma s'écrivent directement. Une liste vide est le cas normal — c'est
+	// celui des recettes importées.
+	if len(voulue.saisons) > 0 {
+		enregistrement.Set("seasons", voulue.saisons)
 	}
 	if voulue.avecImage {
 		enregistrement.Set("image", imageDeTest(t))
@@ -762,6 +770,290 @@ func TestAvecSessionLeCarnetEstRendu(t *testing.T) {
 	corps := listeDe(t, mux, cookie, "/recettes")
 
 	exigeContient(t, corps, "Tarte aux pommes")
+}
+
+// --- Le filtre par saison (PATA-18) ----------------------------------------
+
+// carnetDesSaisons sème les quatre cas que le filtre doit distinguer : une
+// recette à deux saisons dont une seule correspondra, une recette d'une autre
+// saison, et une recette sans aucune saison — celle des imports.
+func carnetDesSaisons(t *testing.T, app core.App) {
+	t.Helper()
+
+	creeRecette(t, app, recetteVoulue{titre: "Soupe de courge", saisons: []string{"automne", "hiver"}})
+	creeRecette(t, app, recetteVoulue{titre: "Salade de tomates", saisons: []string{"été"}})
+	creeRecette(t, app, recetteVoulue{titre: "Pain perdu"})
+}
+
+// horlogeFixee remplace la couture de date le temps d'un test. Sans elle,
+// « de saison » ne se testerait qu'au mois où le test tourne.
+func horlogeFixee(t *testing.T, date time.Time) {
+	t.Helper()
+
+	precedente := horloge
+	horloge = func() time.Time { return date }
+	t.Cleanup(func() { horloge = precedente })
+}
+
+// titresPresents rend, dans l'ordre donné, ceux des titres que la page porte :
+// c'est le jeu de recettes rendu, et c'est sur lui que deux listes se
+// comparent.
+func titresPresents(corps string, titres ...string) []string {
+	presents := []string{}
+	for _, titre := range titres {
+		if strings.Contains(corps, titre) {
+			presents = append(presents, titre)
+		}
+	}
+	return presents
+}
+
+// Le cœur du filtre : « au moins une des saisons vaut ». Une recette d'automne
+// et d'hiver sort en hiver. Écrit avec « seasons:each = », qui veut dire
+// « toutes les saisons valent », elle disparaîtrait.
+func TestLeFiltreRamneUneRecetteDontUneSeuleSaisonCorrespond(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	carnetDesSaisons(t, app)
+
+	corps := listeDe(t, mux, cookie, "/recettes?saison=hiver")
+
+	exigeContient(t, corps, "Soupe de courge")
+}
+
+func TestLeFiltreEcarteUneRecetteDUneAutreSaison(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	carnetDesSaisons(t, app)
+
+	corps := listeDe(t, mux, cookie, "/recettes?saison=hiver")
+
+	exigeSansAucun(t, corps, "Salade de tomates")
+}
+
+// « Aucune saison » vaut « toute l'année », et sort donc sous n'importe quelle
+// saison. Les recettes importées arriveront toutes ainsi : un filtre qui les
+// exclurait viderait le carnet. Les deux saisons, parce qu'un test qui ne
+// porterait que sur l'une pourrait passer sur une comparaison de hasard.
+func TestUneRecetteSansSaisonEstDeTouteLAnnee(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	carnetDesSaisons(t, app)
+
+	for _, cible := range []string{"/recettes?saison=hiver", "/recettes?saison=printemps"} {
+		exigeContient(t, listeDe(t, mux, cookie, cible), "Pain perdu")
+	}
+}
+
+// Le piège de l'opérateur : « seasons ~ {:s} » filtrerait par LIKE sur le JSON
+// stocké, et « seasons ?= {:s} » sans :each ne ramènerait rien du tout.
+func TestLeFiltreNeRapprochePasDeuxSaisonsDifferentes(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	carnetDesSaisons(t, app)
+
+	corps := listeDe(t, mux, cookie, "/recettes?saison=ete")
+
+	exigeSansAucun(t, corps, "Soupe de courge")
+}
+
+// Sans accent dans l'URL, avec accent en base : c'est toute la raison d'être de
+// la table.
+func TestLaSaisonSEcritSansAccentDansLURL(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	carnetDesSaisons(t, app)
+
+	corps := listeDe(t, mux, cookie, "/recettes?saison=ete")
+
+	exigeContient(t, corps, "Salade de tomates")
+}
+
+// « De saison » se cale sur la date du jour, et non sur une saison figée dans
+// l'URL : la comparaison porte sur le jeu de recettes rendu, seul point où les
+// deux listes doivent coïncider — l'URL du filtre, elle, reste « maintenant ».
+func TestMaintenantVautLaSaisonDuJour(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	carnetDesSaisons(t, app)
+	// La soupe porte automne et hiver : sur le seul carnet de la fixture, les
+	// deux saisons rendent la même chose, et l'égalité ci-dessous se
+	// vérifierait sous une horloge fausse. Cette recette-ci les sépare.
+	creeRecette(t, app, recetteVoulue{titre: "Gratin de potiron", saisons: []string{"automne"}})
+	horlogeFixee(t, time.Date(2026, time.November, 12, 9, 0, 0, 0, time.UTC))
+
+	const soupe, gratin, salade, pain = "Soupe de courge", "Gratin de potiron", "Salade de tomates", "Pain perdu"
+	rendus := func(cible string) []string {
+		return titresPresents(listeDe(t, mux, cookie, cible), soupe, gratin, salade, pain)
+	}
+
+	maintenant, automne, hiver := rendus("/recettes?saison=maintenant"), rendus("/recettes?saison=automne"), rendus("/recettes?saison=hiver")
+
+	if !slices.Equal(maintenant, automne) {
+		t.Errorf("« maintenant » en novembre rend %q, « automne » rend %q", maintenant, automne)
+	}
+	if slices.Equal(automne, hiver) {
+		t.Fatalf("automne et hiver rendent tous deux %q : l'égalité ci-dessus ne prouverait rien", automne)
+	}
+}
+
+// Une valeur hors table ne peut être qu'une URL tapée de travers : le critère
+// est ignoré, le carnet entier est rendu, et le filtre s'affiche comme
+// inactif. Même traitement que le « page » malmené de PATA-13.
+func TestUneSaisonInconnueRendLeCarnetEntier(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	carnetDesSaisons(t, app)
+
+	for _, cible := range []string{"/recettes?saison=nexistepas", "/recettes?saison="} {
+		corps := listeDe(t, mux, cookie, cible)
+
+		exigeContient(t, corps, "Soupe de courge", "Salade de tomates", "Pain perdu")
+		if strings.Contains(corps, "filtre-saison") {
+			t.Errorf("%s affiche un filtre actif :\n%s", cible, corps)
+		}
+	}
+}
+
+// Deux recettes que la recherche ramène, une seule saison partagée : c'est la
+// combinaison des deux critères, et non l'un qui écraserait l'autre. Aucune
+// des deux n'est sans saison, sinon elle sortirait dans tous les cas.
+func TestLaSaisonEtLaRechercheSeCombinent(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	creeRecette(t, app, recetteVoulue{titre: "Tarte aux pommes", saisons: []string{"automne"}})
+	creeRecette(t, app, recetteVoulue{titre: "Tarte aux fraises", saisons: []string{"été"}})
+
+	corps := listeDe(t, mux, cookie, "/recettes?q=tarte&saison=automne")
+
+	exigeContient(t, corps, "Tarte aux pommes")
+	exigeSansAucun(t, corps, "Tarte aux fraises")
+}
+
+// La pagination s'écrit à partir des critères lus, et non d'une liste de
+// paramètres recopiée à la main : c'est ce qui fait qu'un critère de plus
+// n'oblige pas à la reprendre.
+func TestLaSaisonEtLaPaginationSeCombinent(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	vingtCinqRecettes(t, app)
+	creeRecette(t, app, recetteVoulue{titre: "Cassoulet", saisons: []string{"hiver"}, cree: instant(100)})
+
+	corps := listeDe(t, mux, cookie, "/recettes?q=numero&saison=hiver")
+
+	// Les vingt-cinq recettes de la fixture sont sans saison, donc de toute
+	// l'année : elles restent paginées sous un filtre de saison.
+	if compte := strings.Count(corps, "Recette numero "); compte != 24 {
+		t.Errorf("%d vignettes, attendu 24", compte)
+	}
+	exigeContient(t, corps, `rel="next" href="/recettes?page=2&amp;q=numero&amp;saison=hiver"`)
+
+	seconde := listeDe(t, mux, cookie, "/recettes?q=numero&saison=hiver&page=2")
+	exigeContient(t, seconde, numero(0), `rel="prev" href="/recettes?q=numero&amp;saison=hiver"`)
+}
+
+// « De saison » doit tenir en un clic, et pointer « maintenant » plutôt qu'une
+// saison figée : une URL mise en favori en décembre doit encore dire « de
+// saison » en juin.
+func TestLaListePorteLeLienDeSaison(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	carnetDesSaisons(t, app)
+
+	exigeContient(t, listeDe(t, mux, cookie, "/recettes"), `href="/recettes?saison=maintenant"`)
+	exigeContient(t, listeDe(t, mux, cookie, "/recettes?q=courge"),
+		`href="/recettes?q=courge&amp;saison=maintenant"`)
+}
+
+// Un filtre posé d'un clic doit avoir une sortie, et se nommer sous son nom
+// accentué — « été », pas « ete ».
+func TestLeFiltreActifSeNommeEtSeRetire(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	carnetDesSaisons(t, app)
+
+	corps := listeDe(t, mux, cookie, "/recettes?q=salade&saison=ete")
+
+	exigeContient(t, corps, "été", `href="/recettes?q=salade"`)
+}
+
+func TestUnFiltreInconnuNOffrePasDeRetrait(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	carnetDesSaisons(t, app)
+
+	corps := listeDe(t, mux, cookie, "/recettes?q=salade&saison=nexistepas")
+
+	exigeSansAucun(t, corps, `href="/recettes?q=salade"`)
+}
+
+// Sans ça, taper une lettre dans le champ de recherche annulerait le filtre
+// qu'on vient de poser. Le test ne se contente pas de lire l'attribut : il
+// rejoue la requête que la page décrit, et vérifie qu'elle rend le fragment
+// filtré.
+func TestLaRechercheConserveLeFiltreDeSaison(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	carnetDesSaisons(t, app)
+
+	corps := listeDe(t, mux, cookie, "/recettes?saison=ete")
+	exigeContient(t, corps, `hx-include="#saison"`, `name="saison"`, `value="ete"`)
+
+	rec := demande(mux, "/recettes?q=&saison=ete", cookie, map[string]string{"HX-Request": "true"})
+	fragment := rec.Body.String()
+
+	exigeContient(t, fragment, "Salade de tomates")
+	exigeSansAucun(t, fragment, "Soupe de courge")
+}
+
+func TestHTMXNeRecoitQueLeFragmentFiltre(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	carnetDesSaisons(t, app)
+
+	rec := demande(mux, "/recettes?saison=ete", cookie, map[string]string{"HX-Request": "true"})
+	corps := rec.Body.String()
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("statut %d, attendu %d", rec.Code, http.StatusOK)
+	}
+	exigeSansAucun(t, corps, "<html", "<body", "Soupe de courge")
+	exigeContient(t, corps, "Salade de tomates")
+}
+
+// Le critère de saison ne doit pas ouvrir une porte que PATA-13 a fermée
+// (DOD.md §3).
+func TestSansSessionLeFiltreDeSaisonNeRendRien(t *testing.T) {
+	app, mux := serveurDeTest(t)
+	carnetDesSaisons(t, app)
+
+	rec := demande(mux, "/recettes?saison=hiver", nil, nil)
+
+	if rec.Code != http.StatusFound {
+		t.Errorf("statut %d, attendu %d", rec.Code, http.StatusFound)
+	}
+	if lieu := rec.Header().Get("Location"); lieu != "/connexion" {
+		t.Errorf("Location %q, attendu %q", lieu, "/connexion")
+	}
+	exigeSansAucun(t, rec.Body.String(), "Soupe de courge", "Salade de tomates", "Pain perdu")
+}
+
+// La valeur ne ressort échappée nulle part parce qu'elle ne ressort pas du
+// tout : une saison hors table est ignorée, et rien de ce paramètre n'est
+// réaffiché (DOD.md §3).
+func TestLaSaisonNEstJamaisReaffichee(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	carnetDesSaisons(t, app)
+
+	corps := listeDe(t, mux, cookie, "/recettes?"+url.Values{"saison": {`<script>alert(1)</script>`}}.Encode())
+
+	exigeSansAucun(t, corps,
+		"<script>alert(1)</script>",
+		"&lt;script&gt;alert(1)&lt;/script&gt;",
+		"alert(1)",
+	)
+}
+
+// La distinction que PATA-13 pose entre le carnet vide et l'absence de
+// résultat vaut pour le nouveau critère : un filtre de saison qui ne ramène
+// rien n'est pas un carnet vide, et proposer « ajoutez votre première recette »
+// à qui en a déjà dix serait aussi faux ici que sur une recherche.
+func TestUnFiltreSansResultatNEstPasUnCarnetVide(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	creeRecette(t, app, recetteVoulue{titre: "Salade de tomates", saisons: []string{"été"}})
+
+	corps := listeDe(t, mux, cookie, "/recettes?saison=hiver")
+
+	exigeContient(t, corps, "Aucune recette")
+	if strings.Contains(corps, "carnet est vide") {
+		t.Errorf("l'invitation du carnet vide s'affiche sous un filtre de saison :\n%s", corps)
+	}
 }
 
 // --- Le formulaire de création et d'édition --------------------------------
