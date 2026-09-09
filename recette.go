@@ -39,6 +39,19 @@ type donneesRecette struct {
 type fait struct {
 	Libelle string
 	Valeur  string
+
+	// Liens porte les valeurs qui mènent quelque part — les saisons, qui
+	// renvoient à la liste filtrée. Le gabarit rend celles-ci quand elles
+	// existent, et Valeur sinon : un fait est de l'un ou l'autre genre, jamais
+	// des deux.
+	Liens []lienDeFait
+}
+
+// lienDeFait est une valeur du bandeau doublée de sa destination. Texte reste
+// ce qui se lit — le nom accentué de la saison —, URL ce qui se tape.
+type lienDeFait struct {
+	URL   string
+	Texte string
 }
 
 // source est le site d'où la recette vient.
@@ -172,8 +185,12 @@ func faitsDeLaRecette(recette *core.Record) []fait {
 		ajoute("Type de plat", typeDePlat.GetString("name"))
 	}
 	// seasons est un select, pas une relation : sa valeur se lit directement,
-	// sans passer par l'expansion.
-	ajoute("Saisons", strings.Join(recette.GetStringSlice("seasons"), ", "))
+	// sans passer par l'expansion. Chaque saison mène à la liste filtrée, et
+	// faute d'aucune le libellé disparaît comme celui de toute donnée
+	// manquante.
+	if liens := liensDesSaisons(recette.GetStringSlice("seasons")); len(liens) > 0 {
+		faits = append(faits, fait{Libelle: "Saisons", Liens: liens})
+	}
 	ajoute("Tags", strings.Join(nomsDe(recette.ExpandedAll("tags")), ", "))
 
 	// Le nom, et rien d'autre : l'auteur d'une recette est un autre compte que
@@ -187,6 +204,22 @@ func faitsDeLaRecette(recette *core.Record) []fait {
 	}
 
 	return faits
+}
+
+// liensDesSaisons traduit les saisons stockées en liens vers la liste filtrée.
+//
+// Une valeur que la table ne connaît pas est écartée plutôt que rendue sans
+// lien : le schéma restreint le champ aux quatre valeurs de la table, et un
+// test interdit que les deux divergent. Fabriquer un lien vers une saison qui
+// n'existe pas serait pire que de ne rien afficher.
+func liensDesSaisons(saisons []string) []lienDeFait {
+	var liens []lienDeFait
+	for _, saison := range saisons {
+		if adresse := urlDeLaSaison(saison); adresse != "" {
+			liens = append(liens, lienDeFait{URL: "/recettes?saison=" + adresse, Texte: saison})
+		}
+	}
+	return liens
 }
 
 // sourceDeLaRecette rend le bloc de source, ou nil : les deux champs sont vides
