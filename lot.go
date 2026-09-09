@@ -60,9 +60,7 @@ type donneesLot struct {
 	donneesPage
 	Disclaimer []string
 	Saisie     string
-	Retenues   int
 	Ecartees   []ligneEcartee
-	Tag        string
 
 	// Suivi est le fragment vivant que la confirmation porte, et il n'est
 	// rempli que par elle : c'est le point d'accroche par lequel la
@@ -111,7 +109,9 @@ func lanceLeLot(e *core.RequestEvent) error {
 		return rendLaSaisie(e, saisie, err.Error())
 	}
 
-	lot, tag, err := creeLeLot(e.App, e.Auth, retenues, time.Now())
+	// Le tag n'est pas relu ici : c'est le suivi qui le nomme, et qui y
+	// renvoie.
+	lot, _, err := creeLeLot(e.App, e.Auth, retenues, time.Now())
 	if err != nil {
 		return err
 	}
@@ -128,9 +128,7 @@ func lanceLeLot(e *core.RequestEvent) error {
 
 	return rendre(e, "import-lot-resultat.html", "import-lot-resultat-corps.html", &donneesLot{
 		donneesPage: donneesPage{Titre: "Import en lot — Patachoo"},
-		Retenues:    len(retenues),
 		Ecartees:    ecartees,
-		Tag:         tag.GetString("name"),
 		Suivi:       suivi,
 	}, "import-lot-suivi-corps.html")
 }
