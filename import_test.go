@@ -32,7 +32,7 @@ const urlSource = "https://fourneaux-de-perlimpinpin.example/recettes/gratin"
 // tâche-là a ses propres tests — SSRF, délai, taille, redirections — et les
 // refaire ici les ferait diverger. Ce qui se vérifie de ce côté de la
 // frontière, c'est ce que l'import fait de ce que PATA-8 lui rend.
-func avecRecuperateur(t *testing.T, aller func(context.Context, string) (recuperation.Page, error)) {
+func avecRecuperateur(t *testing.T, aller func(context.Context, string, ...recuperation.Option) (recuperation.Page, error)) {
 	t.Helper()
 
 	precedent := recuperePage
@@ -46,7 +46,7 @@ func avecRecuperateur(t *testing.T, aller func(context.Context, string) (recuper
 func reseauPiege(t *testing.T) {
 	t.Helper()
 
-	avecRecuperateur(t, func(_ context.Context, adresse string) (recuperation.Page, error) {
+	avecRecuperateur(t, func(_ context.Context, adresse string, _ ...recuperation.Option) (recuperation.Page, error) {
 		t.Errorf("une requête sortante est partie vers %q", adresse)
 		return recuperation.Page{}, errors.New("le réseau ne devait pas être touché")
 	})
@@ -56,7 +56,7 @@ func reseauPiege(t *testing.T) {
 func sert(t *testing.T, corps []byte, urlFinale string) {
 	t.Helper()
 
-	avecRecuperateur(t, func(_ context.Context, _ string) (recuperation.Page, error) {
+	avecRecuperateur(t, func(_ context.Context, _ string, _ ...recuperation.Option) (recuperation.Page, error) {
 		return recuperation.Page{Corps: corps, URLFinale: urlFinale, TypeContenu: "text/html"}, nil
 	})
 }
@@ -65,7 +65,7 @@ func sert(t *testing.T, corps []byte, urlFinale string) {
 func echoue(t *testing.T, err error) {
 	t.Helper()
 
-	avecRecuperateur(t, func(_ context.Context, _ string) (recuperation.Page, error) {
+	avecRecuperateur(t, func(_ context.Context, _ string, _ ...recuperation.Option) (recuperation.Page, error) {
 		return recuperation.Page{}, err
 	})
 }
