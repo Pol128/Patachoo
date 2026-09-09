@@ -404,7 +404,11 @@ func pageListeRecettes(e *core.RequestEvent) error {
 	// un type que la page a écarté.
 	if criteres.Tag != "" {
 		donnees.Tag = criteres.Tag
-		donnees.NomDuTag = nomDuTag(e.App, criteres.Tag)
+		nom, err := nomDuTag(e.App, criteres.Tag)
+		if err != nil {
+			return err
+		}
+		donnees.NomDuTag = nom
 		donnees.SansTag = liens.sansTag().lien(1)
 	}
 	if criteres.Page > 1 {

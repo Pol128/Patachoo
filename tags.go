@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"net/url"
 	"strings"
 
 	"github.com/pocketbase/dbx"
@@ -299,17 +298,29 @@ func liensDesTags(tags []*core.Record) []lienDeFait {
 }
 
 // lienVersLeTag rend l'adresse de la liste restreinte à ce tag.
+//
+// Par criteres, comme lienDeFiltreParType : toutes les adresses de la liste
+// s'écrivent en un seul endroit, faute de quoi elles divergeront le jour où la
+// route bouge ou celui où un paramètre s'ajoute par défaut. Sans terme ni
+// page — la fiche et les vignettes n'ont aucun critère courant à conserver.
 func lienVersLeTag(slug string) string {
-	return "/recettes?" + url.Values{"tag": {slug}}.Encode()
+	return criteres{Tag: slug}.lien(1)
 }
 
 // nomDuTag rend le nom porté par ce slug, ou le slug lui-même s'il n'en
 // désigne aucun : la liste nomme ce qu'on lui a demandé de filtrer, même quand
 // la demande ne correspond à rien.
-func nomDuTag(app core.App, slug string) string {
+//
+// L'absence de résultat, et elle seule, replie sur le slug. Une panne de
+// lecture remonte : repliée elle aussi, elle rendrait une page normale dont le
+// bandeau nomme le slug comme si le tag n'existait pas.
+func nomDuTag(app core.App, slug string) (string, error) {
 	tag, err := app.FindFirstRecordByFilter("tags", "slug = {:slug}", dbx.Params{"slug": slug})
-	if err != nil {
-		return slug
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return slug, nil
+	case err != nil:
+		return "", fmt.Errorf("tag filtré %q : %w", slug, err)
 	}
-	return tag.GetString("name")
+	return tag.GetString("name"), nil
 }
