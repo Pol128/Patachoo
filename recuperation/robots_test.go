@@ -1,6 +1,7 @@
 package recuperation
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -169,8 +170,19 @@ func TestRobotsTropLent(t *testing.T) {
 // requêtes de ce que l'hôte demande, et il ne peut le faire que si on le lui
 // dit.
 
+// cadenceMuette note ce qu'on lui rapporte et ne fait attendre personne : les
+// tests de ce paquet mesurent ce qui est lu, pas ce qui est respecté.
+type cadenceMuette struct {
+	delai time.Duration
+}
+
+func (c *cadenceMuette) AttendSonTour(context.Context, string) error { return nil }
+
+func (c *cadenceMuette) Retiens(_ string, annonce time.Duration) { c.delai = annonce }
+
 // delaiAnnoncePar rend le Crawl-delay que ce robots.txt nous adresse, tel que
-// l'appelant le lira sur la page récupérée.
+// l'appelant l'apprend — par sa cadence, seul chemin par lequel ce paquet le
+// rapporte.
 func delaiAnnoncePar(t *testing.T, robots string) time.Duration {
 	t.Helper()
 
@@ -178,11 +190,11 @@ func delaiAnnoncePar(t *testing.T, robots string) time.Duration {
 		fmt.Fprint(w, "page")
 	})
 
-	page, err := recupere(t, srv.URL+"/recettes/tarte", autorise(srv))
-	if err != nil {
+	lue := &cadenceMuette{}
+	if _, err := recupere(t, srv.URL+"/recettes/tarte", autorise(srv), AvecCadence(lue)); err != nil {
 		t.Fatalf("la page devait être récupérée : %v", err)
 	}
-	return page.DelaiAnnonce
+	return lue.delai
 }
 
 func TestLeCrawlDelayAnnonce(t *testing.T) {

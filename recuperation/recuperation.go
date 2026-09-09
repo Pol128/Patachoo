@@ -67,11 +67,6 @@ type Page struct {
 	Corps       []byte
 	URLFinale   string
 	TypeContenu string
-	// DelaiAnnonce est le Crawl-delay que le robots.txt de l'hôte demande, ou
-	// zéro s'il n'en demande pas. Ce paquet le lit et ne l'applique pas : il va
-	// chercher une page, il n'en enchaîne pas. C'est l'appelant qui enchaîne
-	// — l'import en lot — qui espace ses requêtes de ce que l'hôte réclame.
-	DelaiAnnonce time.Duration
 }
 
 // Erreur porte la cause nommée, le code HTTP quand il y en a eu un, et l'URL sur
@@ -268,9 +263,6 @@ type recuperateur struct {
 	o      options
 	client *http.Client
 	refus  *Erreur
-	// delaiAnnonce est retenu à la lecture du robots.txt, et reporté sur la
-	// page rendue.
-	delaiAnnonce time.Duration
 }
 
 // pile monte le transport HTTP. Le proxy est retiré : un proxy déclaré dans
@@ -458,10 +450,9 @@ func (r *recuperateur) page(ctx context.Context, cible *url.URL) (Page, error) {
 	}
 
 	return Page{
-		Corps:        corps,
-		URLFinale:    finale,
-		TypeContenu:  reponse.Header.Get("Content-Type"),
-		DelaiAnnonce: r.delaiAnnonce,
+		Corps:       corps,
+		URLFinale:   finale,
+		TypeContenu: reponse.Header.Get("Content-Type"),
 	}, nil
 }
 
@@ -481,14 +472,13 @@ func (r *recuperateur) robotsInterdit(ctx context.Context, cible *url.URL) *Erre
 		return &Erreur{Cause: RobotsInterdit, URL: cible.String()}
 	}
 
-	// Retenu même quand rien n'est interdit : c'est le cas ordinaire, et c'est
-	// justement là qu'un appelant qui enchaîne en a besoin.
-	r.delaiAnnonce = dit.regles.delaiPour(Agent)
-	// Rapporté maintenant, avant la requête de page : un Crawl-delay appris
-	// puis rapporté après coup ne vaudrait qu'à partir de la page suivante, et
-	// celle-ci partirait à notre rythme et non à celui du site.
+	// Rapporté même quand rien n'est interdit : c'est le cas ordinaire, et
+	// c'est justement là qu'un appelant qui enchaîne en a besoin. Rapporté
+	// maintenant, avant la requête de page : appris puis rapporté après coup,
+	// le Crawl-delay ne vaudrait qu'à partir de la page suivante, et celle-ci
+	// partirait à notre rythme et non à celui du site.
 	if r.o.cadence != nil {
-		r.o.cadence.Retiens(strings.ToLower(cible.Hostname()), r.delaiAnnonce)
+		r.o.cadence.Retiens(strings.ToLower(cible.Hostname()), dit.regles.delaiPour(Agent))
 	}
 	return nil
 }
@@ -497,9 +487,10 @@ func (r *recuperateur) robotsInterdit(ctx context.Context, cible *url.URL) *Erre
 //
 // Ce qui se garde est la décision, pas la réponse : elle ne dépend plus du
 // chemin demandé, et c'est ce qui permet de la partager entre toutes les pages
-// d'un même hôte. Un robots.txt qui n'a pas été atteint, lui, ne se garde pas —
-// une panne de réseau passagère condamnerait tout l'hôte pour la durée de la
-// fournée.
+// d'un même hôte. Ne se gardent que les décisions que le site a rendues sur
+// lui-même — ses règles, ou l'absence de robots.txt. Ni le robots.txt qu'on n'a
+// pas atteint, ni celui qui a répondu en panne : les deux sont datés, et les
+// garder condamnerait l'hôte entier pour une seconde de dérangement.
 func (r *recuperateur) robotsDe(ctx context.Context, adresse string) (decisionRobots, *Erreur) {
 	if dit, vu := r.o.robots.lis(adresse); vu {
 		return dit, nil
@@ -509,7 +500,14 @@ func (r *recuperateur) robotsDe(ctx context.Context, adresse string) (decisionRo
 	if refus != nil {
 		return decisionRobots{}, refus
 	}
-	r.o.robots.garde(adresse, dit)
+	// Le refus né d'un serveur en panne ne se garde pas. Il est daté, pas
+	// définitif : gardé, une panne d'une seconde condamnerait l'hôte entier en
+	// robots_interdit — un sort définitif que rien ne rejoue — pour tous les
+	// lots, et jusqu'au redémarrage du processus. Ce qui se garde est ce que le
+	// site a dit de lui-même : ses règles, ou l'absence de robots.txt.
+	if !dit.interditTout {
+		r.o.robots.garde(adresse, dit)
+	}
 	return dit, nil
 }
 

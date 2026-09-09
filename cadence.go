@@ -79,6 +79,11 @@ type cadence struct {
 	// dernier est l'instant réservé par la requête précédente vers cet hôte,
 	// et non le prochain créneau : c'est ce qui permet à un Crawl-delay appris
 	// entre-temps de s'appliquer dès la requête suivante.
+	//
+	// Rien n'en sort : une entrée par hôte jamais visité deux fois pèse une
+	// clé et un instant, et le nombre d'hôtes distincts qu'une instance verra
+	// se compte en milliers, pas en millions. Une péremption coûterait plus
+	// cher à écrire et à tester que ce qu'elle rendrait.
 	dernier map[string]time.Time
 	// delais garde ce que chaque hôte a annoncé.
 	delais map[string]time.Duration

@@ -166,6 +166,10 @@ func (h *horlogeVirtuelle) sommetDesFiles() int {
 type reponseDuSite struct {
 	page recuperation.Page
 	err  error
+	// delaiAnnonce est le Crawl-delay que le robots.txt de l'hôte demande. Le
+	// faux tient lieu de recuperation, qui le lit dans le robots.txt et le
+	// rapporte à la cadence avant de demander la page.
+	delaiAnnonce time.Duration
 	// apres est joué une fois la réponse rendue. C'est par là qu'un test
 	// coupe le contexte au milieu d'un lot, là où l'arrêt du serveur le
 	// couperait.
@@ -222,7 +226,7 @@ func (s *siteFactice) recupere(ctx context.Context, adresse string, _ ...recuper
 	}
 	// Le Crawl-delay se lit dans le robots.txt, donc avant la page : c'est
 	// recuperation qui le rapporte, et le faux fait de même.
-	s.cadence.retiens(hote, rendue.page.DelaiAnnonce)
+	s.cadence.retiens(hote, rendue.delaiAnnonce)
 	if rendue.apres != nil {
 		rendue.apres()
 	}
@@ -260,7 +264,22 @@ type reseauFactice struct {
 	horloge *horlogeVirtuelle
 	mu      sync.Mutex
 	corps   map[string]string
-	vus     []appelSortant
+	// panne compte les requêtes qui doivent encore répondre 500 avant que
+	// cette adresse serve normalement. C'est la panne datée d'un serveur, pas
+	// son refus.
+	panne map[string]int
+	vus   []appelSortant
+}
+
+// tombeEnPanne fait répondre 500 aux n premières requêtes vers cette adresse.
+func (r *reseauFactice) tombeEnPanne(adresse string, n int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.panne == nil {
+		r.panne = map[string]int{}
+	}
+	r.panne[adresse] = n
 }
 
 func (r *reseauFactice) RoundTrip(requete *http.Request) (*http.Response, error) {
@@ -273,10 +292,17 @@ func (r *reseauFactice) RoundTrip(requete *http.Request) (*http.Response, error)
 		instant: r.horloge.Maintenant(),
 	})
 	corps, connu := r.corps[adresse]
+	enPanne := r.panne[adresse] > 0
+	if enPanne {
+		r.panne[adresse]--
+	}
 	r.mu.Unlock()
 
 	statut := http.StatusOK
-	if !connu {
+	switch {
+	case enPanne:
+		statut, corps = http.StatusInternalServerError, ""
+	case !connu:
 		statut = http.StatusNotFound
 	}
 	return &http.Response{
@@ -358,7 +384,7 @@ func sertLaPage(corps []byte, urlFinale string) reponseDuSite {
 
 // avecDelaiAnnonce ajoute à une réponse le Crawl-delay que l'hôte demande.
 func avecDelaiAnnonce(r reponseDuSite, delai time.Duration) reponseDuSite {
-	r.page.DelaiAnnonce = delai
+	r.delaiAnnonce = delai
 	return r
 }
 
@@ -614,6 +640,37 @@ func TestLeCrawlDelayVautDesLaPremierePage(t *testing.T) {
 	}
 	if ecart := appels[1].instant.Sub(appels[0].instant); ecart != 5*time.Second {
 		t.Errorf("page demandée %v après le robots.txt qui annonce Crawl-delay: 5, attendu 5s", ecart)
+	}
+}
+
+// TestUnRobotsEnPanneNeCondamnePasLHoteEntier : un robots.txt qui répond 500
+// fait renoncer — le REP demande de s'abstenir quand le serveur est en erreur —
+// mais cette réponse-là est datée, pas définitive.
+//
+// Retenue au même titre que des règles, une panne d'une seconde condamnerait
+// l'hôte entier en robots_interdit, sort définitif que rien ne rejoue, pour
+// tous les lots et jusqu'au redémarrage du processus.
+func TestUnRobotsEnPanneNeCondamnePasLHoteEntier(t *testing.T) {
+	app, titulaire, _, o := atelierDeLOuvrier(t)
+	urls := []string{"https://a.example/1", "https://a.example/2"}
+	reseau := avecReseau(t, o, siteServi("User-agent: *\nDisallow: /prive\n", urls...))
+	reseau.tombeEnPanne("https://a.example/robots.txt", 1)
+
+	lot := lotDe(t, app, titulaire, urls...)
+	traite(t, o, lot)
+
+	lignes := lignesDuLot(t, app, lot)
+	// La première paie la panne : sans robots.txt lisible, on s'abstient.
+	if statut := lignes[0].GetString("status"); statut != statutEchec {
+		t.Errorf("première ligne en %q, attendu %q", statut, statutEchec)
+	}
+	if cause := lignes[0].GetString("cause"); cause != recuperation.RobotsInterdit {
+		t.Errorf("cause %q, attendu %q", cause, recuperation.RobotsInterdit)
+	}
+	// La seconde ne la paie pas : le robots.txt est redemandé, il répond, et
+	// la page suit.
+	if statut := lignes[1].GetString("status"); statut != statutImportee {
+		t.Errorf("seconde ligne en %q, attendu %q : la panne du robots.txt a été retenue", statut, statutImportee)
 	}
 }
 
