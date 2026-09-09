@@ -553,3 +553,54 @@ func TestLaConfirmationDuLancementPorteLeSuivi(t *testing.T) {
 		t.Errorf("la confirmation ne porte pas la progression :\n%s", corps)
 	}
 }
+
+// --- Ce qui a disparu sous le rapport ---------------------------------------
+
+// Un tag supprimé depuis l'administration vide la relation : la fournée garde
+// son rapport, elle perd seulement le lien qui la retrouve. Une absence n'est
+// pas une panne.
+func TestLeRapportSeRendEncoreSansSonTag(t *testing.T) {
+	app, mux, cookie := atelierDeLot(t)
+	lot := clot(t, app, lotEnBase(t, app, leCompteDeLaSession(t, app),
+		ligneVoulue{url: "https://exemple.fr/1", statut: statutImportee},
+	))
+
+	tag, err := app.FindRecordById("tags", lot.GetString("tag"))
+	if err != nil {
+		t.Fatalf("tag du lot : %v", err)
+	}
+	if err := app.Delete(tag); err != nil {
+		t.Fatalf("suppression du tag : %v", err)
+	}
+
+	corps := suivi(t, mux, cookie, lot)
+	if !strings.Contains(corps, "Importées : <strong>1</strong>") {
+		t.Errorf("le rapport ne se rend plus sans son tag :\n%s", corps)
+	}
+	if strings.Contains(corps, `href="/recettes?tag=`) {
+		t.Errorf("le rapport renvoie à un tag supprimé :\n%s", corps)
+	}
+}
+
+// Une recette supprimée vide la relation de sa ligne : la progression se tait
+// sur la dernière entrée plutôt que de refuser de se rendre.
+func TestLaProgressionSeRendEncoreSansLaRecetteEntree(t *testing.T) {
+	app, mux, cookie := atelierDeLot(t)
+	entree := creeRecette(t, app, recetteVoulue{titre: "Tarte aux poireaux"})
+	lot := lotEnBase(t, app, leCompteDeLaSession(t, app),
+		ligneVoulue{url: "https://exemple.fr/1", statut: statutImportee, recette: entree},
+		ligneVoulue{url: "https://exemple.fr/2"},
+	)
+
+	if err := app.Delete(entree); err != nil {
+		t.Fatalf("suppression de la recette : %v", err)
+	}
+
+	corps := suivi(t, mux, cookie, lot)
+	if !strings.Contains(corps, "<strong>1</strong> adresses traitées sur <strong>2</strong>") {
+		t.Errorf("la progression ne se rend plus sans la recette entrée :\n%s", corps)
+	}
+	if strings.Contains(corps, "Dernière recette entrée") {
+		t.Errorf("la progression nomme une recette supprimée :\n%s", corps)
+	}
+}

@@ -139,7 +139,9 @@ func suiviDe(app core.App, lot *core.Record) (*donneesSuivi, error) {
 		Cadence:     cadenceDuSuivi,
 		Termine:     lot.GetString("status") == statutTermine,
 		Total:       len(lignes),
-		Tag:         tagDuLot(app, lot),
+	}
+	if donnees.Tag, err = tagDuLot(app, lot); err != nil {
+		return nil, err
 	}
 
 	if donnees.Termine {
@@ -157,20 +159,28 @@ func suiviDe(app core.App, lot *core.Record) (*donneesSuivi, error) {
 	return donnees, nil
 }
 
-// tagDuLot rend le nom du tag de la fournée et le lien vers la liste filtrée.
+// tagDuLot rend le nom du tag de la fournée et le lien vers la liste filtrée,
+// ou nil si la fournée n'en a plus.
 //
-// Un lot sans tag n'existe pas — creeLeLot en pose un dans la même transaction
-// —, mais un tag supprimé depuis l'administration, lui, se produit : le rapport
-// se rend alors sans lui plutôt que de refuser de se rendre.
-func tagDuLot(app core.App, lot *core.Record) *lienDeFait {
-	tag, err := app.FindRecordById("tags", lot.GetString("tag"))
+// creeLeLot en pose un dans la même transaction que le lot, mais un tag
+// supprimé depuis l'administration vide la relation : le rapport se rend alors
+// sans lui plutôt que de refuser de se rendre. L'absence, et elle seule — une
+// panne de lecture remonte, sous peine de rendre un rapport normal auquel il
+// manque son fil (PATA-44).
+func tagDuLot(app core.App, lot *core.Record) (*lienDeFait, error) {
+	id := lot.GetString("tag")
+	if id == "" {
+		return nil, nil
+	}
+
+	tag, err := app.FindRecordById("tags", id)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("tag du lot %s : %w", lot.Id, err)
 	}
 	return &lienDeFait{
 		URL:   lienVersLeTag(tag.GetString("slug")),
 		Texte: tag.GetString("name"),
-	}
+	}, nil
 }
 
 // traitees compte les lignes qui ont leur sort, quel qu'il soit : une adresse
@@ -219,6 +229,10 @@ func etatDuLot(app core.App, lot *core.Record) (string, error) {
 // La plus récemment écrite, et non la dernière de la liste : les files
 // progressent en parallèle, une par hôte, et l'ordre de saisie n'est pas
 // l'ordre d'arrivée.
+//
+// Une recette supprimée depuis vide la relation de sa ligne, qui est alors
+// sautée : la progression se tait sur la dernière entrée. Là encore, l'absence
+// seule est tolérée — une panne de lecture remonte.
 func derniereImportee(app core.App, lignes []*core.Record) (string, error) {
 	var derniere *core.Record
 	for _, ligne := range lignes {
@@ -235,9 +249,7 @@ func derniereImportee(app core.App, lignes []*core.Record) (string, error) {
 
 	recette, err := app.FindRecordById("recipes", derniere.GetString("recipe"))
 	if err != nil {
-		// La recette a été supprimée depuis : la ligne reste importée, et la
-		// progression se tait plutôt que de refuser de se rendre.
-		return "", nil
+		return "", fmt.Errorf("recette entrée par la ligne %s : %w", derniere.Id, err)
 	}
 	return recette.GetString("title"), nil
 }
