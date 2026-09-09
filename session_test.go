@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -168,13 +170,30 @@ func coupeLAuthentificationParMotDePasse(t *testing.T, app core.App) {
 	}
 }
 
+// ipDeTest est l'adresse que httptest.NewRequest pose d'elle-même sur toute
+// requête. La nommer ne change rien à ce que les tests exercent ; elle donne
+// seulement un nom à l'IP par défaut, maintenant que le plafond de débit de
+// PATA-39 compte par IP et que certains tests doivent en choisir une autre.
+const ipDeTest = "192.0.2.1"
+
 // seConnecte poste le formulaire de connexion.
 func seConnecte(t *testing.T, mux http.Handler, courriel, motDePasse string) *httptest.ResponseRecorder {
+	t.Helper()
+	return seConnecteDepuis(t, mux, ipDeTest, courriel, motDePasse)
+}
+
+// seConnecteDepuis poste le même formulaire, depuis l'adresse donnée.
+//
+// RealIP() retombe sur RemoteAddr tant que TrustedProxy.Headers est vide
+// (core/event_request.go), donc c'est bien cette adresse-là que le plafond de
+// débit compte.
+func seConnecteDepuis(t *testing.T, mux http.Handler, ip, courriel, motDePasse string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	champs := url.Values{"courriel": {courriel}, "mot-de-passe": {motDePasse}}
 	req := httptest.NewRequest(http.MethodPost, "/connexion", strings.NewReader(champs.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.RemoteAddr = net.JoinHostPort(ip, "1234")
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -190,13 +209,19 @@ func seConnecte(t *testing.T, mux http.Handler, courriel, motDePasse string) *ht
 // rouge intermittent — le bruit ne fait qu'ajouter du temps, jamais en
 // retrancher, donc il ne survit pas au minimum d'un tirage un peu large. Chaque mesure vérifie au passage que la
 // connexion a bien échoué — une réussite mesurerait un autre chemin.
+//
+// Une IP par mesure : le plafond de PATA-39 refuse la sixième tentative d'une
+// même adresse sans rien hacher, et ce refus-là — quelques microsecondes —
+// deviendrait le minimum du tirage. Le test mesurerait alors le limiteur, pas
+// le hachage. Les deux courriels rejouent la même série d'adresses, donc dans
+// les mêmes conditions.
 func plusCourtEchecDeConnexion(t *testing.T, mux http.Handler, courriel string, mesures int) time.Duration {
 	t.Helper()
 
 	var plusCourt time.Duration
 	for i := 0; i < mesures; i++ {
 		debut := time.Now()
-		rec := seConnecte(t, mux, courriel, "pas-le-bon-mot-de-passe")
+		rec := seConnecteDepuis(t, mux, fmt.Sprintf("198.51.100.%d", i+1), courriel, "pas-le-bon-mot-de-passe")
 		ecoule := time.Since(debut)
 
 		if cookie := cookieEventuelDe(rec); cookie != nil {
