@@ -36,6 +36,29 @@ Ce qu'il faut avoir fait pour dire qu'une tâche est terminée est écrit dans
 [DOD.md](DOD.md) — tests unitaires, tests de sécurité, et la règle qui remplace
 un seuil de couverture.
 
+## Ouvrir ou fermer l'inscription
+
+Une instance neuve s'installe **porte fermée** : personne ne peut créer de
+compte, et `/inscription` répond 404. Le superuser existe déjà — il est créé en
+ligne de commande — et c'est lui qui ouvre, quand il le décide.
+
+Le réglage se bascule dans l'administration sur `/_/` : collection `settings`,
+l'unique enregistrement, case `open_registration`, puis *Save*. Il est relu à
+chaque requête, donc **rien à redémarrer**.
+
+| `open_registration` | Ce que ça change |
+| --- | --- |
+| décoché (défaut) | `/inscription` répond 404, aucun compte ne se crée, et le lien vers cette page disparaît de `/connexion` |
+| coché | `/inscription` sert son formulaire, l'inscrit est connecté dans la foulée, et `/connexion` porte le lien vers elle |
+
+L'enregistrement `settings` effacé vaut porte fermée : le défaut d'un réglage
+de sécurité se choisit du côté qui refuse.
+
+Dans les deux états, `POST /api/collections/users/records` reste refusé —
+`users.createRule` est verrouillée au superuser. L'inscription n'a donc qu'une
+porte, la nôtre. Un compte créé sans passer par elle se crée depuis `/_/`, où
+le superuser édite `users` directement.
+
 ## Ce que ça sait faire que les autres ne savent pas
 
 Lire une ligne d'ingrédient française. C'est un créneau vide, et ça se mesure :

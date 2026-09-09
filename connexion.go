@@ -12,6 +12,17 @@ import (
 // annuaire des comptes existants.
 const messageEchecConnexion = "Courriel ou mot de passe incorrect."
 
+// donneesConnexion ajoute au formulaire le seul état qu'il ait à connaître :
+// l'inscription est-elle ouverte.
+//
+// Le lien vers /inscription n'est pas décoratif : affiché quand la page est
+// fermée, il envoie tout le monde sur un 404 ; absent quand elle est ouverte,
+// il la rend introuvable. Il suit donc le réglage, et le réglage seul.
+type donneesConnexion struct {
+	donneesPage
+	InscriptionOuverte bool
+}
+
 // pageConnexion sert le formulaire.
 //
 // Un compte déjà connecté n'a rien à y faire : il est renvoyé à l'accueil.
@@ -19,8 +30,9 @@ func pageConnexion(e *core.RequestEvent) error {
 	if e.Auth != nil {
 		return e.Redirect(http.StatusSeeOther, "/")
 	}
-	return rendre(e, "connexion.html", "connexion-corps.html", &donneesPage{
-		Titre: "Connexion — Patachoo",
+	return rendre(e, "connexion.html", "connexion-corps.html", &donneesConnexion{
+		donneesPage:        donneesPage{Titre: "Connexion — Patachoo"},
+		InscriptionOuverte: inscriptionOuverte(e.App),
 	})
 }
 
@@ -136,9 +148,12 @@ func laRegleDAuthentificationAutorise(e *core.RequestEvent, compte *core.Record)
 // Ni le courriel saisi ni le mot de passe ne sont renvoyés à la page : le
 // second n'a rien à faire dans du HTML, fût-il le sien.
 func echecDeConnexion(e *core.RequestEvent) error {
-	return rendre(e, "connexion.html", "connexion-corps.html", &donneesPage{
-		Titre:   "Connexion — Patachoo",
-		Message: messageEchecConnexion,
+	return rendre(e, "connexion.html", "connexion-corps.html", &donneesConnexion{
+		donneesPage: donneesPage{
+			Titre:   "Connexion — Patachoo",
+			Message: messageEchecConnexion,
+		},
+		InscriptionOuverte: inscriptionOuverte(e.App),
 	})
 }
 

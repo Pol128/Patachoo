@@ -7,3 +7,4 @@
 <input type="password" id="mot-de-passe" name="mot-de-passe" autocomplete="current-password" required>
 <button type="submit">Se connecter</button>
 </form>
+{{if .InscriptionOuverte}}<p>Pas encore de compte ? <a href="/inscription">Créer un compte</a></p>{{end}}
