@@ -4,7 +4,10 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/tools/hook"
+	"github.com/pocketbase/pocketbase/tools/router"
 )
 
 // messageEchecConnexion est le seul message qu'un échec produise, quel qu'en
@@ -21,6 +24,61 @@ const messageEchecConnexion = "Courriel ou mot de passe incorrect."
 type donneesConnexion struct {
 	donneesPage
 	InscriptionOuverte bool
+}
+
+// messageDebitDepasse est ce que voit celui qui a dépassé le plafond.
+//
+// Il ne nomme ni compte ni courriel : le plafond se compte par adresse, donc
+// dire quoi que ce soit du compte visé rouvrirait par un autre canal ce que
+// messageEchecConnexion ferme.
+const messageDebitDepasse = "Trop de tentatives de connexion. Réessayez dans une minute."
+
+// prioriteRattrapageDuDebit place notre rattrapage juste en amont du limiteur
+// global de PocketBase, de façon à l'envelopper.
+//
+// Les middlewares du routeur et ceux de la route sont fondus dans un même
+// crochet trié par priorité croissante (tools/router/router.go) : une priorité
+// strictement inférieure enveloppe donc le limiteur, et notre e.Next() reçoit
+// l'erreur qu'il remonte. Un cran, comme pour la session : plus l'écart est
+// petit, moins il reste de place pour qu'un middleware tiers vienne s'y
+// glisser.
+const prioriteRattrapageDuDebit = apis.DefaultRateLimitMiddlewarePriority - 1
+
+// rendLeDepassementEnHTML rattrape le refus du limiteur pour le rendre en page.
+//
+// PocketBase répond au dépassement par e.TooManyRequestsError(""), que
+// router.ErrorHandler écrit en JSON — et cet écrivain-là n'est pas
+// configurable. Or POST /connexion est un formulaire HTML ordinaire :
+// l'utilisateur verrait du JSON brut à la place de sa page. ErrorHandler
+// s'abstient si la réponse est déjà écrite, d'où ce rattrapage, qui rend la
+// page avant lui.
+//
+// Sur cette seule route, et non sur le routeur : l'API REST parle JSON à ses
+// clients, et lui rendre une page de connexion remplacerait une erreur lisible
+// par du HTML qu'aucun client ne sait lire.
+func rendLeDepassementEnHTML() *hook.Handler[*core.RequestEvent] {
+	return &hook.Handler[*core.RequestEvent]{
+		Id:       "patachooDepassementConnexion",
+		Priority: prioriteRattrapageDuDebit,
+		Func: func(e *core.RequestEvent) error {
+			err := e.Next()
+			if err == nil || router.ToApiError(err).Status != http.StatusTooManyRequests {
+				return err
+			}
+
+			// donneesConnexion, et non donneesPage : la page de dépassement
+			// est la page de connexion, et son gabarit lit le réglage
+			// d'inscription. Rendue sans lui, elle échoue à l'exécution et
+			// ressort en JSON — précisément ce que ce rattrapage évite.
+			return rendreAvecStatut(e, http.StatusTooManyRequests, "connexion.html", "connexion-corps.html", &donneesConnexion{
+				donneesPage: donneesPage{
+					Titre:   "Connexion — Patachoo",
+					Message: messageDebitDepasse,
+				},
+				InscriptionOuverte: inscriptionOuverte(e.App),
+			})
+		},
+	}
 }
 
 // pageConnexion sert le formulaire.
