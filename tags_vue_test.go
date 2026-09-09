@@ -453,9 +453,29 @@ func TestLaFicheRendChaqueTagEnLien(t *testing.T) {
 	exigeContient(t, corps, `href="/recettes?tag=vegetarien"`, "végétarien")
 }
 
-// --- Le filtre actif se voit et se retire ----------------------------------
+// Les trois filtres de la liste — tag, type de plat, saison — s'écrivent
+// désormais dans la même adresse. Chacun doit donc emporter les autres : poser
+// « de saison » depuis une liste filtrée par tag ne doit pas relâcher le tag,
+// sans quoi on retombe sur le carnet entier au premier clic.
+func TestLesLiensDeFiltreEmportentLeTagPose(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	recetteEtiquetee(t, app, "Gratin de courgettes", "végétarien")
 
-func TestLeFiltreActifSeNommeEtSeRetire(t *testing.T) {
+	corps := listeDe(t, mux, cookie, "/recettes?tag=vegetarien")
+
+	// Le lien « De saison », et ceux de la barre des types : tous passent par
+	// criteres.lien(), et c'est cela qu'on vérifie une fois pour toutes.
+	exigeContient(t, corps,
+		`class="de-saison" href="/recettes?saison=maintenant&amp;tag=vegetarien"`,
+		`href="/recettes?tag=vegetarien&amp;type=`,
+	)
+}
+
+// --- Le filtre de tag se voit et se retire ---------------------------------
+
+// Nommé « DeTag » : la liste porte aussi un filtre de saison et un filtre de
+// type, qui ont chacun leur test du même geste (recettes_test.go).
+func TestLeFiltreDeTagSeNommeEtSeRetire(t *testing.T) {
 	app, mux, cookie := carnetDeTest(t)
 	recetteEtiquetee(t, app, "Gratin de courgettes", "végétarien")
 

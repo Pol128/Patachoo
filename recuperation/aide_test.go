@@ -71,30 +71,20 @@ func autorise(serveurs ...*httptest.Server) Option {
 	for _, s := range serveurs {
 		permises[s.Listener.Addr().String()] = true
 	}
-	return func(o *options) {
-		o.exception = func(ap netip.AddrPort) bool { return permises[ap.String()] }
-	}
+	return AvecExceptionDePolitique(func(ap netip.AddrPort) bool { return permises[ap.String()] })
 }
 
 // avecResolution remplace la résolution de noms par une table. Un nom absent de
 // la table est injoignable : aucun test ne peut donc interroger le DNS sans
 // qu'on l'ait voulu.
 func avecResolution(table map[string]string) Option {
-	return func(o *options) {
-		o.resout = func(_ context.Context, hote string) ([]netip.Addr, error) {
-			brut, connu := table[hote]
-			if !connu {
-				return nil, fmt.Errorf("nom hors de la résolution injectée : %s", hote)
-			}
-			return []netip.Addr{netip.MustParseAddr(brut)}, nil
+	return AvecResolution(func(_ context.Context, hote string) ([]netip.Addr, error) {
+		brut, connu := table[hote]
+		if !connu {
+			return nil, fmt.Errorf("nom hors de la résolution injectée : %s", hote)
 		}
-	}
-}
-
-// avecTransport remplace le transport HTTP. Sert au piège : un test qui n'attend
-// aucune requête sortante en pose un qui le fait échouer s'il est appelé.
-func avecTransport(rt http.RoundTripper) Option {
-	return func(o *options) { o.transport = rt }
+		return []netip.Addr{netip.MustParseAddr(brut)}, nil
+	})
 }
 
 // transportPiege fait échouer le test à la première requête sortante.

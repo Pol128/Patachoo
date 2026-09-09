@@ -622,6 +622,43 @@ func TestLesChampsRenseignesSontRendusAvecLeurLibelle(t *testing.T) {
 	}
 }
 
+// --- Les saisons mènent à la liste filtrée (PATA-18) -----------------------
+
+// PATA-14 rend déjà les saisons en texte ; ce qui est en jeu ici est qu'elles
+// mènent quelque part. Le texte reste le nom accentué, l'URL non.
+func TestLesSaisonsDeLaFicheSontDesLiens(t *testing.T) {
+	app, mux, cookie := serveurConnecte(t)
+	recette := recetteEnBase(t, app, map[string]any{"seasons": []string{"automne", "hiver"}})
+
+	corps := fiche(mux, cookie, recette.Id).Body.String()
+
+	for _, attendu := range []string{
+		`href="/recettes?saison=automne"`,
+		`href="/recettes?saison=hiver"`,
+		">automne<",
+		">hiver<",
+	} {
+		if !strings.Contains(corps, attendu) {
+			t.Errorf("fiche sans %q :\n%s", attendu, corps)
+		}
+	}
+}
+
+// Une recette sans saison ne laisse ni libellé orphelin ni séparateur seul :
+// c'est la règle du bandeau, et les imports arriveront tous ainsi.
+func TestUneFicheSansSaisonNeRendAucunLienDeSaison(t *testing.T) {
+	app, mux, cookie := serveurConnecte(t)
+	recette := recetteEnBase(t, app, map[string]any{})
+
+	corps := fiche(mux, cookie, recette.Id).Body.String()
+
+	for _, interdit := range []string{"Saisons", "/recettes?saison="} {
+		if strings.Contains(corps, interdit) {
+			t.Errorf("fiche sans saison portant %q :\n%s", interdit, corps)
+		}
+	}
+}
+
 // TestUnAuteurSansNomNePubliePasSonCourriel : la fiche est lisible par tout
 // compte connecté, et l'auteur d'une recette est un autre compte que son
 // lecteur. PocketBase protège cette adresse partout ailleurs — users porte
@@ -661,6 +698,50 @@ func TestLImageEstServieParSaMiniature(t *testing.T) {
 	attendu := "/api/files/recipes/" + recette.Id + "/" + recette.GetString("image") + "?thumb=800x0"
 	if !strings.Contains(corps, `src="`+attendu+`"`) {
 		t.Errorf("fiche sans la miniature %q :\n%s", attendu, corps)
+	}
+}
+
+// --- Le type de plat cliquable --------------------------------------------
+
+func TestLaFicheRendLeTypeDePlatCliquable(t *testing.T) {
+	app, mux, cookie := serveurConnecte(t)
+	typeDePlat := premierTypeDePlat(t, app)
+	recette := recetteEnBase(t, app, map[string]any{"meal_type": typeDePlat.Id})
+
+	corps := fiche(mux, cookie, recette.Id).Body.String()
+
+	attendu := `<a href="/recettes?type=` + typeDePlat.GetString("slug") + `">` + typeDePlat.GetString("name") + `</a>`
+	if !strings.Contains(corps, attendu) {
+		t.Errorf("la fiche ne rend pas %q :\n%s", attendu, corps)
+	}
+}
+
+// Une recette sans type de plat ne rend ni lien, ni libellé orphelin.
+func TestLaFicheDUneRecetteSansTypeNeRendAucunLienDeType(t *testing.T) {
+	app, mux, cookie := serveurConnecte(t)
+	recette := recetteEnBase(t, app, map[string]any{"title": "Pain perdu"})
+
+	corps := fiche(mux, cookie, recette.Id).Body.String()
+
+	if strings.Contains(corps, "?type=") {
+		t.Errorf("la fiche d'une recette sans type de plat porte un lien de filtre :\n%s", corps)
+	}
+}
+
+// Le libellé se saisit depuis l'administration : c'est une donnée comme une
+// autre, et la fiche est l'un de ses trois chemins de rendu.
+func TestLaFicheEchappeLeLibelleDuTypeDePlat(t *testing.T) {
+	app, mux, cookie := serveurConnecte(t)
+	malveillant := typeDePlatEnBase(t, app, `"><script>alert(1)</script>`, "malveillant", 95)
+	recette := recetteEnBase(t, app, map[string]any{"meal_type": malveillant.Id})
+
+	corps := fiche(mux, cookie, recette.Id).Body.String()
+
+	if strings.Contains(corps, `"><script>`) {
+		t.Errorf("le libellé du type de plat ressort tel quel :\n%s", corps)
+	}
+	if !strings.Contains(corps, "&lt;script&gt;alert(1)&lt;/script&gt;") {
+		t.Errorf("le libellé du type de plat n'est pas rendu échappé :\n%s", corps)
 	}
 }
 

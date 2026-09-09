@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"github.com/pocketbase/pocketbase/tools/filesystem"
 	"github.com/pocketbase/pocketbase/tools/hook"
 	"github.com/pocketbase/pocketbase/tools/router"
+	"github.com/pocketbase/pocketbase/tools/search"
 )
 
 // --- La liste et la recherche ----------------------------------------------
@@ -32,15 +34,40 @@ const parPage = 24
 // page à qui a demandé la dernière. Une borne bien au-delà de tout carnet réel.
 const pageMax = 1 << 20
 
+// typeSansClasse est la valeur réservée du critère de type : les recettes que
+// personne n'a classées.
+//
+// Elle est réservée, et c'est assumé : un type de plat dont le slug vaudrait
+// « sans » ne serait pas atteignable par le filtre. Un comportement écrit et
+// testé plutôt qu'un comportement qui dépendrait du contenu de la collection.
+// Sans cette entrée, les recettes importées — qui arrivent toutes sans type —
+// ne seraient atteignables par aucun filtre.
+const typeSansClasse = "sans"
+
 // criteres porte ce que la chaîne de requête dit de la liste.
 //
-// Un seul type et un seul lecteur : les filtres par tag, par type de plat et
-// par saison (PATA-16, PATA-17, PATA-18) s'y ajouteront sans que la liste
-// n'ait à être réécrite.
+// Un seul type et un seul lecteur : les filtres par tag et par saison
+// (PATA-34, PATA-18) s'y ajouteront sans que la liste n'ait à être réécrite.
 type criteres struct {
 	Terme string
-	Tag   string
 	Page  int
+
+	// Tag est le slug filtré, jamais son nom : c'est le slug que les liens de
+	// la fiche et des vignettes écrivent, et lui seul qui survit à un tag
+	// renommé.
+	Tag string
+
+	// Type est un slug de meal_types, ou la valeur réservée typeSansClasse.
+	// Jamais un libellé, jamais un identifiant PocketBase : c'est ce qui
+	// permet de renommer un type depuis l'administration sans rien casser.
+	Type string
+
+	// Saison porte la valeur d'URL reconnue — l'une des quatre, ou
+	// « maintenant » —, et "" quand le paramètre est absent ou hors table.
+	// La valeur d'URL et non la valeur stockée : c'est elle que les liens
+	// réécrivent, et « maintenant » doit y rester « maintenant » pour qu'une
+	// page mise en favori suive le calendrier.
+	Saison string
 }
 
 // lisLesCriteres est le seul endroit où la chaîne de requête est lue.
@@ -59,10 +86,21 @@ func lisLesCriteres(r *http.Request) criteres {
 		page = pageMax
 	}
 
+	// Une saison hors table est ignorée plutôt que rendue en liste vide : à la
+	// différence d'un slug de tag, l'ensemble est fermé et connu à la
+	// compilation, donc la valeur ne peut être qu'une URL tapée de travers.
+	// Même traitement que le page malmené ci-dessus.
+	saison := requete.Get("saison")
+	if valeurDeLaSaison(saison) == "" {
+		saison = ""
+	}
+
 	return criteres{
-		Terme: strings.TrimSpace(requete.Get("q")),
-		Tag:   strings.TrimSpace(requete.Get("tag")),
-		Page:  page,
+		Terme:  strings.TrimSpace(requete.Get("q")),
+		Page:   page,
+		Tag:    strings.TrimSpace(requete.Get("tag")),
+		Type:   strings.TrimSpace(requete.Get("type")),
+		Saison: saison,
 	}
 }
 
@@ -86,6 +124,12 @@ func (c criteres) lien(page int) string {
 	if c.Tag != "" {
 		valeurs.Set("tag", c.Tag)
 	}
+	if c.Type != "" {
+		valeurs.Set("type", c.Type)
+	}
+	if c.Saison != "" {
+		valeurs.Set("saison", c.Saison)
+	}
 	if page > 1 {
 		valeurs.Set("page", strconv.Itoa(page))
 	}
@@ -94,6 +138,122 @@ func (c criteres) lien(page int) string {
 		return "/recettes"
 	}
 	return "/recettes?" + valeurs.Encode()
+}
+
+// lienDuType rend l'adresse de la même liste, filtrée sur ce slug.
+//
+// Les autres critères sont conservés — le terme et la saison —, la page ne
+// l'est pas : changer de filtre ramène au premier rang, et rester sur la
+// page 4 d'une autre liste n'a pas de sens.
+//
+// Récepteur par valeur, et c'est ce qui compte ici : la méthode travaille sur
+// une copie, donc la barre entière se construit en bouclant sur les mêmes
+// critères sans jamais les altérer.
+func (c criteres) lienDuType(slug string) string {
+	c.Type = slug
+	return c.lien(1)
+}
+
+// lienSansType rend l'adresse de la même liste, le critère de type retiré.
+//
+// C'est la sortie du filtre : un critère posé d'un clic doit se retirer d'un
+// clic, y compris quand la valeur reçue n'est pas reconnue.
+func (c criteres) lienSansType() string {
+	return c.lienDuType("")
+}
+
+// lienDeFiltreParType rend l'adresse de la liste filtrée sur le type d'une
+// recette, ou "" faute de type — le gabarit n'écrit alors ni lien ni libellé
+// orphelin.
+//
+// Sans terme ni page : c'est le lien que portent la fiche et les vignettes,
+// où il n'y a aucun critère courant à conserver. Le slug, jamais le libellé.
+func lienDeFiltreParType(typeDePlat *core.Record) string {
+	if typeDePlat == nil {
+		return ""
+	}
+	return criteres{}.lienDuType(typeDePlat.GetString("slug"))
+}
+
+// lienDeType est une entrée de la barre des types : de quoi l'afficher et y
+// aller, rien de plus.
+type lienDeType struct {
+	Nom     string
+	Adresse string
+}
+
+// barreDesTypes rend la barre de filtres, lue sur la collection.
+//
+// Un lien par enregistrement de meal_types, ordonné par position croissante :
+// ajouter ou renommer un type depuis l'administration se voit sans
+// recompilation, et aucun slug n'est écrit ici. C'est tout l'argument du choix
+// d'une collection plutôt que d'un champ de schéma.
+//
+// « Tous » ouvre et « Sans type » ferme : le premier retire le critère, le
+// second nomme les recettes que personne n'a classées.
+func barreDesTypes(app core.App, criteres criteres) ([]lienDeType, error) {
+	types, err := app.FindAllRecords("meal_types")
+	if err != nil {
+		return nil, fmt.Errorf("lecture des types de plat : %w", err)
+	}
+	// L'ordre vient de position, comme les options du formulaire : un tri
+	// alphabétique donnerait « accompagnement · apéritif · dessert · entrée »,
+	// et l'ordre d'un repas n'est pas alphabétique.
+	trieParPosition(types)
+
+	barre := make([]lienDeType, 0, len(types)+2)
+	barre = append(barre, lienDeType{Nom: "Tous", Adresse: criteres.lienSansType()})
+	for _, type_ := range types {
+		barre = append(barre, lienDeType{
+			Nom:     type_.GetString("name"),
+			Adresse: criteres.lienDuType(type_.GetString("slug")),
+		})
+	}
+	return append(barre, lienDeType{
+		Nom:     "Sans type",
+		Adresse: criteres.lienDuType(typeSansClasse),
+	}), nil
+}
+
+// nomDuTypeFiltre dit sous quel libellé le filtre courant s'annonce, et si la
+// valeur reçue est reconnue.
+//
+// Le second retour est ce qui décide de la réémission : une valeur inconnue
+// filtre bien — elle ne ramène rien —, mais elle ne ressort nulle part dans la
+// page, pas même échappée. Rien de ce qui vient de la chaîne de requête n'est
+// réécrit pour ce paramètre.
+//
+// La valeur réservée passe avant la lecture de la collection : c'est ce qui la
+// rend indépendante de son contenu.
+func nomDuTypeFiltre(app core.App, slug string) (string, bool, error) {
+	switch slug {
+	case "":
+		return "", false, nil
+	case typeSansClasse:
+		return "Sans type de plat", true, nil
+	}
+
+	typeDePlat, err := app.FindFirstRecordByData("meal_types", "slug", slug)
+	if err != nil {
+		// Un slug inconnu est une liste vide, pas une erreur : une adresse mal
+		// recopiée ne vaut pas une 500.
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("type de plat %q : %w", slug, err)
+	}
+	return typeDePlat.GetString("name"), true, nil
+}
+
+// sousLaSaison rend le lien de la même liste sous une autre saison — ou sans
+// saison, pour ""  —, ramenée à sa première page.
+//
+// Ramenée à la première page délibérément : changer de filtre change les rangs,
+// et rester à la page 3 en désignerait une autre. Les autres critères, eux,
+// sont conservés — le terme de recherche et le type de plat.
+func (c criteres) sousLaSaison(saison string) string {
+	c.Saison = saison
+	return c.lien(1)
 }
 
 // vignette : ce qu'une case de la grille affiche, et rien de plus.
@@ -105,7 +265,13 @@ type vignette struct {
 	Titre      string
 	Miniature  string
 	TypeDePlat string
-	Tags       []lienDeTag
+	// LienDuType accompagne TypeDePlat et se vide avec lui : le libellé est
+	// cliquable, et une recette sans type ne rend ni l'un ni l'autre.
+	LienDuType string
+
+	// Les tags portent leur adresse comme le type : une vignette est un
+	// endroit d'où l'on part vers ce qu'un tag rassemble.
+	Tags []lienDeFait
 }
 
 // donneesRecettes est ce que la page de liste donne à ses gabarits.
@@ -124,6 +290,33 @@ type donneesRecettes struct {
 	CarnetVide bool
 	Precedente string
 	Suivante   string
+
+	// Types est la barre de filtres ; TypeFiltre nomme le filtre posé et
+	// RetraitDuType donne sa sortie. TypeConserve est le slug que le champ de
+	// recherche emporte avec lui, faute de quoi taper une lettre annulerait le
+	// filtre qu'on vient de poser.
+	//
+	// Les trois derniers sont vides tant que le critère l'est — et TypeFiltre
+	// comme TypeConserve le restent aussi sur une valeur non reconnue, qui
+	// n'est jamais réémise.
+	Types         []lienDeType
+	TypeFiltre    string
+	TypeConserve  string
+	RetraitDuType string
+
+	// Saison est la valeur d'URL du filtre, celle que le champ caché emporte
+	// avec la recherche. Vide quand aucun filtre n'est posé — et c'est alors
+	// tout le bloc du filtre actif qui disparaît, sans libellé orphelin.
+	Saison string
+
+	// SaisonNommee est la même sous son nom accentué : « été », pas « ete ».
+	// Sous « maintenant », c'est la saison du jour qui se nomme.
+	SaisonNommee string
+
+	// DeSaison mène au filtre du jour, SansSaison l'enlève. Les deux
+	// conservent le terme de recherche.
+	DeSaison   string
+	SansSaison string
 }
 
 // pageListeRecettes rend la liste des recettes : la page d'accueil de l'outil,
@@ -138,6 +331,24 @@ func pageListeRecettes(e *core.RequestEvent) error {
 	}
 
 	criteres := lisLesCriteres(e.Request)
+
+	// Le type reconnu, et lui seul, ressort dans la page. Une valeur inconnue
+	// filtre quand même — elle ne ramène rien —, mais les liens qui la
+	// porteraient sont construits sans elle : c'est ce qui garantit que rien de
+	// ce qui vient de la chaîne de requête n'est réémis pour ce paramètre.
+	nomDuType, reconnu, err := nomDuTypeFiltre(e.App, criteres.Type)
+	if err != nil {
+		return err
+	}
+	liens := criteres
+	if !reconnu {
+		liens.Type = ""
+	}
+
+	barre, err := barreDesTypes(e.App, liens)
+	if err != nil {
+		return err
+	}
 
 	// Une vignette de plus que la page : c'est ce dépassement, et lui seul, qui
 	// dit qu'il existe un rang suivant. La requête FTS5 saurait maintenant se
@@ -160,26 +371,47 @@ func pageListeRecettes(e *core.RequestEvent) error {
 	}
 
 	donnees := donneesRecettes{
-		donneesPage: donneesPage{Titre: "Recettes — Patachoo"},
-		Terme:       criteres.Terme,
-		Vignettes:   vignettes,
+		donneesPage:  donneesPage{Titre: "Recettes — Patachoo"},
+		Terme:        criteres.Terme,
+		Vignettes:    vignettes,
+		Types:        barre,
+		TypeFiltre:   nomDuType,
+		TypeConserve: liens.Type,
 		// Le carnet vide se distingue de la recherche sans résultat : les
 		// confondre afficherait « votre carnet est vide » à quelqu'un qui a
 		// simplement mal orthographié un mot. Il se déduit sans compter :
-		// la première page, sans terme, ne peut être vide que si le carnet
-		// l'est.
-		CarnetVide: len(vignettes) == 0 && criteres.Terme == "" && criteres.Tag == "" && criteres.Page == 1,
+		// la première page, sans critère, ne peut être vide que si le carnet
+		// l'est. Sans critère, et non sans terme — un filtre de tag, de type
+		// ou de saison écarte des recettes tout autant qu'une recherche.
+		CarnetVide: len(vignettes) == 0 && criteres.Terme == "" && criteres.Tag == "" &&
+			criteres.Type == "" && criteres.Saison == "" && criteres.Page == 1,
+
+		Saison:       criteres.Saison,
+		SaisonNommee: valeurDeLaSaison(criteres.Saison),
+		// Par « liens » et non par « criteres » : un type non reconnu ne doit
+		// être réémis dans aucune adresse de la page, pas même dans celles du
+		// filtre de saison.
+		DeSaison:   liens.sousLaSaison("maintenant"),
+		SansSaison: liens.sousLaSaison(""),
 	}
+	// Le lien de retrait paraît dès que le critère est posé, reconnu ou non :
+	// un filtre qui ne ramène rien est justement celui dont il faut pouvoir
+	// sortir.
+	if criteres.Type != "" {
+		donnees.RetraitDuType = liens.lienSansType()
+	}
+	// Par « liens » ici aussi : la sortie du filtre de tag ne doit pas réémettre
+	// un type que la page a écarté.
 	if criteres.Tag != "" {
 		donnees.Tag = criteres.Tag
 		donnees.NomDuTag = nomDuTag(e.App, criteres.Tag)
-		donnees.SansTag = criteres.sansTag().lien(1)
+		donnees.SansTag = liens.sansTag().lien(1)
 	}
 	if criteres.Page > 1 {
-		donnees.Precedente = criteres.lien(criteres.Page - 1)
+		donnees.Precedente = liens.lien(criteres.Page - 1)
 	}
 	if suivante {
-		donnees.Suivante = criteres.lien(criteres.Page + 1)
+		donnees.Suivante = liens.lien(criteres.Page + 1)
 	}
 
 	return rendre(e, "recettes.html", "recettes-resultats.html", &donnees)
@@ -217,6 +449,33 @@ func recettesDuRang(app core.App, criteres criteres) ([]*core.Record, error) {
 			AndWhere(dbx.NewExp("recipes_fts MATCH {:q}", dbx.Params{"q": motif}))
 	}
 
+	switch criteres.Type {
+	case "":
+		// Aucun critère de type : le carnet entier.
+	case typeSansClasse:
+		// La relation est mono-valuée et non requise : une recette non classée
+		// porte la chaîne vide, jamais NULL.
+		requete = requete.AndWhere(dbx.NewExp("recipes.meal_type = ''"))
+	default:
+		// Un rapprochement sur le slug, jamais sur le libellé ni sur
+		// l'identifiant PocketBase : renommer un type depuis l'administration
+		// ne doit rien changer à ce que le filtre ramène.
+		//
+		// Une jointure interne, et c'est elle qui écarte les recettes non
+		// classées : « meal_type.slug != {:type} » les ramènerait, et un
+		// « ... || meal_type = '' » les noierait dans chaque type. Le slug
+		// porte un index d'unicité, donc aucune ligne n'est dupliquée.
+		//
+		// La valeur passe par dbx.Params, jamais par concaténation.
+		requete = requete.
+			InnerJoin("meal_types", dbx.NewExp("meal_types.id = recipes.meal_type")).
+			AndWhere(dbx.NewExp("meal_types.slug = {:type}", dbx.Params{"type": criteres.Type}))
+	}
+
+	if err := restreintALaSaison(app, requete, valeurDeLaSaison(criteres.Saison)); err != nil {
+		return nil, err
+	}
+
 	recettes := []*core.Record{}
 	err := requete.
 		OrderBy("recipes.created DESC").
@@ -224,6 +483,55 @@ func recettesDuRang(app core.App, criteres criteres) ([]*core.Record, error) {
 		Offset(int64((criteres.Page - 1) * parPage)).
 		All(&recettes)
 	return recettes, err
+}
+
+// filtreDeSaison : « au moins une des saisons vaut, ou aucune n'est marquée ».
+//
+// Trois des quatre écritures plausibles ne lèvent aucune erreur et se
+// trompent en silence, d'où ce commentaire — les quatre ont été exécutées sur
+// PocketBase v0.39.11 :
+//
+//   - « seasons = {:s} » et « seasons ?= {:s} » ne ramènent jamais rien : sur
+//     un select multi-valué, ?= n'est pas l'opérateur « au moins une » qu'il
+//     est sur une relation ;
+//   - « seasons ~ {:s} » ramène, mais par LIKE sur le JSON stocké ;
+//   - « seasons:each = {:s} » veut dire « toutes les saisons valent », et perd
+//     donc la recette d'automne et d'hiver cherchée en hiver.
+//
+// La seconde moitié dit « de toute l'année » : une recette dont le champ n'a
+// jamais été renseigné stocke [], et c'est seasons:length = 0 qui la reconnaît
+// — « seasons = ” » ne ramène rien.
+const filtreDeSaison = "seasons:each ?= {:saison} || seasons:length = 0"
+
+// restreintALaSaison ajoute le critère de saison à la requête, ou ne fait rien
+// si aucune saison n'est retenue.
+//
+// Le filtre passe par le langage de filtre de PocketBase et son résolveur,
+// comme le ferait FindRecordsByFilter, plutôt que par du SQL réécrit à la
+// main : c'est l'expression ci-dessus qui a été vérifiée, et c'est elle qui
+// part telle quelle. UpdateQuery attache ensuite la jointure que :each demande.
+//
+// La valeur rejoint la requête par dbx.Params, jamais par concaténation. Sans
+// risque de joker ici — ?= est une égalité, pas un LIKE — mais la règle ne se
+// relâche pas pour autant.
+func restreintALaSaison(app core.App, requete *dbx.SelectQuery, saison string) error {
+	if saison == "" {
+		return nil
+	}
+
+	recettes, err := app.FindCollectionByNameOrId("recipes")
+	if err != nil {
+		return fmt.Errorf("collection recipes : %w", err)
+	}
+
+	resolveur := core.NewRecordFieldResolver(app, recettes, nil, false)
+	expression, err := search.FilterData(filtreDeSaison).BuildExpr(resolveur, dbx.Params{"saison": saison})
+	if err != nil {
+		return fmt.Errorf("filtre de saison : %w", err)
+	}
+
+	requete.AndWhere(expression)
+	return resolveur.UpdateQuery(requete)
 }
 
 // motifDeRecherche traduit le terme saisi en requête FTS5, ou rend "" si le
@@ -266,11 +574,13 @@ func vignettesDe(app core.App, recettes []*core.Record) ([]vignette, error) {
 
 	vignettes := make([]vignette, 0, len(recettes))
 	for _, recette := range recettes {
+		typeDePlat := recette.ExpandedOne("meal_type")
 		vignettes = append(vignettes, vignette{
 			Id:         recette.Id,
 			Titre:      recette.GetString("title"),
 			Miniature:  miniature(recette),
-			TypeDePlat: nomDe(recette.ExpandedOne("meal_type")),
+			TypeDePlat: nomDe(typeDePlat),
+			LienDuType: lienDeFiltreParType(typeDePlat),
 			Tags:       liensDesTags(recette.ExpandedAll("tags")),
 		})
 	}
@@ -507,8 +817,16 @@ func enregistre(e *core.RequestEvent, recette *core.Record, saisie formulaireRec
 		return rendLeFormulaire(e, saisie, "Le titre est obligatoire.")
 	}
 
+	// L'image avant la transaction, et non dedans : télécharger une image
+	// distante peut prendre dix secondes, et une transaction d'écriture tenue
+	// aussi longtemps bloquerait toutes les autres. Rien n'est écrit pour
+	// autant — le fichier ne part en stockage qu'au Save, avec la recette.
+	if err := poseLImage(e, recette); err != nil {
+		return err
+	}
+
 	err := e.App.RunInTransaction(func(txApp core.App) error {
-		if err := poseLesChamps(txApp, e, recette, saisie); err != nil {
+		if err := poseLesChamps(txApp, recette, saisie); err != nil {
 			return err
 		}
 		if err := txApp.Save(recette); err != nil {
@@ -532,7 +850,7 @@ func enregistre(e *core.RequestEvent, recette *core.Record, saisie formulaireRec
 //
 // Les nombres partent en chaînes : PocketBase les convertit à la validation,
 // et c'est lui qui décide ce qu'un champ accepte.
-func poseLesChamps(txApp core.App, e *core.RequestEvent, recette *core.Record, saisie formulaireRecette) error {
+func poseLesChamps(txApp core.App, recette *core.Record, saisie formulaireRecette) error {
 	recette.Set("title", strings.TrimSpace(saisie.Titre))
 	recette.Set("servings", saisie.Portions)
 	recette.Set("prep_time", saisie.TempsPreparation)
@@ -554,13 +872,19 @@ func poseLesChamps(txApp core.App, e *core.RequestEvent, recette *core.Record, s
 	}
 	recette.Set("tags", ids)
 
-	return poseLImage(e, recette)
+	return nil
 }
 
-// poseLImage applique le téléversement, l'effacement, ou ne touche à rien.
+// poseLImage applique le téléversement, l'effacement, le téléchargement de
+// l'image que l'import a repérée, ou ne touche à rien.
 //
-// Ne rien faire est le cas ordinaire d'une édition : un formulaire renvoyé
-// sans fichier ne doit pas effacer l'image en place.
+// L'ordre est celui-là et il compte : un fichier téléversé l'emporte sur
+// l'image distante, qui l'emporte sur l'image déjà stockée. Un fichier choisi
+// par l'utilisateur ne déclenche donc aucune requête sortante — il n'y a rien à
+// aller chercher.
+//
+// Ne rien faire est le cas ordinaire d'une édition : un formulaire renvoyé sans
+// fichier ne doit pas effacer l'image en place.
 func poseLImage(e *core.RequestEvent, recette *core.Record) error {
 	if e.Request.PostFormValue("retirer-image") != "" {
 		recette.Set("image", nil)
@@ -568,19 +892,40 @@ func poseLImage(e *core.RequestEvent, recette *core.Record) error {
 	}
 
 	fichier, entete, err := e.Request.FormFile("image")
-	if err != nil {
-		if errors.Is(err, http.ErrMissingFile) || errors.Is(err, http.ErrNotMultipart) {
-			return nil
-		}
-		return err
-	}
-	defer fichier.Close()
+	if err == nil {
+		defer fichier.Close()
 
-	televerse, err := filesystem.NewFileFromMultipart(entete)
-	if err != nil {
+		televerse, err := filesystem.NewFileFromMultipart(entete)
+		if err != nil {
+			return err
+		}
+		recette.Set("image", televerse)
+		return nil
+	}
+	if !errors.Is(err, http.ErrMissingFile) && !errors.Is(err, http.ErrNotMultipart) {
 		return err
 	}
-	recette.Set("image", televerse)
+
+	// Aucun fichier téléversé : l'aperçu d'import a pu proposer l'image du site
+	// d'origine, dont l'URL traverse le formulaire dans un champ caché. Le nom
+	// du champ est en souligné là où les autres sont en tirets : c'est celui
+	// que la tâche fixe, et une règle unique se teste.
+	adresse := adresseDeLImage(e.Request.PostFormValue("image_url"), e.Request.PostFormValue("source-url"))
+	if adresse == "" {
+		return nil
+	}
+
+	distante, err := imageDistante(e.Request.Context(), adresse)
+	if err != nil {
+		// Un échec de téléchargement ne fait pas perdre l'import : la recette
+		// est enregistrée sans image, et la cause reste côté serveur. Elle est
+		// technique, et l'utilisateur a le formulaire d'édition pour téléverser
+		// l'illustration lui-même.
+		e.App.Logger().Warn("image distante non téléchargée", "url", adresse, "erreur", err)
+		return nil
+	}
+
+	recette.Set("image", distante)
 	return nil
 }
 

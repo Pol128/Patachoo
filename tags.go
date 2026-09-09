@@ -159,13 +159,6 @@ type saisieDesTags struct {
 	Autofocus bool
 }
 
-// lienDeTag est un tag tel qu'une page le rend : son nom, et l'adresse de la
-// liste filtrée sur lui.
-type lienDeTag struct {
-	Nom string
-	URL string
-}
-
 // brancheLesTags pose la route des suggestions.
 //
 // Derrière exigeUneSession comme les autres : la liste des tags révèle le
@@ -290,16 +283,16 @@ func saisieAvecLeChoix(saisie, nom string) string {
 }
 
 // liensDesTags traduit les tags d'une recette en liens vers la liste filtrée.
-func liensDesTags(tags []*core.Record) []lienDeTag {
+func liensDesTags(tags []*core.Record) []lienDeFait {
 	if len(tags) == 0 {
 		return nil
 	}
 
-	liens := make([]lienDeTag, 0, len(tags))
+	liens := make([]lienDeFait, 0, len(tags))
 	for _, tag := range tags {
-		liens = append(liens, lienDeTag{
-			Nom: tag.GetString("name"),
-			URL: lienVersLeTag(tag.GetString("slug")),
+		liens = append(liens, lienDeFait{
+			URL:   lienVersLeTag(tag.GetString("slug")),
+			Texte: tag.GetString("name"),
 		})
 	}
 	return liens

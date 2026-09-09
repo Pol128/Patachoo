@@ -116,6 +116,40 @@ func AvecTailleMax(octets int64) Option {
 	return func(o *options) { o.tailleMax = octets }
 }
 
+// Les trois options qui suivent ouvrent les points d'injection du paquet, et
+// ne servent qu'aux tests : ceux d'ici, et ceux des appelants qui doivent
+// prouver qu'une URL qu'ils reçoivent passe bien par ce récupérateur-ci.
+//
+// Exportées faute de mieux. Un appelant d'un autre paquet n'a aucun autre
+// moyen d'atteindre un serveur httptest : il écoute sur la boucle locale, que
+// la politique refuse par construction. Un faux récupérateur à sa place ne
+// prouverait rien — il passerait encore le jour où l'image cesserait de
+// passer par ici.
+//
+// Aucun chemin de production ne les emploie, et c'est ce qui les rend sûres :
+// les valeurs par défaut ne dépendent d'aucune d'elles.
+
+// AvecResolution remplace la traduction d'un nom d'hôte en adresses. Un test
+// qui la fournit ne dépend plus du DNS de la machine, et peut faire pointer un
+// nom d'apparence publique où il veut.
+func AvecResolution(resout func(context.Context, string) ([]netip.Addr, error)) Option {
+	return func(o *options) { o.resout = resout }
+}
+
+// AvecExceptionDePolitique lève l'interdiction d'adresse pour les seuls
+// couples adresse:port dont permet dit vrai. Tout le reste — y compris une
+// autre adresse de boucle locale — reste refusé : c'est ce qui permet de
+// tester une redirection vers 127.0.0.1 depuis un serveur qui y vit.
+func AvecExceptionDePolitique(permet func(netip.AddrPort) bool) Option {
+	return func(o *options) { o.exception = permet }
+}
+
+// AvecTransport remplace la pile HTTP. Sert au piège : un test qui n'attend
+// aucune requête sortante en pose un qui le fait échouer s'il est appelé.
+func AvecTransport(rt http.RoundTripper) Option {
+	return func(o *options) { o.transport = rt }
+}
+
 // errAdresseRefusee remonte du composeur jusqu'ici à travers la pile HTTP. Elle
 // ne sort jamais du paquet : elle devient RefuseeParPolitique.
 var errAdresseRefusee = errors.New("adresse refusée par la politique de sécurité")

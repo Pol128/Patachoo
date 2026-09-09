@@ -2,11 +2,28 @@
 <h1>Recettes</h1>
 <form class="recherche" method="get" action="/recettes" role="search">
 <label for="q">Rechercher</label>
-<input type="search" id="q" name="q" value="{{.Terme}}" placeholder="titre, ingrédient ou tag"
- hx-get="/recettes" hx-trigger="keyup changed delay:300ms" hx-target="#resultats" hx-swap="outerHTML"
- hx-include="[name='tag']">
+{{/* Les filtres partent avec la recherche, sinon taper une lettre les
+     annulerait. Des champs cachés plutôt que les valeurs dans l'URL du hx-get :
+     ils servent aussi à la soumission du formulaire sans JavaScript, qui passe
+     par la même route. Un seul hx-include les ramasse, par leur nom : une
+     classe serait un crochet de style qui ne stylise rien, et le garde-fou de
+     pages_test.go a raison de le refuser sur un champ invisible. */}}
 {{if .Tag}}<input type="hidden" name="tag" value="{{.Tag}}">{{end}}
+{{with .TypeConserve}}<input type="hidden" name="type" value="{{.}}">{{end}}
+{{if .Saison}}<input type="hidden" name="saison" value="{{.Saison}}">{{end}}
+<input type="search" id="q" name="q" value="{{.Terme}}" placeholder="titre, ingrédient ou tag"
+ hx-get="/recettes" hx-include="[name='tag'],[name='type'],[name='saison']" hx-trigger="keyup changed delay:300ms" hx-target="#resultats" hx-swap="outerHTML">
 <button type="submit">Rechercher</button>
 </form>
+<nav class="types" aria-label="Types de plat">
+<ul>
+{{range .Types}}<li><a href="{{.Adresse}}">{{.Nom}}</a></li>
+{{end}}</ul>
+</nav>
+<nav class="filtres">
+{{if .SaisonNommee}}<p class="filtre-saison">De saison : {{.SaisonNommee}}. <a href="{{.SansSaison}}">Toutes les saisons</a></p>
+{{else}}<a class="de-saison" href="{{.DeSaison}}">De saison</a>{{end}}
+</nav>
+{{with .RetraitDuType}}<p class="filtre-actif">{{with $.TypeFiltre}}<span class="nom">{{.}}</span> {{end}}<a href="{{.}}">Retirer le filtre</a></p>{{end}}
 {{template "recettes-resultats.html" .}}
 {{end}}

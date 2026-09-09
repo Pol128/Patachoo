@@ -36,14 +36,23 @@ type donneesRecette struct {
 // fait est un couple libellé/valeur du bandeau : portions, durées, type de
 // plat, saisons, tags, auteur. Une liste plutôt qu'un champ par donnée : le
 // bandeau entier disparaît quand elle est vide, sans conteneur laissé vide.
-//
-// Liens porte les valeurs cliquables — les tags, seuls à l'être. Valeur reste
-// alors vide, et c'est sur Liens que le gabarit tranche : un fait a du texte
-// ou des liens, jamais les deux.
 type fait struct {
 	Libelle string
 	Valeur  string
-	Liens   []lienDeTag
+
+	// Liens porte les valeurs qui mènent quelque part — le type de plat, les
+	// saisons et les tags, qui renvoient tous à la liste filtrée. Le gabarit
+	// rend celles-ci quand elles existent, et Valeur sinon : un fait est de
+	// l'un ou l'autre genre, jamais des deux.
+	Liens []lienDeFait
+}
+
+// lienDeFait est une valeur du bandeau doublée de sa destination. Texte reste
+// ce qui se lit — le libellé du type de plat, le nom accentué de la saison, le
+// nom du tag —, URL ce qui se tape.
+type lienDeFait struct {
+	URL   string
+	Texte string
 }
 
 // source est le site d'où la recette vient.
@@ -173,16 +182,31 @@ func faitsDeLaRecette(recette *core.Record) []fait {
 	ajoute("Temps de préparation", dureeLisible(recette.GetInt("prep_time")))
 	ajoute("Temps de cuisson", dureeLisible(recette.GetInt("cook_time")))
 
+	// Le type de plat est le seul fait cliquable : il mène à la liste des
+	// recettes du même type. L'adresse s'appuie sur le slug, jamais sur le
+	// libellé affiché ni sur l'identifiant PocketBase.
 	if typeDePlat := recette.ExpandedOne("meal_type"); typeDePlat != nil {
-		ajoute("Type de plat", typeDePlat.GetString("name"))
+		if nom := typeDePlat.GetString("name"); nom != "" {
+			faits = append(faits, fait{
+				Libelle: "Type de plat",
+				Liens: []lienDeFait{{
+					URL:   lienDeFiltreParType(typeDePlat),
+					Texte: nom,
+				}},
+			})
+		}
 	}
 	// seasons est un select, pas une relation : sa valeur se lit directement,
-	// sans passer par l'expansion.
-	ajoute("Saisons", strings.Join(recette.GetStringSlice("seasons"), ", "))
+	// sans passer par l'expansion. Chaque saison mène à la liste filtrée, et
+	// faute d'aucune le libellé disparaît comme celui de toute donnée
+	// manquante.
+	if liens := liensDesSaisons(recette.GetStringSlice("seasons")); len(liens) > 0 {
+		faits = append(faits, fait{Libelle: "Saisons", Liens: liens})
+	}
 
-	// Les tags sont des liens vers la liste filtrée : la fiche est l'endroit
-	// où l'on découvre un tag, et donc celui d'où l'on veut voir ce qu'il
-	// rassemble. Faute de tag, le libellé disparaît comme les autres.
+	// Les tags mènent à la liste filtrée pour la même raison : la fiche est
+	// l'endroit où l'on découvre un tag, et donc celui d'où l'on veut voir ce
+	// qu'il rassemble. Faute de tag, le libellé disparaît comme les autres.
 	if liens := liensDesTags(recette.ExpandedAll("tags")); len(liens) > 0 {
 		faits = append(faits, fait{Libelle: "Tags", Liens: liens})
 	}
@@ -198,6 +222,22 @@ func faitsDeLaRecette(recette *core.Record) []fait {
 	}
 
 	return faits
+}
+
+// liensDesSaisons traduit les saisons stockées en liens vers la liste filtrée.
+//
+// Une valeur que la table ne connaît pas est écartée plutôt que rendue sans
+// lien : le schéma restreint le champ aux quatre valeurs de la table, et un
+// test interdit que les deux divergent. Fabriquer un lien vers une saison qui
+// n'existe pas serait pire que de ne rien afficher.
+func liensDesSaisons(saisons []string) []lienDeFait {
+	var liens []lienDeFait
+	for _, saison := range saisons {
+		if adresse := urlDeLaSaison(saison); adresse != "" {
+			liens = append(liens, lienDeFait{URL: "/recettes?saison=" + adresse, Texte: saison})
+		}
+	}
+	return liens
 }
 
 // sourceDeLaRecette rend le bloc de source, ou nil : les deux champs sont vides

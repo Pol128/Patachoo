@@ -7,8 +7,8 @@
 <a class="titre" href="/recettes/{{.Id}}">
 {{if .Miniature}}<img class="miniature" src="{{.Miniature}}" alt="" width="300" height="200" loading="lazy">{{end}}
 {{.Titre}}</a>
-{{if .TypeDePlat}}<p class="type-de-plat">{{.TypeDePlat}}</p>{{end}}
-{{if .Tags}}<ul class="tags">{{range .Tags}}<li><a href="{{.URL}}">{{.Nom}}</a></li>{{end}}</ul>{{end}}
+{{if .TypeDePlat}}<p class="type-de-plat"><a href="{{.LienDuType}}">{{.TypeDePlat}}</a></p>{{end}}
+{{if .Tags}}<ul class="tags">{{range .Tags}}<li><a href="{{.URL}}">{{.Texte}}</a></li>{{end}}</ul>{{end}}
 </li>
 {{end}}
 </ul>
