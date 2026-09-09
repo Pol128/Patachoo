@@ -355,3 +355,33 @@ func TestLaPageDeConnexionPorteLeLienDInscriptionSelonLeReglage(t *testing.T) {
 		}
 	})
 }
+
+// Le rattrapage du plafond (PATA-39) rend lui aussi la page de connexion, et
+// rien ne le distingue des deux autres rendus : le lien suit le réglage, et le
+// réglage seul. Sans ce test, le rattrapage pourrait cesser de lire le réglage
+// sans que rien ne rougisse — c'est d'ailleurs par lui que la fusion des deux
+// branches est passée à côté du sujet.
+func TestLaPageDeDepassementPorteLeLienDInscriptionSelonLeReglage(t *testing.T) {
+	t.Run("réglage ouvert", func(t *testing.T) {
+		app, mux := serveurDeTest(t)
+		compteParDefaut(t, app)
+		ouvreLInscription(t, app)
+
+		corps := epuiseLePlafond(t, mux, "203.0.113.30", courrielDeTest).Body.String()
+
+		if !strings.Contains(corps, `href="/inscription"`) {
+			t.Errorf("page de dépassement sans lien vers l'inscription :\n%s", corps)
+		}
+	})
+
+	t.Run("réglage fermé", func(t *testing.T) {
+		app, mux := serveurDeTest(t)
+		compteParDefaut(t, app)
+
+		corps := epuiseLePlafond(t, mux, "203.0.113.31", courrielDeTest).Body.String()
+
+		if strings.Contains(corps, `href="/inscription"`) {
+			t.Errorf("page de dépassement avec un lien vers une page fermée :\n%s", corps)
+		}
+	})
+}
