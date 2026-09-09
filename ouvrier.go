@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pocketbase/dbx"
@@ -43,7 +44,8 @@ const (
 )
 
 // causeEnregistrement est la onzième cause : ni un refus du site, ni un défaut
-// de son balisage, mais une panne de notre côté au moment d'écrire.
+// de son balisage, mais une panne de notre côté — une lecture ou une écriture
+// que la base refuse.
 //
 // Elle existe parce qu'une ligne doit toujours finir par un sort définitif :
 // laissée en cours, la reprise la rejouerait à chaque démarrage, indéfiniment.
@@ -54,12 +56,20 @@ const causeEnregistrement = "enregistrement"
 // que sa première URL parte.
 const sondageDeLaFile = time.Second
 
-// filesMax borne le nombre d'hôtes menés de front.
+// filesMax borne le nombre d'hôtes menés de front, et donc le nombre de
+// requêtes sortantes en vol : une file est séquentielle.
 //
 // Une fournée de 500 URLs peut viser autant de domaines distincts, et autant de
 // requêtes sortantes simultanées ne seraient ni polies, ni tenables pour une
 // petite instance. Les hôtes se suivent donc par vagues ; à l'intérieur d'une
 // vague, ils progressent ensemble.
+//
+// Ce que le découpage coûte, et qui est assumé : une vague attend son hôte le
+// plus lent avant que la suivante démarre. Au-delà de filesMax hôtes, la durée
+// totale d'un lot n'est donc plus celle du plus gros hôte seul. Un sémaphore de
+// filesMax jetons l'éviterait ; il ferait démarrer une file au moment où une
+// autre se libère, c'est-à-dire à un instant que l'horloge des tests ne saurait
+// pas rendre reproductible.
 const filesMax = 8
 
 // ouvrier tient l'horloge et la cadence pour toute la durée du service.
@@ -83,10 +93,14 @@ func brancheLOuvrier(app core.App) {
 	o := nouvelOuvrier(app, horlogeSysteme{})
 	ctx, arrete := context.WithCancel(context.Background())
 	fini := make(chan struct{})
-	demarre := false
+	// Un booléen nu ne suffit pas : OnServe est déclenché par la commande
+	// serve, OnTerminate par le traitement du signal, et rien ne les ordonne.
+	// La goroutine d'arrêt y lirait faux, sauterait l'attente, et les dernières
+	// écritures de l'ouvrier se feraient sur une base en train de se fermer.
+	var demarre atomic.Bool
 
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
-		demarre = true
+		demarre.Store(true)
 		go func() {
 			defer close(fini)
 
@@ -99,7 +113,7 @@ func brancheLOuvrier(app core.App) {
 		arrete()
 		// Une sous-commande — une fusion, une migration — termine sans jamais
 		// avoir servi : il n'y a alors personne à attendre.
-		if demarre {
+		if demarre.Load() {
 			<-fini
 		}
 		return e.Next()
@@ -259,7 +273,7 @@ func (o *ouvrier) traiteLaLigne(ctx context.Context, lot, ligne *core.Record) er
 	// appel. Une URL déjà connue ne mérite pas qu'on dérange le site.
 	connue, err := laSourceEstConnue(o.app, adresse)
 	if err != nil {
-		return err
+		return o.poseLaPanne(ligne, err)
 	}
 	if connue {
 		return o.poseLeStatut(ligne, statutDejaPresente)
@@ -287,7 +301,7 @@ func (o *ouvrier) traiteLaLigne(ctx context.Context, lot, ligne *core.Record) er
 	// vers la même page, et c'est la finale qui désigne la recette.
 	connue, err = laSourceEstConnue(o.app, page.URLFinale)
 	if err != nil {
-		return err
+		return o.poseLaPanne(ligne, err)
 	}
 	if connue {
 		return o.poseLeStatut(ligne, statutDejaPresente)
@@ -327,19 +341,8 @@ func (o *ouvrier) enregistre(lot, ligne *core.Record, page recuperation.Page, tr
 	}
 
 	// L'écriture a échoué et la transaction est défaite ; la ligne, elle, garde
-	// en mémoire ce qu'on lui avait posé. Elle est remise à plat et marquée en
-	// échec : rien ne dit qu'une seconde tentative ferait mieux, et la laisser
-	// en cours la ferait rejouer à chaque démarrage.
-	o.app.Logger().Error("enregistrement d'une recette importée",
-		"url", ligne.GetString("url"), "erreur", err)
-	ligne.Set("status", statutEchec)
-	ligne.Set("cause", causeEnregistrement)
-	ligne.Set("code", 0)
-	ligne.Set("recipe", "")
-	if err := o.app.Save(ligne); err != nil {
-		return fmt.Errorf("marquage de la ligne %s : %w", ligne.Id, err)
-	}
-	return err
+	// en mémoire ce qu'on lui avait posé. poseLaPanne la remet à plat.
+	return o.poseLaPanne(ligne, err)
 }
 
 // creeLaRecetteImportee écrit la recette que la page publie.
@@ -462,6 +465,27 @@ func (o *ouvrier) poseLeStatut(ligne *core.Record, statut string) error {
 func (o *ouvrier) rendLaLigne(ligne *core.Record, motif error) error {
 	if err := o.poseLeStatut(ligne, statutAFaire); err != nil {
 		return err
+	}
+	return motif
+}
+
+// poseLaPanne donne son sort à une ligne qu'une panne de notre côté — une
+// lecture ou une écriture que la base refuse — a empêché d'aboutir.
+//
+// Marquée en échec, et non laissée en cours : rien ne dit qu'une seconde
+// tentative ferait mieux, et une ligne sans sort définitif ne serait plus
+// réclamée par personne. L'ouvrier ne prend que ce qui est à faire, et les
+// lignes interrompues ne sont rendues qu'au démarrage : le lot resterait en
+// cours jusqu'au prochain redémarrage du processus.
+//
+// Le motif est rendu tel quel : c'est la file qui le journalise, une fois.
+func (o *ouvrier) poseLaPanne(ligne *core.Record, motif error) error {
+	ligne.Set("status", statutEchec)
+	ligne.Set("cause", causeEnregistrement)
+	ligne.Set("code", 0)
+	ligne.Set("recipe", "")
+	if err := o.app.Save(ligne); err != nil {
+		return fmt.Errorf("marquage de la ligne %s : %w", ligne.Id, err)
 	}
 	return motif
 }
