@@ -500,3 +500,53 @@ footer {
 .ecartee {
 	margin-bottom: 0.3rem;
 }
+
+/* Le suivi d'une fournée : la progression pendant qu'elle tourne, le rapport
+   ensuite. Les deux vivent au même endroit de la page — le fragment se
+   remplace lui-même —, donc ils partagent l'espace qui les entoure. */
+.progression,
+.fournee {
+	margin: 0.4rem 0;
+}
+
+/* Le compte traité sur le total est ce qu'on lit en revenant sur la page :
+   il se détache du reste sans crier. */
+.progression {
+	font-size: 1.1rem;
+}
+
+/* La dernière recette entrée : un titre venu d'un site tiers, en retrait, qui
+   dit que la fournée avance encore. */
+.derniere {
+	margin: 0.4rem 0;
+	color: #6b675f;
+}
+
+/* Les comptes du rapport, et le détail des échecs par famille. Une même règle
+   pour les deux listes : les distinguer visuellement laisserait croire qu'on
+   ne les lit pas de la même façon. */
+.familles {
+	margin: 0 0 1rem;
+	padding-left: 1.2rem;
+}
+
+.famille {
+	margin-bottom: 0.2rem;
+}
+
+/* Les adresses qui n'ont pas abouti. Le <code> les garde sélectionnables d'un
+   bloc, pour qu'elles se reprennent à la main dans l'import unitaire. */
+.echecs {
+	margin: 0;
+	padding-left: 1.2rem;
+}
+
+.echec {
+	margin-bottom: 0.3rem;
+}
+
+/* La cause, à côté de l'adresse et non à sa place : c'est elle qui dit s'il
+   vaut la peine de réessayer. */
+.cause {
+	color: #6b675f;
+}

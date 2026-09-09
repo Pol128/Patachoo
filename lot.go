@@ -60,19 +60,24 @@ type donneesLot struct {
 	donneesPage
 	Disclaimer []string
 	Saisie     string
-	Retenues   int
 	Ecartees   []ligneEcartee
-	Tag        string
+
+	// Suivi est le fragment vivant que la confirmation porte, et il n'est
+	// rempli que par elle : c'est le point d'accroche par lequel la
+	// progression, puis le rapport, prennent la place de « lot lancé ».
+	Suivi *donneesSuivi
 }
 
-// brancheLImportEnLot pose les deux routes de la fournée.
+// brancheLImportEnLot pose les trois routes de la fournée : la saisie, le
+// lancement, et le suivi (rapport.go).
 //
-// Toutes deux derrière exigeUneSession, comme les routes du formulaire : elles
+// Toutes derrière exigeUneSession, comme les routes du formulaire : elles
 // rendent des pages et écrivent en base, et le contrôle passe avant la lecture
-// de la saisie.
+// de la saisie comme avant celle du lot.
 func brancheLImportEnLot(routeur *router.Router[*core.RequestEvent]) {
 	routeur.GET(cheminDuLot, pageImportEnLot).Bind(exigeUneSession())
 	routeur.POST(cheminDuLot, lanceLeLot).Bind(exigeUneSession())
+	routeur.GET(cheminDuSuivi, suiviDuLot).Bind(exigeUneSession())
 }
 
 // pageImportEnLot rend la page de saisie vide.
@@ -104,20 +109,28 @@ func lanceLeLot(e *core.RequestEvent) error {
 		return rendLaSaisie(e, saisie, err.Error())
 	}
 
-	_, tag, err := creeLeLot(e.App, e.Auth, retenues, time.Now())
+	// Le tag n'est pas relu ici : c'est le suivi qui le nomme, et qui y
+	// renvoie.
+	lot, _, err := creeLeLot(e.App, e.Auth, retenues, time.Now())
 	if err != nil {
 		return err
 	}
 
-	// Le point d'accroche de la sous-tâche 4 : la progression vivante et le
-	// rapport de fin remplaceront cette confirmation, ils ne s'y ajouteront
-	// pas.
+	// Le suivi est rendu ici plutôt que redemandé par une première requête
+	// HTMX : sans lui, la page resterait vide jusqu'au premier
+	// rafraîchissement. Ce qui reste de la confirmation, ce sont les lignes
+	// écartées — elles parlent de la saisie, pas de la fournée, et le suivi
+	// n'en saura jamais rien.
+	suivi, err := suiviDe(e.App, lot)
+	if err != nil {
+		return err
+	}
+
 	return rendre(e, "import-lot-resultat.html", "import-lot-resultat-corps.html", &donneesLot{
 		donneesPage: donneesPage{Titre: "Import en lot — Patachoo"},
-		Retenues:    len(retenues),
 		Ecartees:    ecartees,
-		Tag:         tag.GetString("name"),
-	})
+		Suivi:       suivi,
+	}, "import-lot-suivi-corps.html")
 }
 
 // analyseLaSaisie filtre la liste collée : une URL par ligne.
