@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -333,4 +334,33 @@ func memeSuite(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// --- Le nom du tag filtré --------------------------------------------------
+
+// Une panne de lecture n'est pas un tag inconnu. Replier sur le slug pour
+// toute erreur rendrait une page normale, dont le bandeau nomme le slug comme
+// si le tag n'existait pas, alors que la base ne répond plus : un mensonge
+// tranquille au lieu d'une erreur.
+//
+// Le repli sur le slug en cas d'absence, lui, est du comportement voulu, et il
+// est couvert là où il se voit — TestLeFiltreEchappeLeTagRecuDansLURL, dans
+// tags_vue_test.go.
+func TestNomDuTagRemonteUnePanneDeLecture(t *testing.T) {
+	app := baseNeuve(t)
+
+	if _, err := app.DB().NewQuery("DROP TABLE tags").Execute(); err != nil {
+		t.Fatalf("suppression de la table tags : %v", err)
+	}
+
+	nom, err := nomDuTag(app, "vegetarien")
+	if err == nil {
+		t.Fatalf("panne de lecture acceptée, nom rendu %q", nom)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("panne de lecture prise pour une absence de résultat : %v", err)
+	}
+	if nom == "vegetarien" {
+		t.Errorf("le slug est rendu malgré la panne : %q", nom)
+	}
 }
