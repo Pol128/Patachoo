@@ -1,8 +1,10 @@
 package main
 
 import (
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/template"
@@ -29,7 +31,16 @@ func baseNeuveAvec(t *testing.T, a *analyseur) core.App {
 	t.Helper()
 
 	app := core.NewBaseApp(core.BaseAppConfig{DataDir: t.TempDir()})
-	t.Cleanup(func() { _ = app.ResetBootstrapState() })
+	// Terminer avant de réinitialiser, et non l'inverse : c'est OnTerminate qui
+	// arrête le minuteur de purge du journal, et le commentaire de PocketBase
+	// au-dessus du crochet dit pourquoi l'ordre compte — « to avoid races with
+	// ResetBootstrap user calls ». Ce nettoyage-ci est posé le premier, donc
+	// dépilé le dernier : il passe après ceux du test. Déclencher OnTerminate
+	// une fois de plus est sans effet.
+	t.Cleanup(func() {
+		_ = app.OnTerminate().Trigger(&core.TerminateEvent{App: app})
+		_ = app.ResetBootstrapState()
+	})
 
 	brancheLesHooks(app, a)
 
@@ -97,6 +108,76 @@ func nombreDIngredients(t *testing.T, app core.App) int {
 		t.Fatalf("lecture des ingrédients : %v", err)
 	}
 	return len(lignes)
+}
+
+// --- Le montage lui-même --------------------------------------------------
+
+// TestBaseNeuveAvecNArrivePasAvecUneGoroutineDeJournal ferme la porte par
+// laquelle la passe -race est rouge par intermittence.
+//
+// PocketBase lance à l'amorçage une goroutine qui purge le journal toutes les
+// trois secondes, et lit pour cela IsBootstrapped() — qui déréférence
+// concurrentDB et auxConcurrentDB sans verrou. ResetBootstrapState() écrit nil
+// dans ces mêmes champs, sans verrou non plus. Le seul arrêt prévu est le
+// crochet OnTerminate, et le commentaire de PocketBase juste au-dessus nomme
+// le piège : « write all remaining logs before ticker.Stop to avoid races with
+// ResetBootstrap user calls ».
+//
+// Le paquet racine monte une base par test : un montage qui abandonne son
+// minuteur laisse derrière lui, jusqu'à la fin du binaire de test, une
+// goroutine qui tire au sort toutes les trois secondes contre le nettoyage des
+// tests suivants. C'est un rouge qui ne parle de rien, donc un rouge qu'on
+// apprend à ignorer.
+//
+// Le constat se fait sur les piles et avec une échéance, jamais sur une
+// lecture unique : le crochet arrête le minuteur et signale done, mais la
+// goroutine ne sort qu'à son prochain passage dans son select.
+func TestBaseNeuveAvecNArrivePasAvecUneGoroutineDeJournal(t *testing.T) {
+	// Un sous-test, pour que ses nettoyages soient dépilés — celui de
+	// baseNeuveAvec compris — pendant que le test parent, lui, vit encore.
+	t.Run("une base montée puis rendue", func(t *testing.T) {
+		baseNeuveAvec(t, analyseurDeTest(t))
+	})
+
+	echeance := time.Now().Add(5 * time.Second)
+	for {
+		nombre, piles := goroutinesDuJournal()
+		if nombre == 0 {
+			return
+		}
+		if time.Now().After(echeance) {
+			t.Fatalf("%d goroutine(s) de journal PocketBase survivent au montage : "+
+				"le minuteur n'a pas été arrêté avant ResetBootstrapState\n\n%s", nombre, piles)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// goroutinesDuJournal compte les goroutines du minuteur de journal de
+// PocketBase encore vivantes, et rend leurs piles pour le message d'échec.
+//
+// Le décompte est absolu et non un delta : le paquet ne monte de base que par
+// baseNeuveAvec, donc une seule survivante suffit à dire que le montage fuit —
+// qu'elle vienne de ce test-ci ou d'un précédent.
+func goroutinesDuJournal() (int, string) {
+	piles := make([]byte, 1<<16)
+	for {
+		n := runtime.Stack(piles, true)
+		if n < len(piles) {
+			piles = piles[:n]
+			break
+		}
+		piles = make([]byte, 2*len(piles))
+	}
+
+	var vivantes []string
+	// runtime.Stack sépare les goroutines par une ligne vide.
+	for _, pile := range strings.Split(string(piles), "\n\n") {
+		if strings.Contains(pile, "core.(*BaseApp).initLogger") {
+			vivantes = append(vivantes, pile)
+		}
+	}
+	return len(vivantes), strings.Join(vivantes, "\n\n")
 }
 
 // --- La conversion, sans base ni serveur ---------------------------------
