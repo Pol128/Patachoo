@@ -81,6 +81,10 @@ type ouvrier struct {
 	// creation sérialise le second bout de la déduplication. Voir
 	// enregistreSiInedite : c'est le seul endroit où deux files se croisent.
 	creation sync.Mutex
+	// robots garde le robots.txt de chaque hôte pour la durée du service. Sans
+	// lui, chaque page en redemanderait un : une fournée de vingt pages sur un
+	// site lui coûterait quarante requêtes au lieu de vingt-et-une.
+	robots recuperation.RobotsRetenus
 }
 
 func nouvelOuvrier(app core.App, h horlogeDuLot) *ouvrier {
@@ -283,12 +287,14 @@ func (o *ouvrier) traiteLaLigne(ctx context.Context, lot, ligne *core.Record) er
 		return o.poseLeStatut(ligne, statutDejaPresente)
 	}
 
-	hote := hoteDe(adresse)
-	if err := o.cadence.attendSonTour(ctx, hote); err != nil {
-		return o.rendLaLigne(ligne, err)
-	}
-
-	page, err := recuperePage(ctx, adresse)
+	// La cadence est rendue à recuperation plutôt que tenue ici : un appel en
+	// émet deux requêtes — le robots.txt, puis la page —, et les espacer
+	// depuis ce niveau-ci laisserait toujours partir la paire dans le même
+	// instant. C'est aussi elle qui rapporte le Crawl-delay lu, avant la
+	// requête de page, si bien qu'il vaut dès celle-là.
+	page, err := recuperePage(ctx, adresse,
+		recuperation.AvecCadence(cadenceDeRecuperation{o.cadence}),
+		recuperation.AvecRobotsRetenus(&o.robots))
 	if err != nil {
 		if ctx.Err() != nil {
 			// Le serveur s'arrête : la ligne n'a pas échoué, elle n'a pas eu
@@ -297,10 +303,6 @@ func (o *ouvrier) traiteLaLigne(ctx context.Context, lot, ligne *core.Record) er
 		}
 		return o.poseLEchec(ligne, err)
 	}
-	// Le Crawl-delay ne se lit qu'une fois la réponse obtenue : il s'applique
-	// donc à partir de la requête suivante, vers ce domaine seulement.
-	o.cadence.retiens(hote, page.DelaiAnnonce)
-
 	return o.enregistreSiInedite(lot, ligne, page)
 }
 
@@ -393,12 +395,18 @@ func creeLaRecetteImportee(txApp core.App, recette, lot *core.Record, page recup
 
 	// Une recette créée par notre propre code passe par app.Save() et ne
 	// déclenche aucun hook de requête : attribueALAppelant ne la voit pas, et
-	// poseLAuteur est écrite pour cet appel-là. Un compte introuvable — lot
-	// lancé par un superuser, compte supprimé depuis — laisse la recette sans
-	// auteur plutôt que de faire échouer l'import.
+	// poseLAuteur est écrite pour cet appel-là.
+	//
+	// Un auteur introuvable — lot lancé depuis un compte superuser, dont
+	// l'identifiant ne désigne aucun users ; compte supprimé pendant que son
+	// lot attendait — arrête cette ligne au lieu de créer une recette sans
+	// auteur. La règle de suppression de recipes exige
+	// created_by = @request.auth.id : une recette sans auteur ne serait
+	// supprimable par aucune session, et rien dans le rapport de la fournée ne
+	// dirait pourquoi. La ligne prend un échec, et le dit.
 	titulaire, err := txApp.FindRecordById("users", lot.GetString(champAuteur))
 	if err != nil {
-		titulaire = nil
+		return fmt.Errorf("auteur du lot %s : %w", lot.Id, err)
 	}
 	poseLAuteur(recette, titulaire)
 

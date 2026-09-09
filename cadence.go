@@ -131,6 +131,19 @@ func (c *cadence) retiens(hote string, annonce time.Duration) {
 	}
 }
 
+// cadenceDeRecuperation présente la cadence sous le nom que recuperation
+// attend d'elle. Les majuscules viennent de son interface ; le reste du fichier
+// garde le sien.
+type cadenceDeRecuperation struct{ *cadence }
+
+func (c cadenceDeRecuperation) AttendSonTour(ctx context.Context, hote string) error {
+	return c.attendSonTour(ctx, hote)
+}
+
+func (c cadenceDeRecuperation) Retiens(hote string, annonce time.Duration) {
+	c.retiens(hote, annonce)
+}
+
 // delaiDe rend l'écart à respecter vers un hôte. À appeler sous le verrou.
 func (c *cadence) delaiDe(hote string) time.Duration {
 	if annonce := c.delais[hote]; annonce > delaiEntreRequetes {

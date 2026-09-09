@@ -106,6 +106,46 @@ type options struct {
 	// transport court-circuite la pile réseau. Réservé aux tests qui vérifient
 	// qu'aucune requête ne part.
 	transport http.RoundTripper
+	// cadence espace les requêtes sortantes, hôte par hôte. Nil : elles
+	// partent dès qu'on les fait.
+	cadence Cadence
+	// robots garde le robots.txt déjà lu de chaque hôte. Nil : il est
+	// redemandé à chaque appel.
+	robots *RobotsRetenus
+}
+
+// Cadence est le rythme que l'appelant impose aux requêtes que ce paquet émet,
+// hôte par hôte.
+//
+// Un appel en émet deux : le robots.txt de l'hôte, que l'appelant n'a pas
+// demandé, puis la page. Sans cadence elles partent collées — un appelant qui
+// espace ses appels d'une seconde en envoie tout de même deux dans le même
+// instant, et sa politesse ne vaut que pour la couture qu'il tient. Avec,
+// chacune attend son tour, robots.txt compris.
+//
+// Retiens rapporte le Crawl-delay lu dans le robots.txt. Il est rapporté avant
+// la requête de page, et non après l'appel : c'est ce qui le fait valoir dès
+// cette page-là.
+type Cadence interface {
+	AttendSonTour(ctx context.Context, hote string) error
+	Retiens(hote string, annonce time.Duration)
+}
+
+// AvecCadence fait passer chaque requête sortante par le tour de rôle que
+// l'appelant tient.
+func AvecCadence(c Cadence) Option {
+	return func(o *options) { o.cadence = c }
+}
+
+// AvecRobotsRetenus garde le robots.txt de chaque hôte au lieu de le
+// redemander à chaque page.
+//
+// Une fournée de vingt pages sur un même site lui coûte alors vingt-et-une
+// requêtes et non quarante. Le cache appartient à l'appelant : c'est lui qui
+// décide de sa durée de vie — celle d'une fournée —, et rien ici ne le
+// périme.
+func AvecRobotsRetenus(r *RobotsRetenus) Option {
+	return func(o *options) { o.robots = r }
 }
 
 // Option règle un appel.
@@ -193,6 +233,20 @@ func Recupere(ctx context.Context, adresse string, choix ...Option) (Page, error
 	return r.page(ctx, cible)
 }
 
+// tourDeRole fait attendre son tour à une requête avant de l'émettre. C'est le
+// seul endroit où la cadence s'applique, et il est sous tout ce qui émet.
+type tourDeRole struct {
+	suivant http.RoundTripper
+	cadence Cadence
+}
+
+func (t tourDeRole) RoundTrip(requete *http.Request) (*http.Response, error) {
+	if err := t.cadence.AttendSonTour(requete.Context(), strings.ToLower(requete.URL.Hostname())); err != nil {
+		return nil, err
+	}
+	return t.suivant.RoundTrip(requete)
+}
+
 // analyseURL n'accepte qu'une URL absolue de schéma http ou https, avec un hôte.
 func analyseURL(adresse string) (*url.URL, error) {
 	u, err := url.Parse(adresse)
@@ -223,6 +277,23 @@ type recuperateur struct {
 // l'environnement ferait porter la politique d'IP sur lui plutôt que sur la
 // vraie destination.
 func (r *recuperateur) pile() http.RoundTripper {
+	return r.cadence(r.transportNu())
+}
+
+// cadence enveloppe le transport pour que chaque requête attende son tour.
+//
+// À ce niveau-ci et non dans Recupere : c'est le seul endroit par lequel toutes
+// les requêtes passent — le robots.txt, la page, et chaque saut d'une
+// redirection. Une attente posée plus haut laisserait toujours partir deux
+// requêtes dans le même instant.
+func (r *recuperateur) cadence(suivant http.RoundTripper) http.RoundTripper {
+	if r.o.cadence == nil {
+		return suivant
+	}
+	return tourDeRole{suivant: suivant, cadence: r.o.cadence}
+}
+
+func (r *recuperateur) transportNu() http.RoundTripper {
 	if r.o.transport != nil {
 		return r.o.transport
 	}
@@ -402,9 +473,51 @@ func (r *recuperateur) page(ctx context.Context, cible *url.URL) (Page, error) {
 func (r *recuperateur) robotsInterdit(ctx context.Context, cible *url.URL) *Erreur {
 	adresse := (&url.URL{Scheme: cible.Scheme, Host: cible.Host, Path: "/robots.txt"}).String()
 
+	dit, refus := r.robotsDe(ctx, adresse)
+	if refus != nil {
+		return refus
+	}
+	if dit.interditTout || !dit.regles.autorise(chemin(cible), Agent) {
+		return &Erreur{Cause: RobotsInterdit, URL: cible.String()}
+	}
+
+	// Retenu même quand rien n'est interdit : c'est le cas ordinaire, et c'est
+	// justement là qu'un appelant qui enchaîne en a besoin.
+	r.delaiAnnonce = dit.regles.delaiPour(Agent)
+	// Rapporté maintenant, avant la requête de page : un Crawl-delay appris
+	// puis rapporté après coup ne vaudrait qu'à partir de la page suivante, et
+	// celle-ci partirait à notre rythme et non à celui du site.
+	if r.o.cadence != nil {
+		r.o.cadence.Retiens(strings.ToLower(cible.Hostname()), r.delaiAnnonce)
+	}
+	return nil
+}
+
+// robotsDe rend ce que le robots.txt de l'hôte dit, du cache s'il y est déjà.
+//
+// Ce qui se garde est la décision, pas la réponse : elle ne dépend plus du
+// chemin demandé, et c'est ce qui permet de la partager entre toutes les pages
+// d'un même hôte. Un robots.txt qui n'a pas été atteint, lui, ne se garde pas —
+// une panne de réseau passagère condamnerait tout l'hôte pour la durée de la
+// fournée.
+func (r *recuperateur) robotsDe(ctx context.Context, adresse string) (decisionRobots, *Erreur) {
+	if dit, vu := r.o.robots.lis(adresse); vu {
+		return dit, nil
+	}
+
+	dit, refus := r.demandeRobots(ctx, adresse)
+	if refus != nil {
+		return decisionRobots{}, refus
+	}
+	r.o.robots.garde(adresse, dit)
+	return dit, nil
+}
+
+// demandeRobots va chercher le robots.txt et en tire ce qu'il dit de l'hôte.
+func (r *recuperateur) demandeRobots(ctx context.Context, adresse string) (decisionRobots, *Erreur) {
 	reponse, err := r.demande(ctx, adresse)
 	if err != nil {
-		return r.echec(err, adresse, Injoignable)
+		return decisionRobots{}, r.echec(err, adresse, Injoignable)
 	}
 	defer reponse.Body.Close()
 
@@ -413,23 +526,16 @@ func (r *recuperateur) robotsInterdit(ctx context.Context, cible *url.URL) *Erre
 		// Le REP demande de s'abstenir quand le serveur est en panne : une
 		// erreur n'est pas une autorisation. Le 403 anti-robot, lui, tombe du
 		// côté « autorisé », et c'est voulu.
-		return &Erreur{Cause: RobotsInterdit, URL: cible.String()}
+		return decisionRobots{interditTout: true}, nil
 	case reponse.StatusCode != http.StatusOK:
-		return nil
+		return decisionRobots{}, nil
 	}
 
 	texte, err := io.ReadAll(io.LimitReader(reponse.Body, r.o.tailleMax))
 	if err != nil {
-		return r.echec(err, adresse, Injoignable)
+		return decisionRobots{}, r.echec(err, adresse, Injoignable)
 	}
-	lu := analyseRobots(string(texte))
-	if !lu.autorise(chemin(cible), Agent) {
-		return &Erreur{Cause: RobotsInterdit, URL: cible.String()}
-	}
-	// Retenu même quand rien n'est interdit : c'est le cas ordinaire, et c'est
-	// justement là qu'un appelant qui enchaîne en a besoin.
-	r.delaiAnnonce = lu.delaiPour(Agent)
-	return nil
+	return decisionRobots{regles: analyseRobots(string(texte))}, nil
 }
 
 // chemin rend le chemin tel que robots.txt le compare.

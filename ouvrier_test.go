@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -180,7 +183,12 @@ type appelSortant struct {
 // siteFactice tient lieu de réseau : il rend ce que la table décrit et note
 // chaque appel.
 type siteFactice struct {
-	horloge  *horlogeVirtuelle
+	horloge *horlogeVirtuelle
+	// cadence est celle de l'ouvrier qu'on teste. Le faux tient lieu de
+	// recuperation, et recuperation fait attendre son tour à chaque requête :
+	// sans cela, les tests de cadencement ci-dessous mesureraient une promesse
+	// que le vrai chemin tient et que celui-ci ignore.
+	cadence  *cadence
 	mu       sync.Mutex
 	reponses map[string]reponseDuSite
 	vus      []appelSortant
@@ -189,23 +197,32 @@ type siteFactice struct {
 // avecSite branche le site factice sur la couture de l'import unitaire, la
 // même que l'ouvrier emprunte : les refus SSRF, les plafonds et les causes
 // nommées sont l'affaire de PATA-8, testée chez elle.
-func avecSite(t *testing.T, h *horlogeVirtuelle, reponses map[string]reponseDuSite) *siteFactice {
+func avecSite(t *testing.T, o *ouvrier, reponses map[string]reponseDuSite) *siteFactice {
 	t.Helper()
 
-	s := &siteFactice{horloge: h, reponses: reponses}
+	h, _ := o.horloge.(*horlogeVirtuelle)
+	s := &siteFactice{horloge: h, cadence: o.cadence, reponses: reponses}
 	avecRecuperateur(t, s.recupere)
 	return s
 }
 
-func (s *siteFactice) recupere(_ context.Context, adresse string) (recuperation.Page, error) {
+func (s *siteFactice) recupere(ctx context.Context, adresse string, _ ...recuperation.Option) (recuperation.Page, error) {
+	hote := hoteDe(adresse)
+	if err := s.cadence.attendSonTour(ctx, hote); err != nil {
+		return recuperation.Page{}, err
+	}
+
 	s.mu.Lock()
-	s.vus = append(s.vus, appelSortant{url: adresse, hote: hoteDe(adresse), instant: s.horloge.Maintenant()})
+	s.vus = append(s.vus, appelSortant{url: adresse, hote: hote, instant: s.horloge.Maintenant()})
 	rendue, connue := s.reponses[adresse]
 	s.mu.Unlock()
 
 	if !connue {
 		return recuperation.Page{}, &recuperation.Erreur{Cause: recuperation.Injoignable, URL: adresse}
 	}
+	// Le Crawl-delay se lit dans le robots.txt, donc avant la page : c'est
+	// recuperation qui le rapporte, et le faux fait de même.
+	s.cadence.retiens(hote, rendue.page.DelaiAnnonce)
 	if rendue.apres != nil {
 		rendue.apres()
 	}
@@ -229,6 +246,77 @@ func (s *siteFactice) appelsVers(hote string) []appelSortant {
 		}
 	}
 	return vers
+}
+
+// --- Le réseau, là où les requêtes partent vraiment --------------------------
+
+// reseauFactice tient lieu de transport HTTP. Il répond à la place du réseau et
+// note chaque requête émise — le robots.txt compris.
+//
+// C'est le seul montage qui voie ce que la couture recuperePage cache : un
+// appel de recuperation, ce sont deux requêtes sortantes, et la promesse de
+// cadencement porte sur celles-là, pas sur les appels de la couture.
+type reseauFactice struct {
+	horloge *horlogeVirtuelle
+	mu      sync.Mutex
+	corps   map[string]string
+	vus     []appelSortant
+}
+
+func (r *reseauFactice) RoundTrip(requete *http.Request) (*http.Response, error) {
+	adresse := requete.URL.String()
+
+	r.mu.Lock()
+	r.vus = append(r.vus, appelSortant{
+		url:     adresse,
+		hote:    strings.ToLower(requete.URL.Hostname()),
+		instant: r.horloge.Maintenant(),
+	})
+	corps, connu := r.corps[adresse]
+	r.mu.Unlock()
+
+	statut := http.StatusOK
+	if !connu {
+		statut = http.StatusNotFound
+	}
+	return &http.Response{
+		StatusCode: statut,
+		Header:     http.Header{"Content-Type": []string{"text/html; charset=utf-8"}},
+		Body:       io.NopCloser(strings.NewReader(corps)),
+		Request:    requete,
+	}, nil
+}
+
+func (r *reseauFactice) appels() []appelSortant {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return append([]appelSortant(nil), r.vus...)
+}
+
+// avecReseau branche le réseau factice sous recuperation, et non à sa place :
+// la couture appelle le vrai chemin, transport excepté. Les options que
+// l'ouvrier passe — cadence, robots retenus — sont donc celles de production.
+func avecReseau(t *testing.T, o *ouvrier, corps map[string]string) *reseauFactice {
+	t.Helper()
+
+	h, _ := o.horloge.(*horlogeVirtuelle)
+	r := &reseauFactice{horloge: h, corps: corps}
+	avecRecuperateur(t, func(ctx context.Context, adresse string, choix ...recuperation.Option) (recuperation.Page, error) {
+		return recuperation.Recupere(ctx, adresse, append(choix, recuperation.AvecTransport(r))...)
+	})
+	return r
+}
+
+// siteServi décrit ce que le réseau factice sert : un robots.txt par hôte, et
+// une page de recette par URL.
+func siteServi(robots string, urls ...string) map[string]string {
+	corps := map[string]string{}
+	for _, adresse := range urls {
+		corps[adresse] = string(htmlDeRecette("Tarte de "+adresse, []string{"200 g de farine"}))
+		corps["https://"+hoteDe(adresse)+"/robots.txt"] = robots
+	}
+	return corps
 }
 
 // --- Les pages servies ------------------------------------------------------
@@ -349,14 +437,14 @@ func traite(t *testing.T, o *ouvrier, lot *core.Record) {
 // TestLOuvrierEspaceLesRequetesVersUnMemeHote : au plus une par seconde. C'est
 // la politesse que le disclaimer de la page de saisie promet.
 func TestLOuvrierEspaceLesRequetesVersUnMemeHote(t *testing.T) {
-	app, titulaire, horloge, o := atelierDeLOuvrier(t)
+	app, titulaire, _, o := atelierDeLOuvrier(t)
 	urls := []string{
 		"https://a.example/1",
 		"https://a.example/2",
 		"https://a.example/3",
 		"https://a.example/4",
 	}
-	site := avecSite(t, horloge, recettesEn(urls))
+	site := avecSite(t, o, recettesEn(urls))
 
 	traite(t, o, lotDe(t, app, titulaire, urls...))
 
@@ -375,14 +463,14 @@ func TestLOuvrierEspaceLesRequetesVersUnMemeHote(t *testing.T) {
 // TestLOuvrierMeneLesHotesDeFront : le cadencement d'un hôte ne retient pas
 // les autres. La durée totale est celle du plus gros hôte, pas la somme.
 func TestLOuvrierMeneLesHotesDeFront(t *testing.T) {
-	app, titulaire, horloge, o := atelierDeLOuvrier(t)
+	app, titulaire, _, o := atelierDeLOuvrier(t)
 	urls := []string{
 		"https://a.example/1", "https://b.example/1",
 		"https://a.example/2", "https://b.example/2",
 		"https://a.example/3", "https://b.example/3",
 		"https://a.example/4", "https://b.example/4",
 	}
-	site := avecSite(t, horloge, recettesEn(urls))
+	site := avecSite(t, o, recettesEn(urls))
 
 	traite(t, o, lotDe(t, app, titulaire, urls...))
 
@@ -420,7 +508,7 @@ func TestLOuvrierBorneLesHotesMenesDeFront(t *testing.T) {
 	}
 	urls = append(urls, "https://detrop.example/1")
 
-	site := avecSite(t, horloge, recettesEn(urls))
+	site := avecSite(t, o, recettesEn(urls))
 	traite(t, o, lotDe(t, app, titulaire, urls...))
 
 	if len(site.appels()) != len(urls) {
@@ -445,7 +533,7 @@ func TestLOuvrierBorneLesHotesMenesDeFront(t *testing.T) {
 // TestLOuvrierSuitLeCrawlDelayAnnonce : quand l'hôte demande plus que notre
 // seconde, c'est lui qui décide — et pour lui seul.
 func TestLOuvrierSuitLeCrawlDelayAnnonce(t *testing.T) {
-	app, titulaire, horloge, o := atelierDeLOuvrier(t)
+	app, titulaire, _, o := atelierDeLOuvrier(t)
 	patient := []string{"https://lent.example/1", "https://lent.example/2", "https://lent.example/3"}
 	ordinaire := []string{"https://vif.example/1", "https://vif.example/2", "https://vif.example/3"}
 
@@ -453,7 +541,7 @@ func TestLOuvrierSuitLeCrawlDelayAnnonce(t *testing.T) {
 	for _, adresse := range patient {
 		table[adresse] = avecDelaiAnnonce(table[adresse], 5*time.Second)
 	}
-	site := avecSite(t, horloge, table)
+	site := avecSite(t, o, table)
 
 	traite(t, o, lotDe(t, app, titulaire, append(append([]string{}, patient...), ordinaire...)...))
 
@@ -480,6 +568,55 @@ func TestLOuvrierSuitLeCrawlDelayAnnonce(t *testing.T) {
 	}
 }
 
+// TestLOuvrierEspaceLesRequetesRobotsCompris : la promesse porte sur les
+// requêtes émises, et un appel en émet deux — le robots.txt de l'hôte, puis la
+// page. Les tests ci-dessus comptent à la couture recuperePage, un niveau
+// au-dessus de celle-ci ; ils ne verraient pas une paire partie collée.
+func TestLOuvrierEspaceLesRequetesRobotsCompris(t *testing.T) {
+	app, titulaire, _, o := atelierDeLOuvrier(t)
+	urls := []string{"https://a.example/1", "https://a.example/2", "https://a.example/3"}
+	reseau := avecReseau(t, o, siteServi("User-agent: *\nDisallow: /prive\n", urls...))
+
+	traite(t, o, lotDe(t, app, titulaire, urls...))
+
+	appels := reseau.appels()
+	// Un robots.txt, puis une requête par page : il est retenu pour la durée
+	// de la fournée, et non redemandé à chaque page.
+	if len(appels) != len(urls)+1 {
+		t.Fatalf("%d requêtes émises, attendu %d — un robots.txt et %d pages :\n%v",
+			len(appels), len(urls)+1, len(urls), appels)
+	}
+	if !strings.HasSuffix(appels[0].url, "/robots.txt") {
+		t.Errorf("première requête vers %q, attendu le robots.txt", appels[0].url)
+	}
+	for i := 1; i < len(appels); i++ {
+		if ecart := appels[i].instant.Sub(appels[i-1].instant); ecart < delaiEntreRequetes {
+			t.Errorf("requêtes %q et %q espacées de %v, attendu au moins %v",
+				appels[i-1].url, appels[i].url, ecart, delaiEntreRequetes)
+		}
+	}
+}
+
+// TestLeCrawlDelayVautDesLaPremierePage : le délai annoncé se lit dans le
+// robots.txt, donc avant la page. Rapporté après coup, il ne vaudrait qu'à
+// partir de la deuxième — et la première partirait à notre rythme, pas à celui
+// du site.
+func TestLeCrawlDelayVautDesLaPremierePage(t *testing.T) {
+	app, titulaire, _, o := atelierDeLOuvrier(t)
+	const adresse = "https://lent.example/1"
+	reseau := avecReseau(t, o, siteServi("User-agent: *\nCrawl-delay: 5\n", adresse))
+
+	traite(t, o, lotDe(t, app, titulaire, adresse))
+
+	appels := reseau.appels()
+	if len(appels) != 2 {
+		t.Fatalf("%d requêtes émises, attendu 2 :\n%v", len(appels), appels)
+	}
+	if ecart := appels[1].instant.Sub(appels[0].instant); ecart != 5*time.Second {
+		t.Errorf("page demandée %v après le robots.txt qui annonce Crawl-delay: 5, attendu 5s", ecart)
+	}
+}
+
 // --- La reprise -------------------------------------------------------------
 
 // TestLOuvrierDemarreAvecLeServeurEtSArreteAvecLui : brancheLOuvrier est le
@@ -496,7 +633,7 @@ func TestLOuvrierDemarreAvecLeServeurEtSArreteAvecLui(t *testing.T) {
 	lot := lotDe(t, app, titulaire, "https://a.example/1")
 
 	partie := make(chan struct{}, 1)
-	avecRecuperateur(t, func(ctx context.Context, _ string) (recuperation.Page, error) {
+	avecRecuperateur(t, func(ctx context.Context, _ string, _ ...recuperation.Option) (recuperation.Page, error) {
 		select {
 		case partie <- struct{}{}:
 		default:
@@ -535,9 +672,9 @@ func TestLOuvrierDemarreAvecLeServeurEtSArreteAvecLui(t *testing.T) {
 // TestUneLigneRestEeEnCoursEstReprise : un processus arrêté au mauvais moment
 // laisse une ligne « en_cours » que personne ne réclamerait plus.
 func TestUneLigneResteeEnCoursEstReprise(t *testing.T) {
-	app, titulaire, horloge, o := atelierDeLOuvrier(t)
+	app, titulaire, _, o := atelierDeLOuvrier(t)
 	urls := []string{"https://a.example/1", "https://a.example/2"}
-	site := avecSite(t, horloge, recettesEn(urls))
+	site := avecSite(t, o, recettesEn(urls))
 	lot := lotDe(t, app, titulaire, urls...)
 
 	interrompue := lignesDuLot(t, app, lot)[0]
@@ -563,7 +700,7 @@ func TestUneLigneResteeEnCoursEstReprise(t *testing.T) {
 // après la reprise égale le nombre d'URLs. Un lot de 500 URLs coupé au milieu
 // ne recommence pas.
 func TestUnLotRepriseNeRejoueAucuneURLDejaTraitee(t *testing.T) {
-	app, titulaire, horloge, o := atelierDeLOuvrier(t)
+	app, titulaire, _, o := atelierDeLOuvrier(t)
 	urls := []string{
 		"https://a.example/1",
 		"https://a.example/2",
@@ -576,7 +713,7 @@ func TestUnLotRepriseNeRejoueAucuneURLDejaTraitee(t *testing.T) {
 	// L'arrêt survient une fois la deuxième page rendue : la ligne est menée à
 	// son terme, et c'est la suivante qui trouve le contexte coupé.
 	table[urls[1]] = reponseDuSite{page: table[urls[1]].page, apres: annule}
-	site := avecSite(t, horloge, table)
+	site := avecSite(t, o, table)
 
 	lot := lotDe(t, app, titulaire, urls...)
 	if err := o.traiteLeLot(ctx, lot); err == nil {
@@ -605,7 +742,7 @@ func TestUnLotRepriseNeRejoueAucuneURLDejaTraitee(t *testing.T) {
 // récupération ne laisse ni ligne en cours, ni lot terminé — c'est ce que la
 // reprise attend au démarrage suivant.
 func TestLArretRendLaLigneEnCoursAFaire(t *testing.T) {
-	app, titulaire, horloge, o := atelierDeLOuvrier(t)
+	app, titulaire, _, o := atelierDeLOuvrier(t)
 	urls := []string{"https://a.example/1", "https://a.example/2"}
 
 	ctx, annule := context.WithCancel(context.Background())
@@ -614,7 +751,7 @@ func TestLArretRendLaLigneEnCoursAFaire(t *testing.T) {
 		err:   context.Canceled,
 		apres: annule,
 	}
-	avecSite(t, horloge, table)
+	avecSite(t, o, table)
 
 	lot := lotDe(t, app, titulaire, urls...)
 	if err := o.traiteLeLot(ctx, lot); err == nil {
@@ -636,9 +773,9 @@ func TestLArretRendLaLigneEnCoursAFaire(t *testing.T) {
 // TestReimporterLeMemeLotNeCreeAucunDoublon : la fournée est refaite, le
 // carnet ne bouge pas.
 func TestReimporterLeMemeLotNeCreeAucunDoublon(t *testing.T) {
-	app, titulaire, horloge, o := atelierDeLOuvrier(t)
+	app, titulaire, _, o := atelierDeLOuvrier(t)
 	urls := []string{"https://a.example/1", "https://a.example/2"}
-	avecSite(t, horloge, recettesEn(urls))
+	avecSite(t, o, recettesEn(urls))
 
 	traite(t, o, lotDe(t, app, titulaire, urls...))
 	apresLePremier := compte(t, app, "recipes")
@@ -704,10 +841,10 @@ func TestDeuxURLsVersLaMemePageNeCreentQuUneRecette(t *testing.T) {
 
 	for _, c := range cas {
 		t.Run(c.nom, func(t *testing.T) {
-			app, titulaire, horloge, o := atelierDeLOuvrier(t)
+			app, titulaire, _, o := atelierDeLOuvrier(t)
 			const finale = "https://site.fr/canonique"
 
-			avecSite(t, horloge, map[string]reponseDuSite{
+			avecSite(t, o, map[string]reponseDuSite{
 				c.urls[0]: sertLaRecette("Tarte", finale, "200 g de farine"),
 				c.urls[1]: sertLaRecette("Tarte", finale, "200 g de farine"),
 			})
@@ -737,11 +874,11 @@ func TestDeuxURLsVersLaMemePageNeCreentQuUneRecette(t *testing.T) {
 // TestLaRecetteImporteePorteSonAuteurEtSaSource : l'auteur est le compte qui a
 // lancé le lot, et la source l'URL du dernier saut.
 func TestLaRecetteImporteePorteSonAuteurEtSaSource(t *testing.T) {
-	app, titulaire, horloge, o := atelierDeLOuvrier(t)
+	app, titulaire, _, o := atelierDeLOuvrier(t)
 	const soumise = "https://a.example/court"
 	const finale = "https://a.example/canonique"
 
-	avecSite(t, horloge, map[string]reponseDuSite{
+	avecSite(t, o, map[string]reponseDuSite{
 		soumise: sertLaRecette("Tarte aux pommes", finale, "200 g de farine"),
 	})
 
@@ -771,10 +908,10 @@ func TestLaRecetteImporteePorteSonAuteurEtSaSource(t *testing.T) {
 // TestLesIngredientsImportesSontAnalyses : la ligne brute est écrite, et le
 // hook de PATA-6 en tire les cinq champs. Rien n'est recopié du parser ici.
 func TestLesIngredientsImportesSontAnalyses(t *testing.T) {
-	app, titulaire, horloge, o := atelierDeLOuvrier(t)
+	app, titulaire, _, o := atelierDeLOuvrier(t)
 	const adresse = "https://a.example/tarte"
 
-	avecSite(t, horloge, map[string]reponseDuSite{
+	avecSite(t, o, map[string]reponseDuSite{
 		adresse: sertLaRecette("Tarte", adresse, "environ 200 g de farine"),
 	})
 
@@ -803,17 +940,57 @@ func TestLesIngredientsImportesSontAnalyses(t *testing.T) {
 	}
 }
 
+// TestUnLotSansAuteurNeCreeAucuneRecette : une recette sans auteur ne
+// serait supprimable par personne — la règle de recipes exige
+// created_by = @request.auth.id, qu'aucune session ne satisfait. Mieux vaut une
+// ligne en échec, que le rapport de la fournée nomme, qu'une recette orpheline
+// créée en silence.
+func TestUnLotSansAuteurNeCreeAucuneRecette(t *testing.T) {
+	app, titulaire, _, o := atelierDeLOuvrier(t)
+	const soumise = "https://a.example/tarte"
+	avecSite(t, o, map[string]reponseDuSite{
+		soumise: sertLaRecette("Tarte", soumise, "200 g de farine"),
+	})
+
+	// Un lot sans auteur : c'est ce que laisse un lot lancé depuis un compte
+	// superuser, dont l'identifiant n'est pas celui d'un users — poseLAuteur
+	// ne pose alors rien (acces.go). Le champ n'est pas obligatoire, le lot
+	// existe et attend son tour comme les autres.
+	lot := lotDe(t, app, titulaire, soumise)
+	lot.Set(champAuteur, "")
+	if err := app.Save(lot); err != nil {
+		t.Fatalf("lot sans auteur : %v", err)
+	}
+
+	traite(t, o, lot)
+
+	if n := compte(t, app, "recipes"); n != 0 {
+		t.Errorf("%d recettes créées, attendu 0 : aucune ne doit naître sans auteur", n)
+	}
+	ligne := lignesDuLot(t, app, lot)[0]
+	if statut := ligne.GetString("status"); statut != statutEchec {
+		t.Errorf("ligne en %q, attendu %q", statut, statutEchec)
+	}
+	if cause := ligne.GetString("cause"); cause != causeEnregistrement {
+		t.Errorf("cause %q, attendu %q", cause, causeEnregistrement)
+	}
+	if lot := relis(t, app, "imports", lot); lot.GetString("status") != statutTermine {
+		t.Errorf("lot en %q, attendu %q : une ligne sans sort le laisserait en cours pour toujours",
+			lot.GetString("status"), statutTermine)
+	}
+}
+
 // --- Le tag de la fournée ---------------------------------------------------
 
 // TestLesRecettesDUnLotPortentSonTag : le tag rend la fournée retrouvable, et
 // seules les recettes qui ont abouti le portent.
 func TestLesRecettesDUnLotPortentSonTag(t *testing.T) {
-	app, titulaire, horloge, o := atelierDeLOuvrier(t)
+	app, titulaire, _, o := atelierDeLOuvrier(t)
 	urls := []string{"https://a.example/1", "https://a.example/2", "https://a.example/3"}
 
 	table := recettesEn(urls)
 	table[urls[1]] = echoueAvec(&recuperation.Erreur{Cause: recuperation.RefusHTTP, Code: 403, URL: urls[1]})
-	avecSite(t, horloge, table)
+	avecSite(t, o, table)
 
 	lot := lotDe(t, app, titulaire, urls...)
 	traite(t, o, lot)
@@ -841,10 +1018,10 @@ func TestLesRecettesDUnLotPortentSonTag(t *testing.T) {
 // TestLesRecettesDUnSecondLotNePortentPasLeTagDuPremier : deux fournées, deux
 // tags, et aucun mélange.
 func TestLesRecettesDUnSecondLotNePortentPasLeTagDuPremier(t *testing.T) {
-	app, titulaire, horloge, o := atelierDeLOuvrier(t)
+	app, titulaire, _, o := atelierDeLOuvrier(t)
 	premieres := []string{"https://a.example/1"}
 	secondes := []string{"https://a.example/2"}
-	avecSite(t, horloge, recettesEn(append(append([]string{}, premieres...), secondes...)))
+	avecSite(t, o, recettesEn(append(append([]string{}, premieres...), secondes...)))
 
 	premier := lotDe(t, app, titulaire, premieres...)
 	traite(t, o, premier)
@@ -947,8 +1124,8 @@ func TestLesCausesDEchecSontEnregistrees(t *testing.T) {
 
 	for _, c := range cas {
 		t.Run(c.nom, func(t *testing.T) {
-			app, titulaire, horloge, o := atelierDeLOuvrier(t)
-			avecSite(t, horloge, map[string]reponseDuSite{adresse: c.reponse})
+			app, titulaire, _, o := atelierDeLOuvrier(t)
+			avecSite(t, o, map[string]reponseDuSite{adresse: c.reponse})
 
 			lot := lotDe(t, app, titulaire, adresse)
 			traite(t, o, lot)
@@ -1018,10 +1195,11 @@ func TestUnePanneDeLectureDonneUnSortDefinitifALaLigne(t *testing.T) {
 	for _, c := range cas {
 		t.Run(c.nom, func(t *testing.T) {
 			app, titulaire, horloge, _ := atelierDeLOuvrier(t)
-			avecSite(t, horloge, map[string]reponseDuSite{
+			// L'ouvrier d'abord : le site factice prend sa cadence.
+			o := nouvelOuvrier(baseQuiRefuseUneSource{App: app, adresse: c.refusee}, horloge)
+			avecSite(t, o, map[string]reponseDuSite{
 				soumise: sertLaRecette("Tarte", finale, "200 g de farine"),
 			})
-			o := nouvelOuvrier(baseQuiRefuseUneSource{App: app, adresse: c.refusee}, horloge)
 
 			lot := lotDe(t, app, titulaire, soumise)
 			traite(t, o, lot)
@@ -1048,12 +1226,12 @@ func TestUnePanneDeLectureDonneUnSortDefinitifALaLigne(t *testing.T) {
 // TestUnLotEntierementTraitePasseEnTermine : quel que soit le sort de ses
 // lignes. Un lot dont chaque ligne a un sort définitif est terminé.
 func TestUnLotEntierementTraitePasseEnTermine(t *testing.T) {
-	app, titulaire, horloge, o := atelierDeLOuvrier(t)
+	app, titulaire, _, o := atelierDeLOuvrier(t)
 	urls := []string{"https://a.example/1", "https://a.example/2"}
 
 	table := recettesEn(urls)
 	table[urls[1]] = echoueAvec(&recuperation.Erreur{Cause: recuperation.Injoignable, URL: urls[1]})
-	avecSite(t, horloge, table)
+	avecSite(t, o, table)
 
 	lot := lotDe(t, app, titulaire, urls...)
 	traite(t, o, lot)
