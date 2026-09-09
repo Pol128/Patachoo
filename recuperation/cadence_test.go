@@ -224,6 +224,47 @@ func TestSansOptionLeRobotsEstRedemande(t *testing.T) {
 	}
 }
 
+// TestLeRobotsRetenuNeVautQuePourSonHote : ce qui se garde est une décision
+// d'accès, et une décision d'accès partagée entre deux hôtes est un refus qu'on
+// laisse passer.
+//
+// Le cache est donc rangé par origine, et le test le dit dans le sens du refus
+// (DOD.md §3) : l'hôte qui interdit tout reste interdit après qu'un autre a été
+// autorisé, et réciproquement — dans les deux ordres, parce qu'un seul dirait
+// seulement que la première décision ne s'écrase pas.
+func TestLeRobotsRetenuNeVautQuePourSonHote(t *testing.T) {
+	page := func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, "page") }
+	ferme := serveurRobots(t, "User-agent: *\nDisallow: /\n", page)
+	ouvert := serveurRobots(t, "User-agent: *\nDisallow: /prive\n", page)
+
+	cas := []struct {
+		nom   string
+		ordre []*httptest.Server
+	}{
+		{"l'hôte fermé d'abord", []*httptest.Server{ferme, ouvert}},
+		{"l'hôte ouvert d'abord", []*httptest.Server{ouvert, ferme}},
+	}
+
+	for _, c := range cas {
+		t.Run(c.nom, func(t *testing.T) {
+			retenus := &RobotsRetenus{}
+			for _, srv := range c.ordre {
+				_, err := recupere(t, srv.URL+"/recettes/tarte",
+					autorise(ferme, ouvert), AvecRobotsRetenus(retenus))
+				if srv == ouvert {
+					if err != nil {
+						t.Errorf("l'hôte qui n'interdit que /prive a été refusé : %v", err)
+					}
+					continue
+				}
+				if cause := echec(t, err).Cause; cause != RobotsInterdit {
+					t.Errorf("cause %q pour l'hôte qui interdit tout, attendu %q", cause, RobotsInterdit)
+				}
+			}
+		})
+	}
+}
+
 // TestUnRobotsEnPanneNEntrePasDansLeCache : un robots.txt qui répond 500 fait
 // renoncer — le REP demande de s'abstenir quand le serveur est en erreur — mais
 // cette réponse-là est datée, pas définitive.
