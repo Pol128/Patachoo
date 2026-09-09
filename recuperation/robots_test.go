@@ -247,8 +247,32 @@ func TestLeCrawlDelayEstCeluiDuGroupeQuiNousVise(t *testing.T) {
 // TestLeCrawlDelayEstBorne : la valeur vient d'un tiers, et une valeur codée
 // sans test finit augmentée. Un robots.txt qui annonce une journée d'attente
 // tiendrait un lot en otage sans jamais rien refuser explicitement.
+//
+// Les valeurs énormes ne sont pas une curiosité : la borne se compare après
+// conversion en durée, et une durée déborde au-delà d'environ 9,2×10⁹
+// secondes. Un débordement rend une valeur négative, que la borne laisse
+// passer et que le cadencement écarte ensuite — l'hôte retombe alors sur notre
+// seconde par défaut, c'est-à-dire l'inverse de ce que la borne promet.
 func TestLeCrawlDelayEstBorne(t *testing.T) {
-	if lu := delaiAnnoncePar(t, "User-agent: *\nCrawl-delay: 86400\n"); lu != delaiAnnonceMax {
-		t.Errorf("Crawl-delay lu %v, attendu la borne %v", lu, delaiAnnonceMax)
+	cas := []struct {
+		valeur  string
+		attendu time.Duration
+	}{
+		{"86400", delaiAnnonceMax},
+		{"9999999999", delaiAnnonceMax},
+		{"1e300", delaiAnnonceMax},
+		{"Infinity", delaiAnnonceMax},
+		// Ni un délai, ni zéro : NaN n'est ni plus grand ni plus petit que
+		// quoi que ce soit, et aucune comparaison ne l'écarte. Ce qu'on ne
+		// sait pas lire ne ralentit rien.
+		{"NaN", 0},
+	}
+
+	for _, c := range cas {
+		t.Run("Crawl-delay: "+c.valeur, func(t *testing.T) {
+			if lu := delaiAnnoncePar(t, "User-agent: *\nCrawl-delay: "+c.valeur+"\n"); lu != c.attendu {
+				t.Errorf("Crawl-delay lu %v, attendu %v", lu, c.attendu)
+			}
+		})
 	}
 }

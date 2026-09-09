@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -682,28 +683,52 @@ func TestUneURLDejaPresenteNEmetAucuneRequete(t *testing.T) {
 
 // TestDeuxURLsVersLaMemePageNeCreentQuUneRecette : la déduplication porte
 // aussi sur l'URL finale — deux adresses peuvent rediriger vers la même page.
+//
+// Le cas à deux hôtes n'est pas une variante décorative : www.site.fr et
+// site.fr sont deux hôtes, donc deux files menées de front, et la lecture de
+// l'URL finale y précède l'écriture de la recette dans deux goroutines à la
+// fois. Le cas à un seul hôte est séquentiel par construction : il couvre
+// justement celui où le code ne peut pas se tromper.
 func TestDeuxURLsVersLaMemePageNeCreentQuUneRecette(t *testing.T) {
-	app, titulaire, horloge, o := atelierDeLOuvrier(t)
-	const finale = "https://a.example/canonique"
-	urls := []string{"https://a.example/court", "https://a.example/long"}
-
-	avecSite(t, horloge, map[string]reponseDuSite{
-		urls[0]: sertLaRecette("Tarte", finale, "200 g de farine"),
-		urls[1]: sertLaRecette("Tarte", finale, "200 g de farine"),
-	})
-
-	lot := lotDe(t, app, titulaire, urls...)
-	traite(t, o, lot)
-
-	if n := compte(t, app, "recipes"); n != 1 {
-		t.Errorf("%d recettes créées, attendu 1", n)
+	cas := []struct {
+		nom  string
+		urls []string
+		// ordonne dit si l'on sait laquelle des deux lignes écrit la recette.
+		// Sur un seul hôte, c'est la première ; sur deux files de front, ce
+		// n'est pas fixé, et ce n'est pas ce qui est promis.
+		ordonne bool
+	}{
+		{"un seul hôte", []string{"https://a.example/court", "https://a.example/long"}, true},
+		{"deux hôtes menés de front", []string{"https://www.site.fr/tarte", "https://site.fr/tarte"}, false},
 	}
-	statuts := statutsDesLignes(t, app, lot)
-	if statuts[0] != "importee" {
-		t.Errorf("première ligne en %q, attendu « importee »", statuts[0])
-	}
-	if statuts[1] != "deja_presente" {
-		t.Errorf("seconde ligne en %q, attendu « deja_presente »", statuts[1])
+
+	for _, c := range cas {
+		t.Run(c.nom, func(t *testing.T) {
+			app, titulaire, horloge, o := atelierDeLOuvrier(t)
+			const finale = "https://site.fr/canonique"
+
+			avecSite(t, horloge, map[string]reponseDuSite{
+				c.urls[0]: sertLaRecette("Tarte", finale, "200 g de farine"),
+				c.urls[1]: sertLaRecette("Tarte", finale, "200 g de farine"),
+			})
+
+			lot := lotDe(t, app, titulaire, c.urls...)
+			traite(t, o, lot)
+
+			if n := compte(t, app, "recipes"); n != 1 {
+				t.Errorf("%d recettes créées pour une seule page finale, attendu 1", n)
+			}
+
+			statuts := statutsDesLignes(t, app, lot)
+			attendus := []string{"importee", "deja_presente"}
+			if !c.ordonne {
+				statuts = slices.Sorted(slices.Values(statuts))
+				slices.Sort(attendus)
+			}
+			if !slices.Equal(statuts, attendus) {
+				t.Errorf("statuts des lignes %v, attendu %v", statuts, attendus)
+			}
+		})
 	}
 }
 
