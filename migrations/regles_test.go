@@ -84,17 +84,17 @@ func TestLeDownRemetLesReglesANil(t *testing.T) {
 // comptes par l'API REST ; le rendu étant serveur, la fiche résout le nom par
 // app.FindRecordById, qui ne passe pas par les règles.
 //
-// Ce test rougira le jour où PATA-37 verrouillera createRule pour tenir
-// l'inscription fermée : c'est voulu, un tel changement se décide, il ne se
-// constate pas.
-func TestLesReglesDeUsersSontInchangees(t *testing.T) {
+// La création, elle, ne l'est plus : PATA-37 l'a verrouillée à nil pour que
+// l'inscription n'ait qu'une porte, et c'est TestLaCreationDUnCompteEstReserveeAuSuperuser
+// qui la garde désormais. Elle est absente d'ici pour qu'un seul test rougisse
+// si elle change.
+func TestLesAutresReglesDeUsersSontInchangees(t *testing.T) {
 	app := baseNeuve(t)
 
 	proprietaire := "id = @request.auth.id"
 	attendues := map[string]string{
 		"list":   proprietaire,
 		"view":   proprietaire,
-		"create": "",
 		"update": proprietaire,
 		"delete": proprietaire,
 	}
