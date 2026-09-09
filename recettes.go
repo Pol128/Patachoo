@@ -50,11 +50,17 @@ const typeSansClasse = "sans"
 // (PATA-34, PATA-18) s'y ajouteront sans que la liste n'ait à être réécrite.
 type criteres struct {
 	Terme string
+	Page  int
+
+	// Tag est le slug filtré, jamais son nom : c'est le slug que les liens de
+	// la fiche et des vignettes écrivent, et lui seul qui survit à un tag
+	// renommé.
+	Tag string
+
 	// Type est un slug de meal_types, ou la valeur réservée typeSansClasse.
 	// Jamais un libellé, jamais un identifiant PocketBase : c'est ce qui
 	// permet de renommer un type depuis l'administration sans rien casser.
 	Type string
-	Page int
 
 	// Saison porte la valeur d'URL reconnue — l'une des quatre, ou
 	// « maintenant » —, et "" quand le paramètre est absent ou hors table.
@@ -91,10 +97,19 @@ func lisLesCriteres(r *http.Request) criteres {
 
 	return criteres{
 		Terme:  strings.TrimSpace(requete.Get("q")),
-		Type:   strings.TrimSpace(requete.Get("type")),
 		Page:   page,
+		Tag:    strings.TrimSpace(requete.Get("tag")),
+		Type:   strings.TrimSpace(requete.Get("type")),
 		Saison: saison,
 	}
+}
+
+// sansTag rend les mêmes critères, le tag ôté. La remise au début — la page 3
+// d'une liste filtrée ne désigne pas la même chose une fois le filtre retiré —
+// est l'affaire de l'appelant, qui écrit la page qu'il veut dans lien().
+func (c criteres) sansTag() criteres {
+	c.Tag = ""
+	return c
 }
 
 // lien rend l'URL de la liste pour ces critères, page comprise.
@@ -105,6 +120,9 @@ func (c criteres) lien(page int) string {
 	valeurs := url.Values{}
 	if c.Terme != "" {
 		valeurs.Set("q", c.Terme)
+	}
+	if c.Tag != "" {
+		valeurs.Set("tag", c.Tag)
 	}
 	if c.Type != "" {
 		valeurs.Set("type", c.Type)
@@ -250,14 +268,25 @@ type vignette struct {
 	// LienDuType accompagne TypeDePlat et se vide avec lui : le libellé est
 	// cliquable, et une recette sans type ne rend ni l'un ni l'autre.
 	LienDuType string
-	Tags       []string
+
+	// Les tags portent leur adresse comme le type : une vignette est un
+	// endroit d'où l'on part vers ce qu'un tag rassemble.
+	Tags []lienDeFait
 }
 
 // donneesRecettes est ce que la page de liste donne à ses gabarits.
 type donneesRecettes struct {
 	donneesPage
-	Terme      string
-	Vignettes  []vignette
+	Terme     string
+	Vignettes []vignette
+
+	// Tag est le slug filtré, NomDuTag ce que la page en affiche, et SansTag
+	// l'adresse de la même liste sans lui. Les trois sont vides ensemble :
+	// sans filtre, il n'y a ni bandeau à écrire ni sortie à proposer.
+	Tag      string
+	NomDuTag string
+	SansTag  string
+
 	CarnetVide bool
 	Precedente string
 	Suivante   string
@@ -352,9 +381,10 @@ func pageListeRecettes(e *core.RequestEvent) error {
 		// confondre afficherait « votre carnet est vide » à quelqu'un qui a
 		// simplement mal orthographié un mot. Il se déduit sans compter :
 		// la première page, sans critère, ne peut être vide que si le carnet
-		// l'est. Sans critère, et non sans terme — un filtre de type ou de
-		// saison écarte des recettes tout autant qu'une recherche.
-		CarnetVide: len(vignettes) == 0 && criteres.Terme == "" && criteres.Type == "" && criteres.Saison == "" && criteres.Page == 1,
+		// l'est. Sans critère, et non sans terme — un filtre de tag, de type
+		// ou de saison écarte des recettes tout autant qu'une recherche.
+		CarnetVide: len(vignettes) == 0 && criteres.Terme == "" && criteres.Tag == "" &&
+			criteres.Type == "" && criteres.Saison == "" && criteres.Page == 1,
 
 		Saison:       criteres.Saison,
 		SaisonNommee: valeurDeLaSaison(criteres.Saison),
@@ -369,6 +399,13 @@ func pageListeRecettes(e *core.RequestEvent) error {
 	// sortir.
 	if criteres.Type != "" {
 		donnees.RetraitDuType = liens.lienSansType()
+	}
+	// Par « liens » ici aussi : la sortie du filtre de tag ne doit pas réémettre
+	// un type que la page a écarté.
+	if criteres.Tag != "" {
+		donnees.Tag = criteres.Tag
+		donnees.NomDuTag = nomDuTag(e.App, criteres.Tag)
+		donnees.SansTag = liens.sansTag().lien(1)
 	}
 	if criteres.Page > 1 {
 		donnees.Precedente = liens.lien(criteres.Page - 1)
@@ -391,6 +428,21 @@ func pageListeRecettes(e *core.RequestEvent) error {
 // grille ne change pas.
 func recettesDuRang(app core.App, criteres criteres) ([]*core.Record, error) {
 	requete := app.RecordQuery("recipes")
+	if criteres.Tag != "" {
+		// « Au moins un tag correspond », et non « tous » : une recette à deux
+		// tags dont un seul est demandé doit rester, sinon un clic sur un tag
+		// ferait disparaître les recettes les mieux étiquetées.
+		//
+		// recipes.tags est une colonne JSON DEFAULT '[]' NOT NULL, comme les
+		// déclencheurs de l'index de recherche l'exploitent déjà : json_each
+		// s'y applique sans précaution. Le slug demandé passe par les
+		// paramètres, jamais par concaténation.
+		requete = requete.AndWhere(dbx.NewExp(
+			`EXISTS (SELECT 1 FROM json_each(recipes.tags) tag_lie
+			         JOIN tags ON tags.id = tag_lie.value
+			         WHERE tags.slug = {:tag})`,
+			dbx.Params{"tag": criteres.Tag}))
+	}
 	if motif := motifDeRecherche(criteres.Terme); motif != "" {
 		requete = requete.
 			InnerJoin("recipes_fts", dbx.NewExp("recipes_fts.recipe_id = recipes.id")).
@@ -529,7 +581,7 @@ func vignettesDe(app core.App, recettes []*core.Record) ([]vignette, error) {
 			Miniature:  miniature(recette),
 			TypeDePlat: nomDe(typeDePlat),
 			LienDuType: lienDeFiltreParType(typeDePlat),
-			Tags:       nomsDe(recette.ExpandedAll("tags")),
+			Tags:       liensDesTags(recette.ExpandedAll("tags")),
 		})
 	}
 	return vignettes, nil
@@ -551,18 +603,6 @@ func nomDe(enregistrement *core.Record) string {
 		return ""
 	}
 	return enregistrement.GetString("name")
-}
-
-func nomsDe(enregistrements []*core.Record) []string {
-	if len(enregistrements) == 0 {
-		return nil
-	}
-
-	noms := make([]string, 0, len(enregistrements))
-	for _, enregistrement := range enregistrements {
-		noms = append(noms, enregistrement.GetString("name"))
-	}
-	return noms
 }
 
 // --- Le formulaire de création et d'édition --------------------------------
@@ -623,6 +663,13 @@ type formulaireRecette struct {
 
 	TypesDePlat      []optionTypeDePlat
 	ToutesLesSaisons []string
+}
+
+// SaisieDesTags rend le champ de tags tel que son gabarit l'attend. Le
+// formulaire ne propose rien à son ouverture : les suggestions arrivent à la
+// frappe, par la route qui les cherche.
+func (f formulaireRecette) SaisieDesTags() saisieDesTags {
+	return saisieDesTags{Valeur: f.Tags}
 }
 
 // EstLeTypeDePlat et SaisonCochee servent au gabarit, qui ne sait pas
@@ -1021,13 +1068,23 @@ func formulaireDepuis(app core.App, recette *core.Record) (formulaireRecette, er
 	}
 	saisie.Ingredients = strings.Join(brutes, "\n")
 
-	tags, err := app.FindRecordsByIds("tags", recette.GetStringSlice("tags"))
+	identifiants := recette.GetStringSlice("tags")
+	tags, err := app.FindRecordsByIds("tags", identifiants)
 	if err != nil {
 		return saisie, fmt.Errorf("lecture des tags : %w", err)
 	}
-	noms := make([]string, 0, len(tags))
+	// FindRecordsByIds ne rend pas les enregistrements dans l'ordre demandé :
+	// le champ doit suivre l'ordre de la recette, sinon une édition sans
+	// changement réécrirait les tags dans un autre ordre que celui saisi.
+	parIdentifiant := make(map[string]*core.Record, len(tags))
 	for _, tag := range tags {
-		noms = append(noms, tag.GetString("name"))
+		parIdentifiant[tag.Id] = tag
+	}
+	noms := make([]string, 0, len(identifiants))
+	for _, identifiant := range identifiants {
+		if tag := parIdentifiant[identifiant]; tag != nil {
+			noms = append(noms, tag.GetString("name"))
+		}
 	}
 	saisie.Tags = strings.Join(noms, ", ")
 
@@ -1061,7 +1118,7 @@ func rendLeFormulaire(e *core.RequestEvent, saisie formulaireRecette, message st
 		Titre:      saisie.Legende + " — Patachoo",
 		Message:    message,
 		Formulaire: &saisie,
-	})
+	}, "tags-saisie.html")
 }
 
 // messageDeSaisie traduit une erreur d'enregistrement en message affichable,

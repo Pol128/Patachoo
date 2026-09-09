@@ -1,0 +1,9 @@
+<div id="saisie-des-tags">
+<input type="text" id="tags" name="tags" value="{{.Valeur}}"{{if .Autofocus}} autofocus{{end}}
+ hx-get="/tags/suggestions" hx-trigger="keyup changed delay:200ms"
+ hx-target="#suggestions-de-tags" hx-select="#suggestions-de-tags" hx-swap="outerHTML">
+<ul id="suggestions-de-tags" class="suggestions">
+{{range .Suggestions}}<li><button type="button" hx-get="/tags/suggestions?choix={{.Slug}}"
+ hx-include="[name='tags']" hx-target="#saisie-des-tags" hx-swap="outerHTML">{{.Nom}}</button></li>
+{{end}}</ul>
+</div>

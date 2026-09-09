@@ -126,6 +126,21 @@ func rendreAvecStatut(e *core.RequestEvent, statut int, page, fragment string, d
 	return e.HTML(statut, rendu)
 }
 
+// rendLeBlocSeul écrit un bloc seul, quelle que soit l'origine de la requête.
+//
+// Une route qui n'a pas de page complète à proposer — le champ de tags et ses
+// suggestions n'en forment pas une — n'a pas non plus d'arbitrage à faire :
+// elle rend son fichier, et rien autour. Ses données ne sont pas celles d'une
+// page, et ne portent donc pas l'utilisateur courant.
+func rendLeBlocSeul(e *core.RequestEvent, bloc string, donnees any) error {
+	rendu, err := registre.LoadFS(vues, "vues/"+bloc).Render(donnees)
+	if err != nil {
+		return err
+	}
+
+	return e.HTML(http.StatusOK, rendu)
+}
+
 // estHTMX dit si la requête vient de HTMX, qui se signale par un en-tête.
 func estHTMX(e *core.RequestEvent) bool {
 	return e.Request.Header.Get("HX-Request") == "true"

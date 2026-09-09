@@ -965,7 +965,7 @@ func TestLeChampDeRechercheEmporteLeType(t *testing.T) {
 
 	corps := listeDe(t, mux, cookie, "/recettes?type=dessert")
 
-	exigeContient(t, corps, `hx-include="[name='type'],[name='saison']"`, `name="type" value="dessert"`)
+	exigeContient(t, corps, `hx-include="[name='tag'],[name='type'],[name='saison']"`, `name="type" value="dessert"`)
 
 	// La requête que la page fait faire à HTMX, jouée telle quelle : le champ
 	// de recherche part avec le type, et rend donc le fragment filtré.
@@ -1419,7 +1419,7 @@ func TestLaRechercheConserveLeFiltreDeSaison(t *testing.T) {
 	carnetDesSaisons(t, app)
 
 	corps := listeDe(t, mux, cookie, "/recettes?saison=ete")
-	exigeContient(t, corps, `hx-include="[name='type'],[name='saison']"`, `name="saison"`, `value="ete"`)
+	exigeContient(t, corps, `hx-include="[name='tag'],[name='type'],[name='saison']"`, `name="saison"`, `value="ete"`)
 
 	rec := demande(mux, "/recettes?q=&saison=ete", cookie, map[string]string{"HX-Request": "true"})
 	fragment := rec.Body.String()

@@ -1,4 +1,5 @@
 <div id="resultats">
+{{if .NomDuTag}}<p class="filtre">Tag : {{.NomDuTag}} <a href="{{.SansTag}}">Retirer le filtre</a></p>{{end}}
 {{if .Vignettes}}
 <ul class="grille">
 {{range .Vignettes}}
@@ -7,7 +8,7 @@
 {{if .Miniature}}<img class="miniature" src="{{.Miniature}}" alt="" width="300" height="200" loading="lazy">{{end}}
 {{.Titre}}</a>
 {{if .TypeDePlat}}<p class="type-de-plat"><a href="{{.LienDuType}}">{{.TypeDePlat}}</a></p>{{end}}
-{{if .Tags}}<ul class="tags">{{range .Tags}}<li>{{.}}</li>{{end}}</ul>{{end}}
+{{if .Tags}}<ul class="tags">{{range .Tags}}<li><a href="{{.URL}}">{{.Texte}}</a></li>{{end}}</ul>{{end}}
 </li>
 {{end}}
 </ul>
@@ -15,6 +16,8 @@
 <p class="absence">Votre carnet est vide. <a href="/recettes/nouvelle">Ajoutez votre première recette</a>.</p>
 {{else if .Terme}}
 <p class="absence">Aucune recette ne correspond à « {{.Terme}} ».</p>
+{{else if .NomDuTag}}
+<p class="absence">Aucune recette ne porte le tag « {{.NomDuTag}} ».</p>
 {{else}}
 <p class="absence">Aucune recette sur cette page.</p>
 {{end}}

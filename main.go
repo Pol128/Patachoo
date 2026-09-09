@@ -91,6 +91,7 @@ func brancheLesRoutes(routeur *router.Router[*core.RequestEvent]) {
 	routeur.POST("/connexion", connexion)
 	routeur.POST("/deconnexion", deconnexion)
 	brancheLesRecettes(routeur)
+	brancheLesTags(routeur)
 	brancheLesCommentaires(routeur)
 	brancheLImport(routeur)
 	brancheLImportEnLot(routeur)

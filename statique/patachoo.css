@@ -296,10 +296,40 @@ footer {
 	border-radius: 999px;
 }
 
+/* Le filtre actif se lit avant les résultats, et porte sa sortie avec lui :
+   un filtre posé d'un clic doit se retirer d'un clic. */
+.filtre {
+	margin: 0 0 1rem;
+	font-size: 0.9rem;
+	color: #6b675f;
+}
+
 /* L'absence de résultat se lit comme une phrase, pas comme une erreur : ce
    n'est pas une panne, c'est une réponse. */
 .absence {
 	color: #6b675f;
+}
+
+/* Les suggestions se posent sous le champ, en une ligne qui va à la ligne :
+   elles proposent, elles n'occupent pas la page. Vides, elles ne laissent
+   aucun creux — la liste n'a alors ni bordure ni marge à elle. */
+.suggestions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.35rem;
+	margin: 0.35rem 0 0;
+	padding: 0;
+	list-style: none;
+}
+
+.suggestions button {
+	padding: 0.1rem 0.55rem;
+	border: 1px solid var(--trait);
+	border-radius: 999px;
+	background: none;
+	font: inherit;
+	font-size: 0.85rem;
+	cursor: pointer;
 }
 
 .pagination {

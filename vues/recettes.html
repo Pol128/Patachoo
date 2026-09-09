@@ -8,10 +8,11 @@
      par la même route. Un seul hx-include les ramasse, par leur nom : une
      classe serait un crochet de style qui ne stylise rien, et le garde-fou de
      pages_test.go a raison de le refuser sur un champ invisible. */}}
+{{if .Tag}}<input type="hidden" name="tag" value="{{.Tag}}">{{end}}
 {{with .TypeConserve}}<input type="hidden" name="type" value="{{.}}">{{end}}
 {{if .Saison}}<input type="hidden" name="saison" value="{{.Saison}}">{{end}}
 <input type="search" id="q" name="q" value="{{.Terme}}" placeholder="titre, ingrédient ou tag"
- hx-get="/recettes" hx-include="[name='type'],[name='saison']" hx-trigger="keyup changed delay:300ms" hx-target="#resultats" hx-swap="outerHTML">
+ hx-get="/recettes" hx-include="[name='tag'],[name='type'],[name='saison']" hx-trigger="keyup changed delay:300ms" hx-target="#resultats" hx-swap="outerHTML">
 <button type="submit">Rechercher</button>
 </form>
 <nav class="types" aria-label="Types de plat">
