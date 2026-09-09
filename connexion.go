@@ -22,8 +22,8 @@ const messageEchecConnexion = "Courriel ou mot de passe incorrect."
 // messageEchecConnexion ferme.
 const messageDebitDepasse = "Trop de tentatives de connexion. Réessayez dans une minute."
 
-// prioriteRattrapageDuDebit place notre rattrapage juste au-dessus du limiteur
-// global de PocketBase.
+// prioriteRattrapageDuDebit place notre rattrapage juste en amont du limiteur
+// global de PocketBase, de façon à l'envelopper.
 //
 // Les middlewares du routeur et ceux de la route sont fondus dans un même
 // crochet trié par priorité croissante (tools/router/router.go) : une priorité
