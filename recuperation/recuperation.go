@@ -106,6 +106,12 @@ type options struct {
 	// transport court-circuite la pile réseau. Réservé aux tests qui vérifient
 	// qu'aucune requête ne part.
 	transport http.RoundTripper
+	// cadence espace les requêtes sortantes, hôte par hôte. Nil : elles
+	// partent dès qu'on les fait.
+	cadence Cadence
+	// robots garde le robots.txt déjà lu de chaque hôte. Nil : il est
+	// redemandé à chaque appel.
+	robots *RobotsRetenus
 }
 
 // Option règle un appel.
@@ -119,6 +125,42 @@ func AvecDelaiMax(d time.Duration) Option {
 // AvecTailleMax borne le corps lu.
 func AvecTailleMax(octets int64) Option {
 	return func(o *options) { o.tailleMax = octets }
+}
+
+// Cadence est le rythme que l'appelant impose aux requêtes que ce paquet émet,
+// hôte par hôte.
+//
+// Un appel en émet deux : le robots.txt de l'hôte, que l'appelant n'a pas
+// demandé, puis la page. Sans cadence elles partent collées — un appelant qui
+// espace ses appels d'une seconde en envoie tout de même deux dans le même
+// instant, et sa politesse ne vaut que pour la couture qu'il tient. Avec,
+// chacun des deux échanges attend son tour, robots.txt compris.
+//
+// Retiens rapporte le Crawl-delay lu dans le robots.txt. Il est rapporté avant
+// la requête de page, et non après l'appel : c'est ce qui le fait valoir dès
+// cette page-là.
+type Cadence interface {
+	AttendSonTour(ctx context.Context, hote string) error
+	Retiens(hote string, annonce time.Duration)
+}
+
+// AvecCadence fait passer chaque requête sortante par le tour de rôle que
+// l'appelant tient.
+//
+// L'attente qu'elle impose n'est comptée dans aucune borne de temps : voir
+// echange.
+func AvecCadence(c Cadence) Option {
+	return func(o *options) { o.cadence = c }
+}
+
+// AvecRobotsRetenus garde le robots.txt de chaque hôte au lieu de le redemander
+// à chaque page.
+//
+// Une fournée de vingt pages sur un même site lui coûte alors vingt-et-une
+// requêtes et non quarante. Le cache appartient à l'appelant : c'est lui qui
+// décide de sa durée de vie — celle d'une fournée —, et rien ici ne le périme.
+func AvecRobotsRetenus(r *RobotsRetenus) Option {
+	return func(o *options) { o.robots = r }
 }
 
 // Les trois options qui suivent ouvrent les points d'injection du paquet, et

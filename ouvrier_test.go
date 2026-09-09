@@ -197,7 +197,7 @@ func avecSite(t *testing.T, h *horlogeVirtuelle, reponses map[string]reponseDuSi
 	return s
 }
 
-func (s *siteFactice) recupere(_ context.Context, adresse string) (recuperation.Page, error) {
+func (s *siteFactice) recupere(_ context.Context, adresse string, _ ...recuperation.Option) (recuperation.Page, error) {
 	s.mu.Lock()
 	s.vus = append(s.vus, appelSortant{url: adresse, hote: hoteDe(adresse), instant: s.horloge.Maintenant()})
 	rendue, connue := s.reponses[adresse]
@@ -496,7 +496,7 @@ func TestLOuvrierDemarreAvecLeServeurEtSArreteAvecLui(t *testing.T) {
 	lot := lotDe(t, app, titulaire, "https://a.example/1")
 
 	partie := make(chan struct{}, 1)
-	avecRecuperateur(t, func(ctx context.Context, _ string) (recuperation.Page, error) {
+	avecRecuperateur(t, func(ctx context.Context, _ string, _ ...recuperation.Option) (recuperation.Page, error) {
 		select {
 		case partie <- struct{}{}:
 		default:
