@@ -3,10 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 
 	"github.com/Pol128/Patachoo/jsonld"
@@ -41,7 +44,12 @@ type horlogeVirtuelle struct {
 	reveil     *sync.Cond
 	maintenant time.Time
 	files      int
-	echeances  []*time.Time
+	// sommet est le plus grand nombre de files menées de front depuis le
+	// début. Une file est séquentielle — une requête à la fois, puis
+	// l'attente — donc c'est aussi le plus grand nombre de requêtes
+	// sortantes qui ont été en vol ensemble.
+	sommet    int
+	echeances []*time.Time
 }
 
 func nouvelleHorlogeVirtuelle() *horlogeVirtuelle {
@@ -62,6 +70,9 @@ func (h *horlogeVirtuelle) Files(delta int) {
 	defer h.mu.Unlock()
 
 	h.files += delta
+	if h.files > h.sommet {
+		h.sommet = h.files
+	}
 	// Une file qui se ferme peut être la dernière que les autres attendaient.
 	h.reveil.Broadcast()
 }
@@ -133,6 +144,15 @@ func (h *horlogeVirtuelle) retire(echeance *time.Time) {
 // depuisLeDepart rend le temps écoulé sur l'horloge, en secondes de cadence.
 func depuisLeDepart(instant time.Time) time.Duration {
 	return instant.Sub(departDesTests)
+}
+
+// sommetDesFiles rend le plus grand nombre de files que l'ouvrier a menées de
+// front.
+func (h *horlogeVirtuelle) sommetDesFiles() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	return h.sommet
 }
 
 // --- Le site factice --------------------------------------------------------
@@ -378,6 +398,49 @@ func TestLOuvrierMeneLesHotesDeFront(t *testing.T) {
 	}
 }
 
+// TestLOuvrierBorneLesHotesMenesDeFront : filesMax est la seule borne du
+// produit sur le nombre de requêtes sortantes simultanées. Une file est
+// séquentielle — une requête, puis l'attente — donc compter les files menées
+// de front, c'est compter les requêtes en vol.
+//
+// Le test fige aussi ce que le découpage en vagues coûte : au-delà de filesMax
+// hôtes, le suivant attend que la vague en cours soit finie. Le critère
+// « durée totale égale à celle du plus gros hôte » ne vaut donc que jusqu'à
+// filesMax hôtes, et c'est assumé.
+func TestLOuvrierBorneLesHotesMenesDeFront(t *testing.T) {
+	app, titulaire, horloge, o := atelierDeLOuvrier(t)
+
+	// Un hôte lent en tête de la première vague, filesMax-1 hôtes d'une seule
+	// URL pour la remplir, et un hôte de trop juste derrière.
+	lent := []string{"https://lent.example/1", "https://lent.example/2", "https://lent.example/3"}
+	urls := append([]string{}, lent...)
+	for rang := 1; rang < filesMax; rang++ {
+		urls = append(urls, fmt.Sprintf("https://h%d.example/1", rang))
+	}
+	urls = append(urls, "https://detrop.example/1")
+
+	site := avecSite(t, horloge, recettesEn(urls))
+	traite(t, o, lotDe(t, app, titulaire, urls...))
+
+	if len(site.appels()) != len(urls) {
+		t.Fatalf("%d requêtes émises, attendu %d", len(site.appels()), len(urls))
+	}
+	if sommet := horloge.sommetDesFiles(); sommet > filesMax {
+		t.Errorf("%d hôtes menés de front, attendu au plus %d : la borne ne tient pas", sommet, filesMax)
+	}
+
+	// L'hôte de trop n'a pas démarré avant que l'hôte lent de la première
+	// vague ait fini ses trois URLs, soit deux secondes de cadence.
+	enTrop := site.appelsVers("detrop.example")
+	if len(enTrop) != 1 {
+		t.Fatalf("%d requêtes vers l'hôte de trop, attendu 1", len(enTrop))
+	}
+	if attente := depuisLeDepart(enTrop[0].instant); attente != 2*delaiEntreRequetes {
+		t.Errorf("l'hôte au-delà de la borne a démarré à %v, attendu %v : la vague suivante ne devrait "+
+			"pas démarrer avant que la précédente soit finie", attente, 2*delaiEntreRequetes)
+	}
+}
+
 // TestLOuvrierSuitLeCrawlDelayAnnonce : quand l'hôte demande plus que notre
 // seconde, c'est lui qui décide — et pour lui seul.
 func TestLOuvrierSuitLeCrawlDelayAnnonce(t *testing.T) {
@@ -417,6 +480,56 @@ func TestLOuvrierSuitLeCrawlDelayAnnonce(t *testing.T) {
 }
 
 // --- La reprise -------------------------------------------------------------
+
+// TestLOuvrierDemarreAvecLeServeurEtSArreteAvecLui : brancheLOuvrier est le
+// seul chemin par lequel l'ouvrier tourne en production. Sans ce test, retirer
+// son appel de main() laisserait la suite entièrement verte.
+//
+// L'arrêt est la seconde moitié, et c'est celle qui n'a rien pour la retenir :
+// OnTerminate ne doit rendre la main qu'une fois la ligne en cours rendue à la
+// file, sur une base encore ouverte. C'est cet état-là que la reprise du
+// démarrage suivant attend.
+func TestLOuvrierDemarreAvecLeServeurEtSArreteAvecLui(t *testing.T) {
+	app := baseNeuveAvec(t, analyseurDeTest(t))
+	titulaire := compteParDefaut(t, app)
+	lot := lotDe(t, app, titulaire, "https://a.example/1")
+
+	partie := make(chan struct{}, 1)
+	avecRecuperateur(t, func(ctx context.Context, _ string) (recuperation.Page, error) {
+		select {
+		case partie <- struct{}{}:
+		default:
+		}
+		<-ctx.Done()
+		// Rendre la ligne à la file prend un instant. Sans l'attente
+		// d'OnTerminate, le test lirait la base avant cette écriture-là.
+		time.Sleep(50 * time.Millisecond)
+		return recuperation.Page{}, ctx.Err()
+	})
+
+	brancheLOuvrier(app)
+	// Un test qui échoue avant l'arrêt laisserait l'ouvrier tourner sur une
+	// base que le nettoyage referme. Arrêter deux fois est sans effet.
+	t.Cleanup(func() { _ = app.OnTerminate().Trigger(&core.TerminateEvent{App: app}) })
+
+	if err := app.OnServe().Trigger(&core.ServeEvent{App: app}); err != nil {
+		t.Fatalf("démarrage du serveur : %v", err)
+	}
+	select {
+	case <-partie:
+	case <-time.After(10 * time.Second):
+		t.Fatal("aucune requête n'est partie : l'ouvrier n'a pas démarré avec le serveur")
+	}
+
+	if err := app.OnTerminate().Trigger(&core.TerminateEvent{App: app}); err != nil {
+		t.Fatalf("arrêt du serveur : %v", err)
+	}
+
+	if statut := lignesDuLot(t, app, lot)[0].GetString("status"); statut != "a_faire" {
+		t.Errorf("ligne en %q quand OnTerminate a rendu la main, attendu « a_faire » : "+
+			"l'arrêt n'a pas attendu l'ouvrier", statut)
+	}
+}
 
 // TestUneLigneRestEeEnCoursEstReprise : un processus arrêté au mauvais moment
 // laisse une ligne « en_cours » que personne ne réclamerait plus.
@@ -827,6 +940,79 @@ func TestLesCausesDEchecSontEnregistrees(t *testing.T) {
 			}
 			if n := compte(t, app, "recipes"); n != 0 {
 				t.Errorf("%d recettes créées pour une URL en échec, attendu 0", n)
+			}
+		})
+	}
+}
+
+// baseQuiRefuseUneSource fait échouer la recherche d'une source précise, et
+// rien d'autre. C'est la panne qu'aucun site ne provoque : une base
+// indisponible, un disque plein, un schéma en cours de migration.
+type baseQuiRefuseUneSource struct {
+	core.App
+	adresse string
+}
+
+var errBaseIndisponible = errors.New("base indisponible")
+
+func (b baseQuiRefuseUneSource) FindFirstRecordByFilter(
+	collection any,
+	filtre string,
+	params ...dbx.Params,
+) (*core.Record, error) {
+	for _, jeu := range params {
+		if jeu["url"] == b.adresse {
+			return nil, errBaseIndisponible
+		}
+	}
+	return b.App.FindFirstRecordByFilter(collection, filtre, params...)
+}
+
+// TestUnePanneDeLectureDonneUnSortDefinitifALaLigne : une ligne doit toujours
+// finir par un sort définitif, y compris quand c'est notre côté qui lâche.
+//
+// Laissée en cours, personne ne la réclamerait plus : l'ouvrier ne prend que
+// ce qui est à faire, et les lignes interrompues ne sont rendues qu'au
+// démarrage. Le lot resterait en cours pour toujours, rebalayé toutes les
+// secondes jusqu'au prochain redémarrage du processus.
+func TestUnePanneDeLectureDonneUnSortDefinitifALaLigne(t *testing.T) {
+	const soumise = "https://a.example/court"
+	const finale = "https://a.example/canonique"
+
+	cas := []struct {
+		nom     string
+		refusee string
+	}{
+		// La déduplication porte aux deux bouts, et les deux lectures peuvent
+		// échouer : avant l'appel sur l'adresse soumise, après lui sur l'URL
+		// finale.
+		{"avant l'appel", soumise},
+		{"après l'appel", finale},
+	}
+
+	for _, c := range cas {
+		t.Run(c.nom, func(t *testing.T) {
+			app, titulaire, horloge, _ := atelierDeLOuvrier(t)
+			avecSite(t, horloge, map[string]reponseDuSite{
+				soumise: sertLaRecette("Tarte", finale, "200 g de farine"),
+			})
+			o := nouvelOuvrier(baseQuiRefuseUneSource{App: app, adresse: c.refusee}, horloge)
+
+			lot := lotDe(t, app, titulaire, soumise)
+			traite(t, o, lot)
+
+			ligne := lignesDuLot(t, app, lot)[0]
+			if statut := ligne.GetString("status"); statut != "echec" {
+				t.Errorf("ligne en %q, attendu « echec » : une panne de notre côté ne lui a donné aucun sort", statut)
+			}
+			if cause := ligne.GetString("cause"); cause != causeEnregistrement {
+				t.Errorf("cause %q, attendu %q", cause, causeEnregistrement)
+			}
+			if statut := relis(t, app, "imports", lot).GetString("status"); statut != "termine" {
+				t.Errorf("lot en %q, attendu « termine » : une ligne sans sort le retient à jamais", statut)
+			}
+			if n := compte(t, app, "recipes"); n != 0 {
+				t.Errorf("%d recettes créées, attendu 0", n)
 			}
 		})
 	}
