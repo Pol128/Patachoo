@@ -24,6 +24,13 @@ jobs:
     permissions:
       contents: read
 
+    # La passe longue, et elle seule : elle contient tout ce que contient la
+    # passe courte, la doubler ne ferait que payer une seconde fois l'accès
+    # réseau de govulncheck. C'est un `env`, pas une commande — le script reste
+    # la seule définition du vert, et la règle de l'en-tête tient.
+    env:
+      AVEC_RACE: "1"
+
     steps:
       - uses: actions/checkout@v4
 

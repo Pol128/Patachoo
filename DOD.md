@@ -7,11 +7,26 @@ ne peut pas cocher est une intention, pas une définition.
 ## 1. Ça compile et c'est propre
 
 ```sh
-./verifie          # gofmt, go vet, go test, govulncheck
+./verifie                # gofmt, go vet, go test, govulncheck — ~2 min
+AVEC_RACE=1 ./verifie    # la même chose avec -race — ~20 min
 ```
 
 Le script échoue au premier manquement. C'est le minimum, pas la DoD complète :
 les points 2 à 5 ne s'automatisent pas.
+
+**Deux passes, un seul script.** `./verifie` nu est la boucle courte, à lancer à
+chaque geste. `AVEC_RACE=1 ./verifie` lance les mêmes tests sous le détecteur de
+courses : c'est ce que la CI exécute à chaque poussée, et ce qu'il faut avoir
+passé soi-même avant d'ouvrir une demande de fusion qui touche à du code
+concurrent. Le produit est devenu concurrent — une goroutine par file d'hôte,
+une cadence et un cache partagés —, et une course ne se voit dans aucune autre
+commande du dépôt.
+
+La passe longue dure une vingtaine de minutes là où la courte en dure deux : le
+détecteur multiplie par dix la durée d'un paquet qui monte une base PocketBase,
+et le paquet racine en monte une par test. Elle porte donc un `-timeout`
+explicite, largement au-dessus de cette durée — un rouge doit parler d'une
+course, jamais d'un dépassement de délai.
 
 ## 2. Tests unitaires
 

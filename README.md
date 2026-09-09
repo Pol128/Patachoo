@@ -19,9 +19,18 @@ L'interface d'administration répond sur `/_/`, l'API REST sur `/api/`.
 
 ```sh
 go test ./...                       # les tests, avant tout le reste
-./verifie                           # gofmt, vet, tests, govulncheck
+./verifie                           # gofmt, vet, tests, govulncheck — ~2 min
+AVEC_RACE=1 ./verifie               # la même chose avec -race — ~20 min
 go build -o Patachoo .              # un binaire, rien d'autre à installer
 ```
+
+`./verifie` nu est la boucle courte, celle qu'on lance à chaque geste.
+`AVEC_RACE=1 ./verifie` ajoute le détecteur de courses de Go : c'est la passe
+que la CI lance à chaque poussée, et celle à lancer soi-même avant d'ouvrir une
+demande de fusion qui touche à du code concurrent. Elle dure une vingtaine de
+minutes — le détecteur multiplie par dix la durée d'un paquet qui monte une
+base PocketBase, et le paquet racine en monte une par test. Ce n'est pas
+qu'elle est bloquée.
 
 Ce qu'il faut avoir fait pour dire qu'une tâche est terminée est écrit dans
 [DOD.md](DOD.md) — tests unitaires, tests de sécurité, et la règle qui remplace

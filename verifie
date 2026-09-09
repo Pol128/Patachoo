@@ -17,8 +17,23 @@ fi
 echo "→ go vet"
 go vet ./...
 
-echo "→ go test"
-go test ./...
+# Deux passes, un seul script : AVEC_RACE=1 ajoute le détecteur de courses.
+# Un second script, ce seraient deux définitions du vert dont une seule reste à
+# jour — c'est exactement ce que l'en-tête de .github/workflows/verifie.yml
+# refuse. La CI lance la passe longue, elle seule : elle contient la courte.
+#
+# Le -timeout n'est posé que là. Le détecteur multiplie la durée par dix là où
+# un paquet monte une base PocketBase, et le paquet racine en monte une par
+# test : le défaut de go test, dix minutes par paquet, est dépassé. Un rouge
+# doit parler d'une course, pas d'un délai. Jamais -timeout=0 en revanche : un
+# test bloqué doit finir par rendre la main et sa pile.
+if [ "${AVEC_RACE:-}" = "1" ]; then
+	echo "→ go test -race"
+	go test -race -timeout=60m ./...
+else
+	echo "→ go test"
+	go test ./...
+fi
 
 echo "→ govulncheck"
 if [ "${SANS_RESEAU:-}" = "1" ]; then
