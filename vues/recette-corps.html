@@ -2,7 +2,7 @@
 <h1>{{.Titre}}</h1>
 {{with .Image}}<img class="illustration" src="{{.}}" alt="">{{end}}
 {{with .Faits}}<dl class="faits">
-{{range .}}<dt>{{.Libelle}}</dt><dd>{{if .Lien}}<a href="{{.Lien}}">{{.Valeur}}</a>{{else}}{{.Valeur}}{{end}}</dd>
+{{range .}}<dt>{{.Libelle}}</dt><dd>{{if .Liens}}{{range $rang, $lien := .Liens}}{{if $rang}}, {{end}}<a href="{{$lien.URL}}">{{$lien.Texte}}</a>{{end}}{{else}}{{.Valeur}}{{end}}</dd>
 {{end}}</dl>{{end}}
 {{with .Source}}<p>Source : {{if .URL}}<a href="{{.URL}}" rel="noreferrer">{{.Nom}}</a>{{else}}{{.Nom}}{{end}}</p>{{end}}
 {{with .Ingredients}}<h2>Ingrédients</h2>
