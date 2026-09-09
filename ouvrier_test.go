@@ -631,6 +631,56 @@ func TestLArretRendLaLigneEnCoursAFaire(t *testing.T) {
 	}
 }
 
+// TestUnLotDontLeCompteAEteSupprimeNeBloquePlusLOuvrier : le constat de
+// PATA-45, monté tel quel. Un lot dont le titulaire a été supprimé n'est plus
+// vu par l'ouvrier — il n'existe plus, et la reprise passe sans rien laisser
+// d'ouvert.
+//
+// Les deux premières exigences — la reprise ne rend pas d'erreur, elle ne
+// laisse aucun lot « en_cours » — tiennent déjà sans la cascade, et c'est un
+// écart avec l'énoncé du constat : PocketBase 0.39.11 ne laisse pas de
+// relation pendante en base, il vide created_by par un SaveNoValidate
+// (core/record_model.go, deleteRefRecords). Le lot relu se clôt donc
+// normalement. L'erreur « Failed to find all relation records with the
+// provided ids » ne frappe qu'un exemplaire lu *avant* la suppression, que
+// l'ouvrier garde en main le temps d'un tour de lot. C'est la troisième
+// exigence — le lot n'existe plus du tout — qui porte la cascade : elle rougit
+// si on la retire.
+func TestUnLotDontLeCompteAEteSupprimeNeBloquePlusLOuvrier(t *testing.T) {
+	app, titulaire, _, o := atelierDeLOuvrier(t)
+	lot := lotDe(t, app, titulaire, "https://a.example/1")
+
+	// La ligne est déjà menée à son terme : il ne reste que la clôture, qui
+	// est l'endroit exact où le constat échouait. Aucun site n'est monté,
+	// puisque plus rien n'est à faire.
+	ligne := lignesDuLot(t, app, lot)[0]
+	ligne.Set("status", "importee")
+	if err := app.Save(ligne); err != nil {
+		t.Fatalf("ligne menée à son terme : %v", err)
+	}
+
+	if err := app.Delete(titulaire); err != nil {
+		t.Fatalf("suppression du compte : %v", err)
+	}
+
+	if err := o.reprend(context.Background()); err != nil {
+		t.Fatalf("reprise après la suppression du compte : %v", err)
+	}
+
+	restants, err := app.CountRecords("imports", dbx.HashExp{"status": "en_cours"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restants != 0 {
+		t.Errorf("%d lot(s) encore « en_cours » après la reprise : l'ouvrier les rebalaiera sans fin",
+			restants)
+	}
+	if _, err := app.FindRecordById("imports", lot.Id); err == nil {
+		t.Error("le lot survit à la suppression de son titulaire : l'ouvrier le reverra, " +
+			"et un exemplaire lu avant la suppression ne se sauvegardera plus")
+	}
+}
+
 // --- La déduplication -------------------------------------------------------
 
 // TestReimporterLeMemeLotNeCreeAucunDoublon : la fournée est refaite, le
