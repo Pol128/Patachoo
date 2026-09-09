@@ -31,7 +31,16 @@ func baseNeuveAvec(t *testing.T, a *analyseur) core.App {
 	t.Helper()
 
 	app := core.NewBaseApp(core.BaseAppConfig{DataDir: t.TempDir()})
-	t.Cleanup(func() { _ = app.ResetBootstrapState() })
+	// Terminer avant de réinitialiser, et non l'inverse : c'est OnTerminate qui
+	// arrête le minuteur de purge du journal, et le commentaire de PocketBase
+	// au-dessus du crochet dit pourquoi l'ordre compte — « to avoid races with
+	// ResetBootstrap user calls ». Ce nettoyage-ci est posé le premier, donc
+	// dépilé le dernier : il passe après ceux du test. Déclencher OnTerminate
+	// une fois de plus est sans effet.
+	t.Cleanup(func() {
+		_ = app.OnTerminate().Trigger(&core.TerminateEvent{App: app})
+		_ = app.ResetBootstrapState()
+	})
 
 	brancheLesHooks(app, a)
 
