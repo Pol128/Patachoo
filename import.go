@@ -197,18 +197,35 @@ func ceQuiAEteTrouve(ctx context.Context, adresse string) (preRemplissage, strin
 		return trouve, messageDeLEchec(err)
 	}
 
-	trouve.Titre = recette.Titre
-	trouve.Portions = premierEntier(recette.Portions)
-	trouve.TempsPreparation = minutesAffichees(recette.PreparationMin)
-	trouve.TempsCuisson = minutesAffichees(recette.CuissonMin)
-	trouve.Instructions = strings.Join(recette.Etapes, "\n")
-	trouve.Ingredients = strings.Join(recette.Ingredients, "\n")
-	// L'image est montrée à distance, pas attachée : le téléchargement est
-	// PATA-10, et une recette importée d'ici là est enregistrée sans image.
-	trouve.ImageDistante = recette.Image
+	champs := preRemplissageDe(recette)
+	champs.SourceURL = trouve.SourceURL
+	champs.SourceNom = trouve.SourceNom
+	return champs, ""
+}
+
+// preRemplissageDe rend, d'une recette extraite, les champs qu'elle garnit.
+//
+// C'est la correspondance JSON-LD → recipes, et elle n'est écrite qu'une fois :
+// l'import unitaire la rend dans un formulaire à valider, l'import en lot
+// (PATA-42) l'enregistre sans passer par personne. Deux recettes du même
+// calcul divergeraient au premier cas particulier.
+//
+// La source n'en fait pas partie : elle vient de la page récupérée, pas de son
+// balisage, et l'appelant la pose lui-même.
+func preRemplissageDe(recette jsonld.Recette) preRemplissage {
 	// La description est lue par l'extraction et ignorée ici : la collection
 	// n'a pas de champ pour elle, et on ne la mélange pas aux instructions.
-	return trouve, ""
+	return preRemplissage{
+		Titre:            recette.Titre,
+		Portions:         premierEntier(recette.Portions),
+		TempsPreparation: minutesAffichees(recette.PreparationMin),
+		TempsCuisson:     minutesAffichees(recette.CuissonMin),
+		Instructions:     strings.Join(recette.Etapes, "\n"),
+		Ingredients:      strings.Join(recette.Ingredients, "\n"),
+		// L'image est montrée à distance, pas attachée : le téléchargement est
+		// PATA-10, et une recette importée d'ici là est enregistrée sans image.
+		ImageDistante: recette.Image,
+	}
 }
 
 // nomDuSite retient le nom que le site se donne, ou son hôte à défaut.

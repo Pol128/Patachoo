@@ -67,6 +67,11 @@ type Page struct {
 	Corps       []byte
 	URLFinale   string
 	TypeContenu string
+	// DelaiAnnonce est le Crawl-delay que le robots.txt de l'hôte demande, ou
+	// zéro s'il n'en demande pas. Ce paquet le lit et ne l'applique pas : il va
+	// chercher une page, il n'en enchaîne pas. C'est l'appelant qui enchaîne
+	// — l'import en lot — qui espace ses requêtes de ce que l'hôte réclame.
+	DelaiAnnonce time.Duration
 }
 
 // Erreur porte la cause nommée, le code HTTP quand il y en a eu un, et l'URL sur
@@ -209,6 +214,9 @@ type recuperateur struct {
 	o      options
 	client *http.Client
 	refus  *Erreur
+	// delaiAnnonce est retenu à la lecture du robots.txt, et reporté sur la
+	// page rendue.
+	delaiAnnonce time.Duration
 }
 
 // pile monte le transport HTTP. Le proxy est retiré : un proxy déclaré dans
@@ -379,9 +387,10 @@ func (r *recuperateur) page(ctx context.Context, cible *url.URL) (Page, error) {
 	}
 
 	return Page{
-		Corps:       corps,
-		URLFinale:   finale,
-		TypeContenu: reponse.Header.Get("Content-Type"),
+		Corps:        corps,
+		URLFinale:    finale,
+		TypeContenu:  reponse.Header.Get("Content-Type"),
+		DelaiAnnonce: r.delaiAnnonce,
 	}, nil
 }
 
@@ -413,9 +422,13 @@ func (r *recuperateur) robotsInterdit(ctx context.Context, cible *url.URL) *Erre
 	if err != nil {
 		return r.echec(err, adresse, Injoignable)
 	}
-	if !analyseRobots(string(texte)).autorise(chemin(cible), Agent) {
+	lu := analyseRobots(string(texte))
+	if !lu.autorise(chemin(cible), Agent) {
 		return &Erreur{Cause: RobotsInterdit, URL: cible.String()}
 	}
+	// Retenu même quand rien n'est interdit : c'est le cas ordinaire, et c'est
+	// justement là qu'un appelant qui enchaîne en a besoin.
+	r.delaiAnnonce = lu.delaiPour(Agent)
 	return nil
 }
 
