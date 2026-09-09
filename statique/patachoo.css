@@ -178,6 +178,32 @@ footer {
 	font: inherit;
 }
 
+/* La barre des types se replie sur plusieurs lignes plutôt que de déborder :
+   la collection en porte huit à l'installation, et rien n'empêche d'en ajouter
+   depuis l'administration. */
+.types ul {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.35rem 0.75rem;
+	margin: 0 0 1rem;
+	padding: 0;
+	list-style: none;
+	font-size: 0.9rem;
+}
+
+/* Le filtre posé se lit comme une phrase, et sa sortie est à côté de son nom :
+   un critère posé d'un clic doit se retirer d'un clic. */
+.filtre-actif {
+	margin: 0 0 1rem;
+	color: #6b675f;
+	font-size: 0.9rem;
+}
+
+.filtre-actif .nom {
+	font-weight: 600;
+	color: inherit;
+}
+
 /* La barre des filtres, sous la recherche : une ligne discrète, qui ne dispute
    pas la place au champ de recherche ni à la grille. */
 .filtres {

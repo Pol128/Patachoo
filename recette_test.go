@@ -701,6 +701,50 @@ func TestLImageEstServieParSaMiniature(t *testing.T) {
 	}
 }
 
+// --- Le type de plat cliquable --------------------------------------------
+
+func TestLaFicheRendLeTypeDePlatCliquable(t *testing.T) {
+	app, mux, cookie := serveurConnecte(t)
+	typeDePlat := premierTypeDePlat(t, app)
+	recette := recetteEnBase(t, app, map[string]any{"meal_type": typeDePlat.Id})
+
+	corps := fiche(mux, cookie, recette.Id).Body.String()
+
+	attendu := `<a href="/recettes?type=` + typeDePlat.GetString("slug") + `">` + typeDePlat.GetString("name") + `</a>`
+	if !strings.Contains(corps, attendu) {
+		t.Errorf("la fiche ne rend pas %q :\n%s", attendu, corps)
+	}
+}
+
+// Une recette sans type de plat ne rend ni lien, ni libellé orphelin.
+func TestLaFicheDUneRecetteSansTypeNeRendAucunLienDeType(t *testing.T) {
+	app, mux, cookie := serveurConnecte(t)
+	recette := recetteEnBase(t, app, map[string]any{"title": "Pain perdu"})
+
+	corps := fiche(mux, cookie, recette.Id).Body.String()
+
+	if strings.Contains(corps, "?type=") {
+		t.Errorf("la fiche d'une recette sans type de plat porte un lien de filtre :\n%s", corps)
+	}
+}
+
+// Le libellé se saisit depuis l'administration : c'est une donnée comme une
+// autre, et la fiche est l'un de ses trois chemins de rendu.
+func TestLaFicheEchappeLeLibelleDuTypeDePlat(t *testing.T) {
+	app, mux, cookie := serveurConnecte(t)
+	malveillant := typeDePlatEnBase(t, app, `"><script>alert(1)</script>`, "malveillant", 95)
+	recette := recetteEnBase(t, app, map[string]any{"meal_type": malveillant.Id})
+
+	corps := fiche(mux, cookie, recette.Id).Body.String()
+
+	if strings.Contains(corps, `"><script>`) {
+		t.Errorf("le libellé du type de plat ressort tel quel :\n%s", corps)
+	}
+	if !strings.Contains(corps, "&lt;script&gt;alert(1)&lt;/script&gt;") {
+		t.Errorf("le libellé du type de plat n'est pas rendu échappé :\n%s", corps)
+	}
+}
+
 // --- La source d'origine --------------------------------------------------
 
 func TestLaSourceEstUnLienVersLeSiteDOrigine(t *testing.T) {

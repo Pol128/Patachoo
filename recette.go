@@ -40,15 +40,16 @@ type fait struct {
 	Libelle string
 	Valeur  string
 
-	// Liens porte les valeurs qui mènent quelque part — les saisons, qui
-	// renvoient à la liste filtrée. Le gabarit rend celles-ci quand elles
+	// Liens porte les valeurs qui mènent quelque part — le type de plat et
+	// les saisons, qui renvoient à la liste filtrée. Le gabarit rend celles-ci quand elles
 	// existent, et Valeur sinon : un fait est de l'un ou l'autre genre, jamais
 	// des deux.
 	Liens []lienDeFait
 }
 
 // lienDeFait est une valeur du bandeau doublée de sa destination. Texte reste
-// ce qui se lit — le nom accentué de la saison —, URL ce qui se tape.
+// ce qui se lit — le libellé du type de plat, le nom accentué de la saison —,
+// URL ce qui se tape.
 type lienDeFait struct {
 	URL   string
 	Texte string
@@ -181,8 +182,19 @@ func faitsDeLaRecette(recette *core.Record) []fait {
 	ajoute("Temps de préparation", dureeLisible(recette.GetInt("prep_time")))
 	ajoute("Temps de cuisson", dureeLisible(recette.GetInt("cook_time")))
 
+	// Le type de plat est le seul fait cliquable : il mène à la liste des
+	// recettes du même type. L'adresse s'appuie sur le slug, jamais sur le
+	// libellé affiché ni sur l'identifiant PocketBase.
 	if typeDePlat := recette.ExpandedOne("meal_type"); typeDePlat != nil {
-		ajoute("Type de plat", typeDePlat.GetString("name"))
+		if nom := typeDePlat.GetString("name"); nom != "" {
+			faits = append(faits, fait{
+				Libelle: "Type de plat",
+				Liens: []lienDeFait{{
+					URL:   lienDeFiltreParType(typeDePlat),
+					Texte: nom,
+				}},
+			})
+		}
 	}
 	// seasons est un select, pas une relation : sa valeur se lit directement,
 	// sans passer par l'expansion. Chaque saison mène à la liste filtrée, et
