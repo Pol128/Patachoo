@@ -51,7 +51,8 @@ const (
 const Agent = "Patachoo/0.1 (+https://github.com/Pol128/Patachoo)"
 
 const (
-	// DelaiMaxDefaut borne l'échange entier — robots.txt compris.
+	// DelaiMaxDefaut borne le temps de réseau d'un appel — robots.txt et page
+	// confondus. L'attente qu'une cadence impose n'y entre pas : voir echange.
 	DelaiMaxDefaut = 10 * time.Second
 	// TailleMaxDefaut borne le corps lu. Une page qui ne s'arrête jamais ne
 	// doit pas emporter le serveur.
@@ -67,11 +68,6 @@ type Page struct {
 	Corps       []byte
 	URLFinale   string
 	TypeContenu string
-	// DelaiAnnonce est le Crawl-delay que le robots.txt de l'hôte demande, ou
-	// zéro s'il n'en demande pas. Ce paquet le lit et ne l'applique pas : il va
-	// chercher une page, il n'en enchaîne pas. C'est l'appelant qui enchaîne
-	// — l'import en lot — qui espace ses requêtes de ce que l'hôte réclame.
-	DelaiAnnonce time.Duration
 }
 
 // Erreur porte la cause nommée, le code HTTP quand il y en a eu un, et l'URL sur
@@ -117,7 +113,9 @@ type options struct {
 // Option règle un appel.
 type Option func(*options)
 
-// AvecDelaiMax borne l'échange entier, robots.txt compris.
+// AvecDelaiMax borne le temps de réseau d'un appel, robots.txt compris. Ce
+// budget est partagé entre les échanges, et l'attente qu'une cadence impose n'y
+// entre pas — voir echange.
 func AvecDelaiMax(d time.Duration) Option {
 	return func(o *options) { o.delaiMax = d }
 }
@@ -223,16 +221,47 @@ func Recupere(ctx context.Context, adresse string, choix ...Option) (Page, error
 		return Page{}, &Erreur{Cause: RefuseeParPolitique, URL: adresse}
 	}
 
-	ctx, arrete := context.WithTimeout(ctx, o.delaiMax)
-	defer arrete()
-
-	r := &recuperateur{o: o}
+	r := &recuperateur{o: o, restant: o.delaiMax}
 	r.client = &http.Client{Transport: r.pile(), CheckRedirect: r.verifieRedirection}
 
 	if refus := r.robotsInterdit(ctx, cible); refus != nil {
 		return Page{}, refus
 	}
 	return r.page(ctx, cible)
+}
+
+// echange ouvre un aller-retour : il attend le tour de l'hôte, puis borne cet
+// échange-là par ce qu'il reste du budget de temps réseau de l'appel.
+//
+// Deux exigences se croisent ici, et c'est le budget qui les tient ensemble.
+//
+// L'attente est prise avant la borne, et non dedans. Prise dedans, elle se
+// consommerait sur le compte du délai maximal : un Crawl-delay plus long que lui
+// ferait échouer toutes les pages de l'hôte en delai_depasse au lieu de les
+// espacer, et la plage que delaiAnnonceMax accepte — jusqu'à cinq minutes —
+// serait injouable.
+//
+// Mais la borne reste celle de l'appel entier, et non celle d'un échange :
+// chaque échange rend au budget ce qu'il n'a pas consommé, et le suivant part
+// avec ce qui reste. Une borne par échange doublerait le pire cas — vingt
+// secondes au lieu de dix par défaut, robots.txt puis page —, et c'est l'import
+// unitaire de PATA-9 qui le paierait, devant un utilisateur qui attend sa page.
+//
+// Un budget épuisé donne un contexte déjà échu : la requête ne part pas, et
+// l'échec se nomme comme un dépassement de délai, ce qu'il est.
+func (r *recuperateur) echange(ctx context.Context, hote string) (context.Context, context.CancelFunc, error) {
+	if r.o.cadence != nil {
+		if err := r.o.cadence.AttendSonTour(ctx, hote); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	debut := time.Now()
+	borne, arrete := context.WithTimeout(ctx, r.restant)
+	return borne, func() {
+		r.restant -= time.Since(debut)
+		arrete()
+	}, nil
 }
 
 // analyseURL n'accepte qu'une URL absolue de schéma http ou https, avec un hôte.
@@ -256,9 +285,10 @@ type recuperateur struct {
 	o      options
 	client *http.Client
 	refus  *Erreur
-	// delaiAnnonce est retenu à la lecture du robots.txt, et reporté sur la
-	// page rendue.
-	delaiAnnonce time.Duration
+	// restant est le temps de réseau qu'il reste à cet appel. Un seul
+	// récupérateur par appel, et un seul appel à la fois dessus : rien ne le
+	// partage entre goroutines.
+	restant time.Duration
 }
 
 // pile monte le transport HTTP. Le proxy est retiré : un proxy déclaré dans
@@ -404,6 +434,12 @@ func estDelai(err error) bool {
 
 // page va chercher la page elle-même.
 func (r *recuperateur) page(ctx context.Context, cible *url.URL) (Page, error) {
+	ctx, arrete, err := r.echange(ctx, hoteDe(cible))
+	if err != nil {
+		return Page{}, r.echec(err, cible.String(), DelaiDepasse)
+	}
+	defer arrete()
+
 	reponse, err := r.demande(ctx, cible.String())
 	if err != nil {
 		return Page{}, r.echec(err, cible.String(), DelaiDepasse)
@@ -429,10 +465,9 @@ func (r *recuperateur) page(ctx context.Context, cible *url.URL) (Page, error) {
 	}
 
 	return Page{
-		Corps:        corps,
-		URLFinale:    finale,
-		TypeContenu:  reponse.Header.Get("Content-Type"),
-		DelaiAnnonce: r.delaiAnnonce,
+		Corps:       corps,
+		URLFinale:   finale,
+		TypeContenu: reponse.Header.Get("Content-Type"),
 	}, nil
 }
 
@@ -443,10 +478,63 @@ func (r *recuperateur) page(ctx context.Context, cible *url.URL) (Page, error) {
 // qui redirige, et l'utilisateur a demandé l'URL initiale.
 func (r *recuperateur) robotsInterdit(ctx context.Context, cible *url.URL) *Erreur {
 	adresse := (&url.URL{Scheme: cible.Scheme, Host: cible.Host, Path: "/robots.txt"}).String()
+	hote := hoteDe(cible)
+
+	dit, refus := r.robotsDe(ctx, adresse, hote)
+	if refus != nil {
+		return refus
+	}
+	if dit.interditTout || !dit.regles.autorise(chemin(cible), Agent) {
+		return &Erreur{Cause: RobotsInterdit, URL: cible.String()}
+	}
+
+	// Rapporté même quand rien n'est interdit : c'est le cas ordinaire, et c'est
+	// justement là qu'un appelant qui enchaîne en a besoin. Rapporté maintenant,
+	// avant la requête de page : appris puis rapporté après coup, le Crawl-delay
+	// ne vaudrait qu'à partir de la page suivante, et celle-ci partirait à notre
+	// rythme et non à celui du site, qui vient pourtant de l'écrire.
+	if r.o.cadence != nil {
+		r.o.cadence.Retiens(hote, dit.regles.delaiPour(Agent))
+	}
+	return nil
+}
+
+// robotsDe rend ce que le robots.txt de l'hôte dit, du cache s'il y est déjà.
+//
+// Ce qui se garde est la décision, pas la réponse : elle ne dépend plus du
+// chemin demandé, et c'est ce qui permet de la partager entre toutes les pages
+// d'un même hôte.
+func (r *recuperateur) robotsDe(ctx context.Context, adresse, hote string) (decisionRobots, *Erreur) {
+	if dit, vu := r.o.robots.lis(adresse); vu {
+		return dit, nil
+	}
+
+	dit, refus := r.demandeRobots(ctx, adresse, hote)
+	if refus != nil {
+		return decisionRobots{}, refus
+	}
+	// Le refus né d'un serveur en panne ne se garde pas. Il est daté, pas
+	// définitif : gardé, une panne d'une seconde condamnerait l'hôte entier en
+	// robots_interdit — sort définitif que rien ne rejoue — pour toute la durée
+	// de la fournée. Ce qui se garde est ce que le site a dit de lui-même : ses
+	// règles, ou l'absence de robots.txt.
+	if !dit.interditTout {
+		r.o.robots.garde(adresse, dit)
+	}
+	return dit, nil
+}
+
+// demandeRobots va chercher le robots.txt et en tire ce qu'il dit de l'hôte.
+func (r *recuperateur) demandeRobots(ctx context.Context, adresse, hote string) (decisionRobots, *Erreur) {
+	ctx, arrete, err := r.echange(ctx, hote)
+	if err != nil {
+		return decisionRobots{}, r.echec(err, adresse, Injoignable)
+	}
+	defer arrete()
 
 	reponse, err := r.demande(ctx, adresse)
 	if err != nil {
-		return r.echec(err, adresse, Injoignable)
+		return decisionRobots{}, r.echec(err, adresse, Injoignable)
 	}
 	defer reponse.Body.Close()
 
@@ -455,23 +543,22 @@ func (r *recuperateur) robotsInterdit(ctx context.Context, cible *url.URL) *Erre
 		// Le REP demande de s'abstenir quand le serveur est en panne : une
 		// erreur n'est pas une autorisation. Le 403 anti-robot, lui, tombe du
 		// côté « autorisé », et c'est voulu.
-		return &Erreur{Cause: RobotsInterdit, URL: cible.String()}
+		return decisionRobots{interditTout: true}, nil
 	case reponse.StatusCode != http.StatusOK:
-		return nil
+		return decisionRobots{}, nil
 	}
 
 	texte, err := io.ReadAll(io.LimitReader(reponse.Body, r.o.tailleMax))
 	if err != nil {
-		return r.echec(err, adresse, Injoignable)
+		return decisionRobots{}, r.echec(err, adresse, Injoignable)
 	}
-	lu := analyseRobots(string(texte))
-	if !lu.autorise(chemin(cible), Agent) {
-		return &Erreur{Cause: RobotsInterdit, URL: cible.String()}
-	}
-	// Retenu même quand rien n'est interdit : c'est le cas ordinaire, et c'est
-	// justement là qu'un appelant qui enchaîne en a besoin.
-	r.delaiAnnonce = lu.delaiPour(Agent)
-	return nil
+	return decisionRobots{regles: analyseRobots(string(texte))}, nil
+}
+
+// hoteDe rend l'hôte d'une cible, en minuscules : c'est la clé de la cadence,
+// et Example.com est le même site qu'example.com.
+func hoteDe(u *url.URL) string {
+	return strings.ToLower(u.Hostname())
 }
 
 // chemin rend le chemin tel que robots.txt le compare.
