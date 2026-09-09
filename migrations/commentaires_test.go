@@ -104,13 +104,20 @@ func TestLesNotesSuiventLaRecetteSupprimee(t *testing.T) {
 // L'autre sens de la cascade : un compte peut se supprimer lui-même par l'API
 // que PocketBase expose déjà, et ses notes partent avec lui plutôt que de
 // rester affichées sans nom.
+//
+// La recette est celle d'un autre compte, et ce n'est plus un détail depuis
+// PATA-45 : une recette suit désormais son auteur. Confier les deux rôles au
+// même compte ferait disparaître la recette pour la bonne raison, et rendrait
+// la seconde assertion muette — c'est bien le commentateur qui ne doit rien
+// emporter d'autre que sa note.
 func TestLesNotesSuiventLeCompteSupprime(t *testing.T) {
 	app := baseNeuve(t)
 	auteur := compteNeuf(t, app, "auteur@exemple.test")
+	commentateur := compteNeuf(t, app, "commentateur@exemple.test")
 	recette := recetteDe(t, app, auteur)
-	note := noteDe(t, app, recette, auteur, "Trop cuit de dix minutes.")
+	note := noteDe(t, app, recette, commentateur, "Trop cuit de dix minutes.")
 
-	if err := app.Delete(auteur); err != nil {
+	if err := app.Delete(commentateur); err != nil {
 		t.Fatalf("suppression du compte : %v", err)
 	}
 
