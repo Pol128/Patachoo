@@ -1,6 +1,7 @@
 package recuperation
 
 import (
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -108,13 +109,20 @@ func analyseRobots(texte string) robots {
 // ne demande rien, ne ralentit rien.
 func dureeAnnoncee(valeur string) (time.Duration, bool) {
 	secondes, err := strconv.ParseFloat(valeur, 64)
-	if err != nil || secondes <= 0 {
+	// NaN n'est ni positif ni négatif : aucune comparaison ne l'écarte, et il
+	// franchirait la borne comme le garde de la ligne au-dessus.
+	if err != nil || math.IsNaN(secondes) || secondes <= 0 {
 		return 0, false
 	}
-	if annonce := time.Duration(secondes * float64(time.Second)); annonce < delaiAnnonceMax {
-		return annonce, true
+	// La borne se compare en secondes, avant la conversion : au-delà
+	// d'environ 9,2×10⁹ secondes le produit déborde int64 et rend une durée
+	// négative, que la borne laisserait passer pour lisible. Le cadencement
+	// écarte ensuite les durées négatives, si bien qu'un site annonçant une
+	// éternité obtiendrait notre seconde par défaut plutôt que la borne.
+	if secondes > delaiAnnonceMax.Seconds() {
+		return delaiAnnonceMax, true
 	}
-	return delaiAnnonceMax, true
+	return time.Duration(secondes * float64(time.Second)), true
 }
 
 // delaiPour rend le Crawl-delay que le groupe visant agent demande, ou zéro.

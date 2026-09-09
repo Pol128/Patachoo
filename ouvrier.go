@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -77,6 +78,9 @@ type ouvrier struct {
 	app     core.App
 	horloge horlogeDuLot
 	cadence *cadence
+	// creation sérialise le second bout de la déduplication. Voir
+	// enregistreSiInedite : c'est le seul endroit où deux files se croisent.
+	creation sync.Mutex
 }
 
 func nouvelOuvrier(app core.App, h horlogeDuLot) *ouvrier {
@@ -297,9 +301,28 @@ func (o *ouvrier) traiteLaLigne(ctx context.Context, lot, ligne *core.Record) er
 	// donc à partir de la requête suivante, vers ce domaine seulement.
 	o.cadence.retiens(hote, page.DelaiAnnonce)
 
-	// Déduplication, second bout : deux adresses distinctes peuvent rediriger
-	// vers la même page, et c'est la finale qui désigne la recette.
-	connue, err = laSourceEstConnue(o.app, page.URLFinale)
+	return o.enregistreSiInedite(lot, ligne, page)
+}
+
+// enregistreSiInedite est la déduplication par le second bout, et l'écriture
+// qu'elle autorise : deux adresses distinctes peuvent rediriger vers la même
+// page, et c'est la finale qui désigne la recette.
+//
+// La lecture et l'écriture tiennent ensemble, sous un verrou que toutes les
+// files partagent. Sans lui, deux files menées de front — www.site.fr et
+// site.fr sont deux hôtes, donc deux files — lisent l'une après l'autre que la
+// page est inconnue, puis créent chacune leur recette. Rien ne les rattraperait
+// en base : recipes.source_url ne porte pas d'index unique, et lui en poser un
+// concernerait toutes les recettes du produit, pas la fournée.
+//
+// Le verrou ne couvre ni requête ni attente — il est pris une fois la page
+// obtenue et rendu à la fin de l'écriture. Ce que les files ont à mener de
+// front, c'est le réseau ; elles continuent de le faire.
+func (o *ouvrier) enregistreSiInedite(lot, ligne *core.Record, page recuperation.Page) error {
+	o.creation.Lock()
+	defer o.creation.Unlock()
+
+	connue, err := laSourceEstConnue(o.app, page.URLFinale)
 	if err != nil {
 		return o.poseLaPanne(ligne, err)
 	}
