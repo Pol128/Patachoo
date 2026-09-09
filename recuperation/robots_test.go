@@ -180,6 +180,45 @@ func (c *cadenceMuette) AttendSonTour(context.Context, string) error { return ni
 
 func (c *cadenceMuette) Retiens(_ string, annonce time.Duration) { c.delai = annonce }
 
+// cadenceLente fait patienter chaque échange, sans rien retenir : de quoi
+// vérifier que l'attente ne se prend pas sur le compte de la borne.
+type cadenceLente struct {
+	attente time.Duration
+}
+
+func (c cadenceLente) AttendSonTour(ctx context.Context, _ string) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(c.attente):
+		return nil
+	}
+}
+
+func (c cadenceLente) Retiens(string, time.Duration) {}
+
+// TestLAttenteDeCadenceNEstPasComptee : la borne est celle d'un échange, pas
+// celle de l'appel. Comptée dedans, l'attente rendrait injouable tout
+// Crawl-delay supérieur au délai maximal — jusqu'à cinq minutes de la plage que
+// delaiAnnonceMax accepte, sur un délai maximal de dix secondes par défaut.
+func TestLAttenteDeCadenceNEstPasComptee(t *testing.T) {
+	srv := serveurRobots(t, "User-agent: *\nCrawl-delay: 5\n", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, "page")
+	})
+
+	// Chaque échange attend plus que la borne, et les deux répondent en
+	// quelques millisecondes.
+	lente := cadenceLente{attente: 120 * time.Millisecond}
+	page, err := recupere(t, srv.URL+"/recettes/tarte", autorise(srv),
+		AvecDelaiMax(50*time.Millisecond), AvecCadence(lente))
+	if err != nil {
+		t.Fatalf("la page devait être récupérée, l'attente n'étant pas un dépassement : %v", err)
+	}
+	if string(page.Corps) != "page" {
+		t.Errorf("corps %q, attendu %q", page.Corps, "page")
+	}
+}
+
 // delaiAnnoncePar rend le Crawl-delay que ce robots.txt nous adresse, tel que
 // l'appelant l'apprend — par sa cadence, seul chemin par lequel ce paquet le
 // rapporte.

@@ -51,7 +51,7 @@ const (
 const Agent = "Patachoo/0.1 (+https://github.com/Pol128/Patachoo)"
 
 const (
-	// DelaiMaxDefaut borne l'échange entier — robots.txt compris.
+	// DelaiMaxDefaut borne un échange — le robots.txt, puis la page.
 	DelaiMaxDefaut = 10 * time.Second
 	// TailleMaxDefaut borne le corps lu. Une page qui ne s'arrête jamais ne
 	// doit pas emporter le serveur.
@@ -116,7 +116,7 @@ type options struct {
 // demandé, puis la page. Sans cadence elles partent collées — un appelant qui
 // espace ses appels d'une seconde en envoie tout de même deux dans le même
 // instant, et sa politesse ne vaut que pour la couture qu'il tient. Avec,
-// chacune attend son tour, robots.txt compris.
+// chacun des deux échanges attend son tour, robots.txt compris.
 //
 // Retiens rapporte le Crawl-delay lu dans le robots.txt. Il est rapporté avant
 // la requête de page, et non après l'appel : c'est ce qui le fait valoir dès
@@ -146,7 +146,8 @@ func AvecRobotsRetenus(r *RobotsRetenus) Option {
 // Option règle un appel.
 type Option func(*options)
 
-// AvecDelaiMax borne l'échange entier, robots.txt compris.
+// AvecDelaiMax borne un échange : le robots.txt, puis la page, chacun le sien.
+// L'attente qu'une cadence impose n'y est pas comptée — voir echange.
 func AvecDelaiMax(d time.Duration) Option {
 	return func(o *options) { o.delaiMax = d }
 }
@@ -216,9 +217,6 @@ func Recupere(ctx context.Context, adresse string, choix ...Option) (Page, error
 		return Page{}, &Erreur{Cause: RefuseeParPolitique, URL: adresse}
 	}
 
-	ctx, arrete := context.WithTimeout(ctx, o.delaiMax)
-	defer arrete()
-
 	r := &recuperateur{o: o}
 	r.client = &http.Client{Transport: r.pile(), CheckRedirect: r.verifieRedirection}
 
@@ -228,18 +226,26 @@ func Recupere(ctx context.Context, adresse string, choix ...Option) (Page, error
 	return r.page(ctx, cible)
 }
 
-// tourDeRole fait attendre son tour à une requête avant de l'émettre. C'est le
-// seul endroit où la cadence s'applique, et il est sous tout ce qui émet.
-type tourDeRole struct {
-	suivant http.RoundTripper
-	cadence Cadence
-}
-
-func (t tourDeRole) RoundTrip(requete *http.Request) (*http.Response, error) {
-	if err := t.cadence.AttendSonTour(requete.Context(), strings.ToLower(requete.URL.Hostname())); err != nil {
-		return nil, err
+// echange ouvre un aller-retour : il attend le tour de l'hôte, puis borne ce
+// seul échange.
+//
+// L'attente est prise avant la borne, et c'est tout l'enjeu. Prise dedans, elle
+// se consommerait sur le compte du délai maximal : un Crawl-delay plus long que
+// lui ferait échouer toutes les pages de l'hôte en delai_depasse au lieu de les
+// espacer, et la plage que delaiAnnonceMax accepte — jusqu'à cinq minutes —
+// serait injouable.
+//
+// Chaque échange a donc sa borne : le robots.txt, puis la page. Les sauts d'une
+// redirection restent sous celle de la page — c'est le site qui redirige, et
+// l'appelant n'a demandé qu'une adresse.
+func (r *recuperateur) echange(ctx context.Context, hote string) (context.Context, context.CancelFunc, error) {
+	if r.o.cadence != nil {
+		if err := r.o.cadence.AttendSonTour(ctx, hote); err != nil {
+			return nil, nil, err
+		}
 	}
-	return t.suivant.RoundTrip(requete)
+	borne, arrete := context.WithTimeout(ctx, r.o.delaiMax)
+	return borne, arrete, nil
 }
 
 // analyseURL n'accepte qu'une URL absolue de schéma http ou https, avec un hôte.
@@ -269,23 +275,6 @@ type recuperateur struct {
 // l'environnement ferait porter la politique d'IP sur lui plutôt que sur la
 // vraie destination.
 func (r *recuperateur) pile() http.RoundTripper {
-	return r.cadence(r.transportNu())
-}
-
-// cadence enveloppe le transport pour que chaque requête attende son tour.
-//
-// À ce niveau-ci et non dans Recupere : c'est le seul endroit par lequel toutes
-// les requêtes passent — le robots.txt, la page, et chaque saut d'une
-// redirection. Une attente posée plus haut laisserait toujours partir deux
-// requêtes dans le même instant.
-func (r *recuperateur) cadence(suivant http.RoundTripper) http.RoundTripper {
-	if r.o.cadence == nil {
-		return suivant
-	}
-	return tourDeRole{suivant: suivant, cadence: r.o.cadence}
-}
-
-func (r *recuperateur) transportNu() http.RoundTripper {
 	if r.o.transport != nil {
 		return r.o.transport
 	}
@@ -425,6 +414,12 @@ func estDelai(err error) bool {
 
 // page va chercher la page elle-même.
 func (r *recuperateur) page(ctx context.Context, cible *url.URL) (Page, error) {
+	ctx, arrete, err := r.echange(ctx, strings.ToLower(cible.Hostname()))
+	if err != nil {
+		return Page{}, r.echec(err, cible.String(), DelaiDepasse)
+	}
+	defer arrete()
+
 	reponse, err := r.demande(ctx, cible.String())
 	if err != nil {
 		return Page{}, r.echec(err, cible.String(), DelaiDepasse)
@@ -463,8 +458,9 @@ func (r *recuperateur) page(ctx context.Context, cible *url.URL) (Page, error) {
 // qui redirige, et l'utilisateur a demandé l'URL initiale.
 func (r *recuperateur) robotsInterdit(ctx context.Context, cible *url.URL) *Erreur {
 	adresse := (&url.URL{Scheme: cible.Scheme, Host: cible.Host, Path: "/robots.txt"}).String()
+	hote := strings.ToLower(cible.Hostname())
 
-	dit, refus := r.robotsDe(ctx, adresse)
+	dit, refus := r.robotsDe(ctx, adresse, hote)
 	if refus != nil {
 		return refus
 	}
@@ -478,7 +474,7 @@ func (r *recuperateur) robotsInterdit(ctx context.Context, cible *url.URL) *Erre
 	// le Crawl-delay ne vaudrait qu'à partir de la page suivante, et celle-ci
 	// partirait à notre rythme et non à celui du site.
 	if r.o.cadence != nil {
-		r.o.cadence.Retiens(strings.ToLower(cible.Hostname()), dit.regles.delaiPour(Agent))
+		r.o.cadence.Retiens(hote, dit.regles.delaiPour(Agent))
 	}
 	return nil
 }
@@ -491,12 +487,12 @@ func (r *recuperateur) robotsInterdit(ctx context.Context, cible *url.URL) *Erre
 // lui-même — ses règles, ou l'absence de robots.txt. Ni le robots.txt qu'on n'a
 // pas atteint, ni celui qui a répondu en panne : les deux sont datés, et les
 // garder condamnerait l'hôte entier pour une seconde de dérangement.
-func (r *recuperateur) robotsDe(ctx context.Context, adresse string) (decisionRobots, *Erreur) {
+func (r *recuperateur) robotsDe(ctx context.Context, adresse, hote string) (decisionRobots, *Erreur) {
 	if dit, vu := r.o.robots.lis(adresse); vu {
 		return dit, nil
 	}
 
-	dit, refus := r.demandeRobots(ctx, adresse)
+	dit, refus := r.demandeRobots(ctx, adresse, hote)
 	if refus != nil {
 		return decisionRobots{}, refus
 	}
@@ -512,7 +508,13 @@ func (r *recuperateur) robotsDe(ctx context.Context, adresse string) (decisionRo
 }
 
 // demandeRobots va chercher le robots.txt et en tire ce qu'il dit de l'hôte.
-func (r *recuperateur) demandeRobots(ctx context.Context, adresse string) (decisionRobots, *Erreur) {
+func (r *recuperateur) demandeRobots(ctx context.Context, adresse, hote string) (decisionRobots, *Erreur) {
+	ctx, arrete, err := r.echange(ctx, hote)
+	if err != nil {
+		return decisionRobots{}, r.echec(err, adresse, Injoignable)
+	}
+	defer arrete()
+
 	reponse, err := r.demande(ctx, adresse)
 	if err != nil {
 		return decisionRobots{}, r.echec(err, adresse, Injoignable)

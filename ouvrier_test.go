@@ -674,6 +674,31 @@ func TestUnRobotsEnPanneNeCondamnePasLHoteEntier(t *testing.T) {
 	}
 }
 
+// TestChaqueFourneeRelitLeRobots : le robots.txt est retenu pour la fournée, et
+// pour elle seule.
+//
+// Retenu plus longtemps — porté par l'ouvrier, donc par le service —, un site
+// qui se ferme entre deux lots continuerait d'être récolté jusqu'au
+// redémarrage du processus, quand la page de saisie promet le contraire.
+func TestChaqueFourneeRelitLeRobots(t *testing.T) {
+	app, titulaire, _, o := atelierDeLOuvrier(t)
+	const premiere, seconde = "https://a.example/1", "https://a.example/2"
+	reseau := avecReseau(t, o, siteServi("User-agent: *\nDisallow: /prive\n", premiere, seconde))
+
+	traite(t, o, lotDe(t, app, titulaire, premiere))
+	traite(t, o, lotDe(t, app, titulaire, seconde))
+
+	var robots int
+	for _, appel := range reseau.appels() {
+		if strings.HasSuffix(appel.url, "/robots.txt") {
+			robots++
+		}
+	}
+	if robots != 2 {
+		t.Errorf("%d requêtes de robots.txt pour deux fournées, attendu 2 : la seconde a lu ce que la première avait retenu", robots)
+	}
+}
+
 // --- La reprise -------------------------------------------------------------
 
 // TestLOuvrierDemarreAvecLeServeurEtSArreteAvecLui : brancheLOuvrier est le

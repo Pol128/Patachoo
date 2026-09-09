@@ -81,10 +81,6 @@ type ouvrier struct {
 	// creation sérialise le second bout de la déduplication. Voir
 	// enregistreSiInedite : c'est le seul endroit où deux files se croisent.
 	creation sync.Mutex
-	// robots garde le robots.txt de chaque hôte pour la durée du service. Sans
-	// lui, chaque page en redemanderait un : une fournée de vingt pages sur un
-	// site lui coûterait quarante requêtes au lieu de vingt-et-une.
-	robots recuperation.RobotsRetenus
 }
 
 func nouvelOuvrier(app core.App, h horlogeDuLot) *ouvrier {
@@ -202,13 +198,20 @@ func (o *ouvrier) traiteLeLot(ctx context.Context, lot *core.Record) error {
 		return fmt.Errorf("lecture des lignes du lot %s : %w", lot.Id, err)
 	}
 
+	// Le robots.txt de chaque hôte est lu une fois par fournée, et non à chaque
+	// page : vingt pages sur un même site lui coûtent vingt-et-une requêtes et
+	// non quarante. Le cache naît et meurt avec la fournée — porté par
+	// l'ouvrier, il vivrait autant que le service, et un site qui se ferme
+	// entre deux lots continuerait d'être récolté jusqu'au redémarrage.
+	robots := &recuperation.RobotsRetenus{}
+
 	files := parHote(lignes)
 	for debut := 0; debut < len(files); debut += filesMax {
 		vague := files[debut:min(debut+filesMax, len(files))]
 
 		taches := make([]func(), 0, len(vague))
 		for _, file := range vague {
-			taches = append(taches, func() { o.traiteLaFile(ctx, lot, file) })
+			taches = append(taches, func() { o.traiteLaFile(ctx, lot, file, robots) })
 		}
 		enFiles(o.horloge, taches)
 
@@ -253,12 +256,12 @@ func hoteDe(adresse string) string {
 }
 
 // traiteLaFile mène les lignes d'un même hôte, l'une après l'autre.
-func (o *ouvrier) traiteLaFile(ctx context.Context, lot *core.Record, lignes []*core.Record) {
+func (o *ouvrier) traiteLaFile(ctx context.Context, lot *core.Record, lignes []*core.Record, robots *recuperation.RobotsRetenus) {
 	for _, ligne := range lignes {
 		if ctx.Err() != nil {
 			return
 		}
-		if err := o.traiteLaLigne(ctx, lot, ligne); err != nil {
+		if err := o.traiteLaLigne(ctx, lot, ligne, robots); err != nil {
 			if ctx.Err() != nil {
 				return
 			}
@@ -271,7 +274,7 @@ func (o *ouvrier) traiteLaFile(ctx context.Context, lot *core.Record, lignes []*
 
 // traiteLaLigne mène une URL de bout en bout : PATA-8, puis PATA-7, puis la
 // recette.
-func (o *ouvrier) traiteLaLigne(ctx context.Context, lot, ligne *core.Record) error {
+func (o *ouvrier) traiteLaLigne(ctx context.Context, lot, ligne *core.Record, robots *recuperation.RobotsRetenus) error {
 	adresse := ligne.GetString("url")
 	if err := o.poseLeStatut(ligne, statutEnCours); err != nil {
 		return err
@@ -294,7 +297,7 @@ func (o *ouvrier) traiteLaLigne(ctx context.Context, lot, ligne *core.Record) er
 	// requête de page, si bien qu'il vaut dès celle-là.
 	page, err := recuperePage(ctx, adresse,
 		recuperation.AvecCadence(cadenceDeRecuperation{o.cadence}),
-		recuperation.AvecRobotsRetenus(&o.robots))
+		recuperation.AvecRobotsRetenus(robots))
 	if err != nil {
 		if ctx.Err() != nil {
 			// Le serveur s'arrête : la ligne n'a pas échoué, elle n'a pas eu
