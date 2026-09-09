@@ -1,8 +1,11 @@
 package migrations
 
 import (
+	"runtime"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/pocketbase/pocketbase/core"
 )
@@ -22,6 +25,58 @@ func baseNeuve(t *testing.T) core.App {
 		t.Fatalf("migrations : %v", err)
 	}
 	return app
+}
+
+// TestBaseNeuveNArrivePasAvecUneGoroutineDeJournal est le pendant, pour ce
+// montage-ci, du test de même nom du paquet racine — qui porte l'explication
+// complète du mécanisme. Résumé : PocketBase lance à l'amorçage une goroutine
+// qui purge le journal toutes les trois secondes et lit IsBootstrapped() sans
+// verrou, quand ResetBootstrapState() écrit dans les mêmes champs sans verrou
+// non plus. Seul le crochet OnTerminate arrête ce minuteur.
+//
+// Le décompte est recopié plutôt que partagé : Go n'exporte pas les fonctions
+// d'un fichier _test.go d'un paquet à l'autre, et une correction non gardée
+// par un test se ferait retirer sans que rien ne rougisse.
+func TestBaseNeuveNArrivePasAvecUneGoroutineDeJournal(t *testing.T) {
+	t.Run("une base montée puis rendue", func(t *testing.T) {
+		baseNeuve(t)
+	})
+
+	echeance := time.Now().Add(5 * time.Second)
+	for {
+		nombre, piles := goroutinesDuJournal()
+		if nombre == 0 {
+			return
+		}
+		if time.Now().After(echeance) {
+			t.Fatalf("%d goroutine(s) de journal PocketBase survivent au montage : "+
+				"le minuteur n'a pas été arrêté avant ResetBootstrapState\n\n%s", nombre, piles)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// goroutinesDuJournal compte les goroutines du minuteur de journal de
+// PocketBase encore vivantes, et rend leurs piles pour le message d'échec.
+func goroutinesDuJournal() (int, string) {
+	piles := make([]byte, 1<<16)
+	for {
+		n := runtime.Stack(piles, true)
+		if n < len(piles) {
+			piles = piles[:n]
+			break
+		}
+		piles = make([]byte, 2*len(piles))
+	}
+
+	var vivantes []string
+	// runtime.Stack sépare les goroutines par une ligne vide.
+	for _, pile := range strings.Split(string(piles), "\n\n") {
+		if strings.Contains(pile, "core.(*BaseApp).initLogger") {
+			vivantes = append(vivantes, pile)
+		}
+	}
+	return len(vivantes), strings.Join(vivantes, "\n\n")
 }
 
 func TestLesCollectionsSontCreees(t *testing.T) {
