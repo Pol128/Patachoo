@@ -66,12 +66,11 @@ func lisLesCriteres(r *http.Request) criteres {
 	}
 }
 
-// sansTag rend les mêmes critères, le tag ôté et la pagination remise au
-// début : la page 3 d'une liste filtrée ne désigne pas la même chose une fois
-// le filtre retiré, et un lien de sortie doit ramener quelque part.
+// sansTag rend les mêmes critères, le tag ôté. La remise au début — la page 3
+// d'une liste filtrée ne désigne pas la même chose une fois le filtre retiré —
+// est l'affaire de l'appelant, qui écrit la page qu'il veut dans lien().
 func (c criteres) sansTag() criteres {
 	c.Tag = ""
-	c.Page = 1
 	return c
 }
 

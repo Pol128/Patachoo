@@ -224,10 +224,13 @@ func lesSuggestions(app core.App, saisie string) ([]suggestionDeTag, error) {
 	dejaSaisis := slugsDejaSaisis(saisie)
 
 	// Autant de rangs en plus qu'il y a de tags à écarter : les écarter après
-	// coup sur une page de huit en rendrait moins de huit.
+	// coup sur une page de huit en rendrait moins de huit. Plafonné au double,
+	// sans quoi une saisie longue de fragments distincts dicterait la borne de
+	// la requête — et une borne que l'utilisateur écrit n'en est pas une.
+	rangs := min(maxSuggestions+len(dejaSaisis), 2*maxSuggestions)
 	trouves, err := app.FindRecordsByFilter(
 		"tags", "slug ~ {:fragment}", "name",
-		maxSuggestions+len(dejaSaisis), 0, dbx.Params{"fragment": fragment})
+		rangs, 0, dbx.Params{"fragment": fragment})
 	if err != nil {
 		return nil, fmt.Errorf("suggestions de tags pour %q : %w", fragment, err)
 	}
