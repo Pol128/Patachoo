@@ -75,11 +75,11 @@ const filesMax = 8
 // ouvrier tient l'horloge et la cadence pour toute la durée du service.
 type ouvrier struct {
 	app     core.App
-	horloge horloge
+	horloge horlogeDuLot
 	cadence *cadence
 }
 
-func nouvelOuvrier(app core.App, h horloge) *ouvrier {
+func nouvelOuvrier(app core.App, h horlogeDuLot) *ouvrier {
 	return &ouvrier{app: app, horloge: h, cadence: nouvelleCadence(h)}
 }
 

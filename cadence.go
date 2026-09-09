@@ -22,18 +22,23 @@ import (
 // faire.
 const delaiEntreRequetes = time.Second
 
-// horloge est le temps que l'ouvrier lit et attend.
+// horlogeDuLot est le temps que l'ouvrier lit et attend.
 //
 // Injectable pour la même raison que le transport de recuperation : une
 // constante en dur ne se teste pas, et personne n'écrit un test qui patiente
 // dix secondes.
+//
+// Nommée ainsi et non « horloge » : saisons.go porte déjà, sous ce nom-là, la
+// couture par où la date du jour entre. Deux temps différents — l'un dit le
+// mois qu'il est, l'autre fait patienter entre deux requêtes — et un seul
+// paquet pour les deux.
 //
 // Files signale l'ouverture (+1) et la fermeture (-1) d'une file d'hôte.
 // L'horloge du système n'en fait rien — le temps passe sans qu'on le lui
 // demande. C'est l'horloge virtuelle des tests qui s'en sert : elle n'avance
 // que lorsque toutes les files ouvertes attendent, c'est-à-dire quand plus
 // rien ne peut progresser sans que le temps passe.
-type horloge interface {
+type horlogeDuLot interface {
 	Maintenant() time.Time
 	// Attends rend la main au bout de d, ou dès que le contexte est annulé —
 	// et rend alors son erreur.
@@ -68,7 +73,7 @@ func (horlogeSysteme) Files(int) {}
 // lots menés de front sur le même domaine y feraient deux requêtes par
 // seconde, et le cadencement ne voudrait plus rien dire.
 type cadence struct {
-	horloge horloge
+	horloge horlogeDuLot
 
 	mu sync.Mutex
 	// dernier est l'instant réservé par la requête précédente vers cet hôte,
@@ -79,7 +84,7 @@ type cadence struct {
 	delais map[string]time.Duration
 }
 
-func nouvelleCadence(h horloge) *cadence {
+func nouvelleCadence(h horlogeDuLot) *cadence {
 	return &cadence{
 		horloge: h,
 		dernier: map[string]time.Time{},
@@ -141,7 +146,7 @@ func (c *cadence) delaiDe(hote string) time.Duration {
 // n'avance que lorsque toutes les files annoncées attendent, et une file
 // annoncée en retard la ferait sauter avant que celle-ci ait émis sa première
 // requête — le cadencement se lirait alors comme une mise en file d'attente.
-func enFiles(h horloge, taches []func()) {
+func enFiles(h horlogeDuLot, taches []func()) {
 	for range taches {
 		h.Files(1)
 	}
