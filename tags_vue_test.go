@@ -77,8 +77,18 @@ func suggestionsPour(t *testing.T, mux http.Handler, cookie *http.Cookie, saisie
 // blocDeSuggestions isole la liste des suggestions du champ qui la précède :
 // la saisie courante est rendue dans la valeur du champ, et une assertion
 // portée sur la page entière la confondrait avec une suggestion.
-func blocDeSuggestions(corps string) string {
-	return entreBalises(corps, `<ul id="suggestions-de-tags"`, `</ul>`)
+//
+// L'absence du bloc est une panne, pas un bloc vide : sans ce garde-fou, une
+// assertion « aucune suggestion » passerait aussi si le rendu perdait la liste
+// entière.
+func blocDeSuggestions(t *testing.T, corps string) string {
+	t.Helper()
+
+	const ouvrante = `<ul id="suggestions-de-tags"`
+	if !strings.Contains(corps, ouvrante) {
+		t.Fatalf("bloc de suggestions absent du rendu :\n%s", corps)
+	}
+	return entreBalises(corps, ouvrante, `</ul>`)
 }
 
 // valeurDuChampTags rend l'attribut value du champ de saisie des tags.
@@ -180,7 +190,7 @@ func TestLesSuggestionsCherchentSurLeSlug(t *testing.T) {
 
 	for _, saisie := range []string{"vég", "veg", "VÉG"} {
 		t.Run(saisie, func(t *testing.T) {
-			bloc := blocDeSuggestions(suggestionsPour(t, mux, cookie, saisie))
+			bloc := blocDeSuggestions(t, suggestionsPour(t, mux, cookie, saisie))
 
 			if !strings.Contains(bloc, "végétarien") {
 				t.Errorf("« végétarien » n'est pas proposé sur %q :\n%s", saisie, bloc)
@@ -197,7 +207,7 @@ func TestUnTagDejaDansLaSaisieNEstPasPropose(t *testing.T) {
 	tagPartage(t, app, "végétarien")
 	tagPartage(t, app, "vegan")
 
-	bloc := blocDeSuggestions(suggestionsPour(t, mux, cookie, "vegan, veg"))
+	bloc := blocDeSuggestions(t, suggestionsPour(t, mux, cookie, "vegan, veg"))
 
 	if !strings.Contains(bloc, "végétarien") {
 		t.Errorf("« végétarien » n'est pas proposé :\n%s", bloc)
@@ -214,7 +224,7 @@ func TestSeulLeDernierFragmentCompte(t *testing.T) {
 	tagPartage(t, app, "végétarien")
 	tagPartage(t, app, "plat unique")
 
-	bloc := blocDeSuggestions(suggestionsPour(t, mux, cookie, "végétarien, pl"))
+	bloc := blocDeSuggestions(t, suggestionsPour(t, mux, cookie, "végétarien, pl"))
 
 	if !strings.Contains(bloc, "plat unique") {
 		t.Errorf("« plat unique » n'est pas proposé sur « végétarien, pl » :\n%s", bloc)
@@ -226,7 +236,7 @@ func TestUneSaisieSansFragmentNeProposeRien(t *testing.T) {
 
 	for _, saisie := range []string{"", "   ", "végétarien, "} {
 		t.Run(fmt.Sprintf("%q", saisie), func(t *testing.T) {
-			bloc := blocDeSuggestions(suggestionsPour(t, mux, cookie, saisie))
+			bloc := blocDeSuggestions(t, suggestionsPour(t, mux, cookie, saisie))
 			if strings.Contains(bloc, "<button") {
 				t.Errorf("des suggestions sont rendues sur une saisie sans fragment :\n%s", bloc)
 			}
@@ -240,7 +250,7 @@ func TestAuDelaDeHuitTagsHuitSontRendus(t *testing.T) {
 		tagPartage(t, app, fmt.Sprintf("plat %d", i))
 	}
 
-	bloc := blocDeSuggestions(suggestionsPour(t, mux, cookie, "pl"))
+	bloc := blocDeSuggestions(t, suggestionsPour(t, mux, cookie, "pl"))
 
 	if compte := strings.Count(bloc, "<button"); compte != 8 {
 		t.Errorf("%d suggestions rendues, attendu 8 :\n%s", compte, bloc)
@@ -269,6 +279,34 @@ func TestChoisirUneSuggestionRecolleLaSaisie(t *testing.T) {
 	// Sans autofocus, la saisie repart du début de la page à chaque choix.
 	if !strings.Contains(corps, "autofocus") {
 		t.Errorf("le champ re-rendu ne porte pas autofocus :\n%s", corps)
+	}
+}
+
+// Un slug qui ne désigne plus rien — le tag a été fusionné pendant que la page
+// restait ouverte — rend la saisie telle quelle : ni recollée, ni amputée de
+// son dernier fragment, et sans 500.
+//
+// Le tag « plat unique » est en base : sans la branche sql.ErrNoRows, le
+// chemin des suggestions reprendrait la main et « pl » en proposerait une.
+func TestChoisirUnSlugInexistantRendLaSaisieInchangee(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	tagPartage(t, app, "plat unique")
+
+	cible := "/tags/suggestions?" + url.Values{
+		"tags":  {"végétarien, pl"},
+		"choix": {"slug-inexistant"},
+	}.Encode()
+	rec := demande(mux, cible, cookie, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("statut %d, attendu %d", rec.Code, http.StatusOK)
+	}
+
+	corps := rec.Body.String()
+	if valeur := valeurDuChampTags(t, corps); valeur != "végétarien, pl" {
+		t.Errorf("champ rendu %q, attendu la saisie inchangée %q", valeur, "végétarien, pl")
+	}
+	if bloc := blocDeSuggestions(t, corps); strings.Contains(bloc, "<button") {
+		t.Errorf("une suggestion est rendue alors que le slug ne désigne rien :\n%s", bloc)
 	}
 }
 
@@ -328,7 +366,7 @@ func TestLesSuggestionsExigentUneSession(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("statut %d, attendu %d", rec.Code, http.StatusOK)
 		}
-		if !strings.Contains(blocDeSuggestions(rec.Body.String()), "végétarien") {
+		if !strings.Contains(blocDeSuggestions(t, rec.Body.String()), "végétarien") {
 			t.Errorf("aucune suggestion rendue à un compte connecté :\n%s", rec.Body.String())
 		}
 	})
@@ -469,7 +507,7 @@ func TestLeBlocDeSuggestionsEchappeLesNoms(t *testing.T) {
 	app, mux, cookie := carnetDeTest(t)
 	tagPartage(t, app, `"><script>alert(1)</script>`)
 
-	bloc := blocDeSuggestions(suggestionsPour(t, mux, cookie, "script"))
+	bloc := blocDeSuggestions(t, suggestionsPour(t, mux, cookie, "script"))
 
 	if strings.Contains(bloc, "<script>") {
 		t.Errorf("balise script exécutable dans les suggestions :\n%s", bloc)
