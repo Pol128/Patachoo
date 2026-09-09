@@ -320,6 +320,12 @@ func (o *ouvrier) traiteLaLigne(ctx context.Context, lot, ligne *core.Record) er
 // Le verrou ne couvre ni requête ni attente — il est pris une fois la page
 // obtenue et rendu à la fin de l'écriture. Ce que les files ont à mener de
 // front, c'est le réseau ; elles continuent de le faire.
+//
+// L'extraction du balisage reste dedans, et c'est un choix : l'en sortir
+// obligerait à la faire avant de savoir si la page est déjà connue, et un
+// balisage cassé sur une page déjà importée passerait alors de « déjà
+// présente » à un échec. Ce qu'elle coûte est un calcul sur un corps déjà en
+// mémoire, borné par la taille maximale de PATA-8 — pas une attente.
 func (o *ouvrier) enregistreSiInedite(lot, ligne *core.Record, page recuperation.Page) error {
 	o.creation.Lock()
 	defer o.creation.Unlock()
