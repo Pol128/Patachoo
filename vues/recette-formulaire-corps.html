@@ -27,7 +27,7 @@
 <textarea id="ingredients" name="ingredients" rows="10">{{.Ingredients}}</textarea>
 
 <label for="tags">Tags — séparés par des virgules</label>
-<input type="text" id="tags" name="tags" value="{{.Tags}}">
+{{template "tags-saisie.html" .SaisieDesTags}}
 
 <label for="type-de-plat">Type de plat</label>
 <select id="type-de-plat" name="type-de-plat">

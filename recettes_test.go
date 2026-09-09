@@ -79,13 +79,18 @@ func rechercheDe(t *testing.T, mux http.Handler, cookie *http.Cookie, terme stri
 // sont des absences réelles : une recette sans image, sans type de plat et
 // sans tag est un cas normal du carnet.
 type recetteVoulue struct {
-	titre       string
-	typeDePlat  string
-	tags        []string
-	saisons     []string
-	ingredients []string
-	avecImage   bool
-	cree        time.Time
+	titre string
+	// typeDePlat nomme un type semé par la migration ; typeDePlatId désigne
+	// celui que le test a posé lui-même. Les deux plutôt qu'un seul : la
+	// plupart des tests lisent la collection installée, et ceux du filtre ont
+	// besoin d'y ajouter un homonyme ou un libellé dangereux.
+	typeDePlat   string
+	typeDePlatId string
+	tags         []string
+	saisons      []string
+	ingredients  []string
+	avecImage    bool
+	cree         time.Time
 }
 
 // creeRecette écrit la recette, ses lignes d'ingrédients et ses tags.
@@ -103,7 +108,9 @@ func creeRecette(t *testing.T, app core.App, voulue recetteVoulue) *core.Record 
 	enregistrement := core.NewRecord(collection)
 	enregistrement.Set("title", voulue.titre)
 
-	if voulue.typeDePlat != "" {
+	if voulue.typeDePlatId != "" {
+		enregistrement.Set("meal_type", voulue.typeDePlatId)
+	} else if voulue.typeDePlat != "" {
 		enregistrement.Set("meal_type", typeDePlat(t, app, voulue.typeDePlat).Id)
 	}
 	if len(voulue.tags) > 0 {
@@ -650,6 +657,434 @@ func TestLInvitationNApparaitPasQuandLaRechercheEchoue(t *testing.T) {
 	}
 }
 
+// --- Le filtre par type de plat --------------------------------------------
+
+// typeDePlatEnBase ajoute un type de plat à la collection.
+//
+// La migration en sème huit, et typeDePlat les retrouve ; ces tests-ci ont
+// besoin d'en poser d'autres — un libellé dangereux, un homonyme de la valeur
+// réservée, un type ajouté après coup.
+func typeDePlatEnBase(t *testing.T, app core.App, nom, slug string, position int) *core.Record {
+	t.Helper()
+
+	collection, err := app.FindCollectionByNameOrId("meal_types")
+	if err != nil {
+		t.Fatalf("collection meal_types : %v", err)
+	}
+
+	enregistrement := core.NewRecord(collection)
+	enregistrement.Set("name", nom)
+	enregistrement.Set("slug", slug)
+	enregistrement.Set("position", position)
+	if err := app.Save(enregistrement); err != nil {
+		t.Fatalf("type de plat %q : %v", nom, err)
+	}
+	return enregistrement
+}
+
+// carnetClasse pose les trois recettes qui distinguent ce filtre de tout
+// autre : une du type cherché, une d'un autre type, une sans type. Les trois à
+// la fois, parce qu'un filtre écrit « … || meal_type = ” » ne se trahit qu'en
+// présence de la troisième.
+func carnetClasse(t *testing.T, app core.App) {
+	t.Helper()
+
+	creeRecette(t, app, recetteVoulue{titre: "Tarte au citron", typeDePlat: "Dessert"})
+	creeRecette(t, app, recetteVoulue{titre: "Salade de chevre", typeDePlat: "Entrée"})
+	creeRecette(t, app, recetteVoulue{titre: "Recette non classee"})
+}
+
+// Les trois blocs que cette tâche ajoute à la page, isolés du reste : les
+// libellés des types apparaissent aussi bien dans la barre que sur les
+// vignettes, et une assertion sur la page entière ne dirait pas lequel des
+// chemins de rendu elle a éprouvé.
+var (
+	motifDeLaBarre          = regexp.MustCompile(`(?s)<nav class="types".*?</nav>`)
+	motifDuFiltreActif      = regexp.MustCompile(`(?s)<p class="filtre-actif">.*?</p>`)
+	motifDuTypeDeLaVignette = regexp.MustCompile(`(?s)<p class="type-de-plat">.*?</p>`)
+)
+
+func barreRendue(t *testing.T, corps string) string {
+	t.Helper()
+
+	barre := motifDeLaBarre.FindString(corps)
+	if barre == "" {
+		t.Fatalf("aucune barre de types dans la page :\n%s", corps)
+	}
+	return barre
+}
+
+func filtreActifRendu(corps string) string {
+	return motifDuFiltreActif.FindString(corps)
+}
+
+func typeDeLaVignette(t *testing.T, corps string) string {
+	t.Helper()
+
+	rendu := motifDuTypeDeLaVignette.FindString(corps)
+	if rendu == "" {
+		t.Fatalf("aucun type de plat sur les vignettes :\n%s", corps)
+	}
+	return rendu
+}
+
+func TestLeFiltreParTypeNeRendQueLesRecettesDeCeType(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	carnetClasse(t, app)
+
+	corps := listeDe(t, mux, cookie, "/recettes?type=dessert")
+
+	exigeContient(t, corps, "Tarte au citron")
+	exigeSansAucun(t, corps, "Salade de chevre", "Recette non classee")
+}
+
+func TestLaValeurSansRendLesRecettesNonClassees(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	carnetClasse(t, app)
+
+	corps := listeDe(t, mux, cookie, "/recettes?type=sans")
+
+	exigeContient(t, corps, "Recette non classee")
+	exigeSansAucun(t, corps, "Tarte au citron", "Salade de chevre")
+}
+
+// « sans » est réservé, et c'est assumé : un type de plat dont le slug vaudrait
+// « sans » n'est pas atteignable par le filtre. Le comportement ne dépend donc
+// pas du contenu de la collection.
+func TestSansEstReserveMemeSiUnTypeDePlatEnPorteLeSlug(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	carnetClasse(t, app)
+	homonyme := typeDePlatEnBase(t, app, "Sans-faute", "sans", 90)
+	creeRecette(t, app, recetteVoulue{titre: "Recette homonyme", typeDePlatId: homonyme.Id})
+
+	corps := listeDe(t, mux, cookie, "/recettes?type=sans")
+
+	exigeContient(t, corps, "Recette non classee")
+	exigeSansAucun(t, corps, "Recette homonyme", "Tarte au citron", "Salade de chevre")
+}
+
+// Un slug inconnu est une liste vide, pas une 500 et pas le carnet entier.
+func TestUnSlugInconnuRendUneListeVideEtNonLeCarnet(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	carnetClasse(t, app)
+
+	rec := demande(mux, "/recettes?type=nexistepas", cookie, nil)
+	corps := rec.Body.String()
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("statut %d, attendu %d", rec.Code, http.StatusOK)
+	}
+	exigeSansAucun(t, corps, "Tarte au citron", "Salade de chevre", "Recette non classee")
+	exigeContient(t, corps, "Aucune recette")
+}
+
+func TestUnTypeVideRendLeCarnetEntier(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	carnetClasse(t, app)
+
+	rec := demande(mux, "/recettes?type=", cookie, nil)
+	corps := rec.Body.String()
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("statut %d, attendu %d", rec.Code, http.StatusOK)
+	}
+	exigeContient(t, corps, "Tarte au citron", "Salade de chevre", "Recette non classee")
+	if filtre := filtreActifRendu(corps); filtre != "" {
+		t.Errorf("un filtre est annoncé alors qu'aucun n'est posé : %s", filtre)
+	}
+}
+
+func TestLeTypeEtLaRechercheSeCombinent(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	creeRecette(t, app, recetteVoulue{titre: "Tarte aux pommes", typeDePlat: "Dessert"})
+	creeRecette(t, app, recetteVoulue{titre: "Tarte aux oignons", typeDePlat: "Entrée"})
+
+	// Sans le type, la recherche en ramène deux : c'est ce qui fait du
+	// restreint à une un effet du filtre, et non du terme.
+	exigeContient(t, listeDe(t, mux, cookie, "/recettes?q=tarte"), "Tarte aux pommes", "Tarte aux oignons")
+
+	corps := listeDe(t, mux, cookie, "/recettes?q=tarte&type=dessert")
+
+	exigeContient(t, corps, "Tarte aux pommes")
+	exigeSansAucun(t, corps, "Tarte aux oignons")
+}
+
+func TestLeTypeEtLaPaginationSeCombinent(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	for i := 0; i < 25; i++ {
+		creeRecette(t, app, recetteVoulue{titre: numero(i), typeDePlat: "Dessert", cree: instant(i)})
+	}
+	creeRecette(t, app, recetteVoulue{titre: "Cassoulet numero unique", typeDePlat: "Entrée", cree: instant(100)})
+
+	premiere := listeDe(t, mux, cookie, "/recettes?q=numero&type=dessert")
+
+	if compte := strings.Count(premiere, "Recette numero "); compte != 24 {
+		t.Errorf("%d vignettes sur la première page, attendu 24", compte)
+	}
+	exigeSansAucun(t, premiere, "Cassoulet numero unique")
+	exigeContient(t, premiere, `rel="next" href="/recettes?page=2&amp;q=numero&amp;type=dessert"`)
+
+	seconde := listeDe(t, mux, cookie, "/recettes?q=numero&type=dessert&page=2")
+
+	exigeContient(t, seconde, numero(0), `rel="prev" href="/recettes?q=numero&amp;type=dessert"`)
+	exigeSansAucun(t, seconde, "Cassoulet numero unique")
+}
+
+// La barre suit position, pas l'alphabet : « Entrée » est semée en position 10
+// et « Dessert » en 30, et l'ordre alphabétique les met dans l'autre sens.
+func TestLaBarreSuitLaPositionEtNonLAlphabet(t *testing.T) {
+	_, mux, cookie := carnetDeTest(t)
+
+	barre := barreRendue(t, listeDe(t, mux, cookie, "/recettes"))
+
+	entree := strings.Index(barre, `href="/recettes?type=entree"`)
+	dessert := strings.Index(barre, `href="/recettes?type=dessert"`)
+	if entree < 0 || dessert < 0 {
+		t.Fatalf("la barre ne porte pas les deux types :\n%s", barre)
+	}
+	if entree > dessert {
+		t.Errorf("« Dessert » précède « Entrée » : la barre est triée par nom et non par position :\n%s", barre)
+	}
+}
+
+// Ajouter un type dans la collection ajoute un lien, sans recompilation : c'est
+// tout l'argument du choix d'une collection plutôt que d'un champ de schéma.
+func TestLaBarreRendUnLienParEnregistrementDeLaCollection(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	avant := strings.Count(barreRendue(t, listeDe(t, mux, cookie, "/recettes")), "<a ")
+
+	typeDePlatEnBase(t, app, "Brunch", "brunch", 95)
+
+	barre := barreRendue(t, listeDe(t, mux, cookie, "/recettes"))
+	if apres := strings.Count(barre, "<a "); apres != avant+1 {
+		t.Errorf("%d liens après l'ajout d'un type, attendu %d :\n%s", apres, avant+1, barre)
+	}
+	exigeContient(t, barre, `href="/recettes?type=brunch"`, "Brunch")
+}
+
+func TestLaBarrePorteTousEtSansType(t *testing.T) {
+	_, mux, cookie := carnetDeTest(t)
+
+	barre := barreRendue(t, listeDe(t, mux, cookie, "/recettes"))
+
+	exigeContient(t, barre, `href="/recettes"`, "Tous", `href="/recettes?type=sans"`, "Sans type")
+}
+
+// Changer de filtre ramène au premier rang : rester sur la page 4 d'une autre
+// liste n'a pas de sens. Le terme, lui, est conservé.
+func TestLesLiensDeLaBarreGardentLeTermeEtPasLaPage(t *testing.T) {
+	_, mux, cookie := carnetDeTest(t)
+
+	barre := barreRendue(t, listeDe(t, mux, cookie, "/recettes?q=tarte&page=2"))
+
+	exigeContient(t, barre, `href="/recettes?q=tarte&amp;type=dessert"`, `href="/recettes?q=tarte"`)
+	exigeSansAucun(t, barre, "page=")
+}
+
+// Un filtre posé d'un clic doit avoir une sortie — y compris quand la valeur
+// reçue n'est pas reconnue.
+func TestLeFiltreActifPorteUnLienDeRetrait(t *testing.T) {
+	_, mux, cookie := carnetDeTest(t)
+
+	for _, cible := range []string{"/recettes?type=dessert", "/recettes?type=sans", "/recettes?type=nexistepas"} {
+		filtre := filtreActifRendu(listeDe(t, mux, cookie, cible))
+		if filtre == "" {
+			t.Errorf("%s ne porte aucun lien de retrait", cible)
+			continue
+		}
+		exigeContient(t, filtre, `href="/recettes"`)
+	}
+}
+
+func TestSansTypeAucunLienDeRetraitNApparait(t *testing.T) {
+	_, mux, cookie := carnetDeTest(t)
+
+	for _, cible := range []string{"/recettes", "/recettes?type="} {
+		if filtre := filtreActifRendu(listeDe(t, mux, cookie, cible)); filtre != "" {
+			t.Errorf("%s annonce un filtre : %s", cible, filtre)
+		}
+	}
+}
+
+func TestLeLienDeRetraitConserveLeTerme(t *testing.T) {
+	_, mux, cookie := carnetDeTest(t)
+
+	filtre := filtreActifRendu(listeDe(t, mux, cookie, "/recettes?q=tarte&type=dessert&page=2"))
+
+	exigeContient(t, filtre, `href="/recettes?q=tarte"`)
+}
+
+func TestLaPageNommeLeTypeFiltre(t *testing.T) {
+	_, mux, cookie := carnetDeTest(t)
+
+	exigeContient(t, filtreActifRendu(listeDe(t, mux, cookie, "/recettes?type=entree")), "Entrée")
+	exigeContient(t, filtreActifRendu(listeDe(t, mux, cookie, "/recettes?type=sans")), "Sans type de plat")
+}
+
+// Le code ne s'appuie ni sur le libellé ni sur l'identifiant PocketBase :
+// renommer un type en base ne change ni ce que le filtre ramène ni l'adresse
+// qui le porte, et seul le libellé affiché suit.
+func TestUnTypeRenommeGardeSonSlugEtSesRecettes(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	carnetClasse(t, app)
+
+	dessert := typeDePlat(t, app, "Dessert")
+	dessert.Set("name", "Desserts et douceurs")
+	if err := app.Save(dessert); err != nil {
+		t.Fatalf("renommage du type de plat : %v", err)
+	}
+
+	corps := listeDe(t, mux, cookie, "/recettes?type=dessert")
+
+	exigeContient(t, corps, "Tarte au citron", "Desserts et douceurs")
+	exigeSansAucun(t, corps, "Salade de chevre", "Recette non classee")
+}
+
+// Aucun slug de type de plat n'est écrit en dur dans le code de production : la
+// seule valeur littérale admise est « sans », la valeur réservée.
+func TestAucunSlugDeTypeDePlatNEstEnDurDansLeCode(t *testing.T) {
+	app, _, _ := carnetDeTest(t)
+
+	types, err := app.FindAllRecords("meal_types")
+	if err != nil {
+		t.Fatalf("lecture des types de plat : %v", err)
+	}
+	for _, type_ := range types {
+		slug := type_.GetString("slug")
+		if sources := chercheDansLesSources(t, `"`+slug+`"`); len(sources) > 0 {
+			t.Errorf("le slug %q est écrit en dur dans %v", slug, sources)
+		}
+	}
+}
+
+// Sans ça, taper une lettre dans le champ de recherche annulerait le filtre
+// qu'on vient de poser.
+func TestLeChampDeRechercheEmporteLeType(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	carnetClasse(t, app)
+
+	corps := listeDe(t, mux, cookie, "/recettes?type=dessert")
+
+	exigeContient(t, corps, `hx-include="[name='tag'],[name='type'],[name='saison']"`, `name="type" value="dessert"`)
+
+	// La requête que la page fait faire à HTMX, jouée telle quelle : le champ
+	// de recherche part avec le type, et rend donc le fragment filtré.
+	fragment := demande(mux, "/recettes?q=&type=dessert", cookie, map[string]string{"HX-Request": "true"}).Body.String()
+
+	exigeContient(t, fragment, "Tarte au citron")
+	exigeSansAucun(t, fragment, "Salade de chevre", "Recette non classee")
+}
+
+// Les deux critères de la liste posés ensemble. Chacun a ses tests ; ce que
+// celui-ci couvre, c'est leur rencontre sur la même requête — la jointure du
+// type et le résolveur de filtre de la saison, qui ne se connaissent pas.
+//
+// Les deux recettes écartées ne le sont chacune que par un seul des deux
+// critères : perdre l'un ou l'autre filtre en ramène une, et rougit ici.
+func TestLeTypeEtLaSaisonSeCombinent(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+
+	creeRecette(t, app, recetteVoulue{titre: "Tarte aux fraises", typeDePlat: "Dessert", saisons: []string{"été"}})
+	creeRecette(t, app, recetteVoulue{titre: "Sorbet au citron", typeDePlat: "Dessert", saisons: []string{"hiver"}})
+	creeRecette(t, app, recetteVoulue{titre: "Salade de tomates", typeDePlat: "Entrée", saisons: []string{"été"}})
+
+	corps := listeDe(t, mux, cookie, "/recettes?type=dessert&saison=ete")
+
+	exigeContient(t, corps, "Tarte aux fraises")
+	exigeSansAucun(t, corps, "Sorbet au citron", "Salade de tomates")
+}
+
+func TestHTMXSurUnTypeNeRecoitQueLeFragmentFiltre(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	carnetClasse(t, app)
+
+	rec := demande(mux, "/recettes?type=dessert", cookie, map[string]string{"HX-Request": "true"})
+	corps := rec.Body.String()
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("statut %d, attendu %d", rec.Code, http.StatusOK)
+	}
+	exigeSansAucun(t, corps, "<html", "<body", "Salade de chevre", "Recette non classee")
+	exigeContient(t, corps, "Tarte au citron")
+}
+
+// Le critère de type ne doit pas ouvrir une porte que la liste a fermée.
+func TestSansSessionLeFiltreParTypeNeRendRien(t *testing.T) {
+	app, mux := serveurDeTest(t)
+	carnetClasse(t, app)
+
+	rec := demande(mux, "/recettes?type=dessert", nil, nil)
+
+	if rec.Code != http.StatusFound {
+		t.Errorf("statut %d, attendu %d", rec.Code, http.StatusFound)
+	}
+	if lieu := rec.Header().Get("Location"); lieu != "/connexion" {
+		t.Errorf("Location %q, attendu %q", lieu, "/connexion")
+	}
+	exigeSansAucun(t, rec.Body.String(), "Tarte au citron")
+}
+
+// Les libellés se saisissent depuis l'administration : ce sont des données
+// comme les autres. Trois emplacements les affichent — la barre, la vignette
+// et la fiche —, donc trois tests d'échappement.
+func TestLaBarreEchappeLeLibelleDUnType(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	typeDePlatEnBase(t, app, `"><script>alert(1)</script>`, "malveillant", 95)
+
+	barre := barreRendue(t, listeDe(t, mux, cookie, "/recettes"))
+
+	exigeSansAucun(t, barre, `"><script>`)
+	exigeContient(t, barre, "&lt;script&gt;alert(1)&lt;/script&gt;")
+}
+
+func TestLaVignetteEchappeLeLibelleDuType(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	malveillant := typeDePlatEnBase(t, app, `"><script>alert(1)</script>`, "malveillant", 95)
+	creeRecette(t, app, recetteVoulue{titre: "Tarte au citron", typeDePlatId: malveillant.Id})
+
+	rendu := typeDeLaVignette(t, listeDe(t, mux, cookie, "/recettes"))
+
+	exigeSansAucun(t, rendu, `"><script>`)
+	exigeContient(t, rendu, "&lt;script&gt;alert(1)&lt;/script&gt;")
+}
+
+// La valeur reçue en chaîne de requête n'est jamais réémise : ni telle quelle,
+// ni échappée, ni encodée dans une adresse. Une valeur inconnue n'a rien à
+// faire dans la page, et le message d'absence générique suffit à le dire.
+func TestLaValeurDeTypeNEstJamaisReemise(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	carnetClasse(t, app)
+
+	malveillante := `<script>alert(1)</script>`
+	corps := listeDe(t, mux, cookie, "/recettes?"+url.Values{"type": {malveillante}, "page": {"3"}}.Encode())
+
+	exigeSansAucun(t, corps,
+		malveillante,
+		"&lt;script&gt;alert(1)&lt;/script&gt;",
+		url.QueryEscape(malveillante),
+	)
+}
+
+func TestLaVignetteRendLeTypeDePlatCliquable(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	creeRecette(t, app, recetteVoulue{titre: "Tarte au citron", typeDePlat: "Dessert"})
+
+	rendu := typeDeLaVignette(t, listeDe(t, mux, cookie, "/recettes"))
+
+	exigeContient(t, rendu, `href="/recettes?type=dessert"`, ">Dessert<")
+}
+
+func TestLaVignetteDUneRecetteSansTypeNeRendNiLienNiLibelle(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	creeRecette(t, app, recetteVoulue{titre: "Pain perdu"})
+
+	corps := listeDe(t, mux, cookie, "/recettes")
+
+	if rendu := motifDuTypeDeLaVignette.FindString(corps); rendu != "" {
+		t.Errorf("une vignette sans type de plat rend %q", rendu)
+	}
+}
+
 // --- HTMX ------------------------------------------------------------------
 
 func TestLeChampDeRechercheEstBrancheSurHTMX(t *testing.T) {
@@ -963,7 +1398,7 @@ func TestLeFiltreActifSeNommeEtSeRetire(t *testing.T) {
 
 	corps := listeDe(t, mux, cookie, "/recettes?q=salade&saison=ete")
 
-	exigeContient(t, corps, "été", `href="/recettes?q=salade"`)
+	exigeContient(t, corps, "été", `<a href="/recettes?q=salade">Toutes les saisons</a>`)
 }
 
 func TestUnFiltreInconnuNOffrePasDeRetrait(t *testing.T) {
@@ -972,7 +1407,7 @@ func TestUnFiltreInconnuNOffrePasDeRetrait(t *testing.T) {
 
 	corps := listeDe(t, mux, cookie, "/recettes?q=salade&saison=nexistepas")
 
-	exigeSansAucun(t, corps, `href="/recettes?q=salade"`)
+	exigeSansAucun(t, corps, "Toutes les saisons")
 }
 
 // Sans ça, taper une lettre dans le champ de recherche annulerait le filtre
@@ -984,7 +1419,7 @@ func TestLaRechercheConserveLeFiltreDeSaison(t *testing.T) {
 	carnetDesSaisons(t, app)
 
 	corps := listeDe(t, mux, cookie, "/recettes?saison=ete")
-	exigeContient(t, corps, `hx-include="#saison"`, `name="saison"`, `value="ete"`)
+	exigeContient(t, corps, `hx-include="[name='tag'],[name='type'],[name='saison']"`, `name="saison"`, `value="ete"`)
 
 	rec := demande(mux, "/recettes?q=&saison=ete", cookie, map[string]string{"HX-Request": "true"})
 	fragment := rec.Body.String()

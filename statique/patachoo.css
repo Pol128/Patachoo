@@ -178,6 +178,32 @@ footer {
 	font: inherit;
 }
 
+/* La barre des types se replie sur plusieurs lignes plutôt que de déborder :
+   la collection en porte huit à l'installation, et rien n'empêche d'en ajouter
+   depuis l'administration. */
+.types ul {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.35rem 0.75rem;
+	margin: 0 0 1rem;
+	padding: 0;
+	list-style: none;
+	font-size: 0.9rem;
+}
+
+/* Le filtre posé se lit comme une phrase, et sa sortie est à côté de son nom :
+   un critère posé d'un clic doit se retirer d'un clic. */
+.filtre-actif {
+	margin: 0 0 1rem;
+	color: #6b675f;
+	font-size: 0.9rem;
+}
+
+.filtre-actif .nom {
+	font-weight: 600;
+	color: inherit;
+}
+
 /* La barre des filtres, sous la recherche : une ligne discrète, qui ne dispute
    pas la place au champ de recherche ni à la grille. */
 .filtres {
@@ -270,10 +296,40 @@ footer {
 	border-radius: 999px;
 }
 
+/* Le filtre actif se lit avant les résultats, et porte sa sortie avec lui :
+   un filtre posé d'un clic doit se retirer d'un clic. */
+.filtre {
+	margin: 0 0 1rem;
+	font-size: 0.9rem;
+	color: #6b675f;
+}
+
 /* L'absence de résultat se lit comme une phrase, pas comme une erreur : ce
    n'est pas une panne, c'est une réponse. */
 .absence {
 	color: #6b675f;
+}
+
+/* Les suggestions se posent sous le champ, en une ligne qui va à la ligne :
+   elles proposent, elles n'occupent pas la page. Vides, elles ne laissent
+   aucun creux — la liste n'a alors ni bordure ni marge à elle. */
+.suggestions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.35rem;
+	margin: 0.35rem 0 0;
+	padding: 0;
+	list-style: none;
+}
+
+.suggestions button {
+	padding: 0.1rem 0.55rem;
+	border: 1px solid var(--trait);
+	border-radius: 999px;
+	background: none;
+	font: inherit;
+	font-size: 0.85rem;
+	cursor: pointer;
 }
 
 .pagination {
