@@ -1,0 +1,24 @@
+<section id="suivi-du-lot"{{if not .Termine}} hx-get="{{.Lien}}" hx-trigger="{{.Cadence}}" hx-swap="outerHTML"{{end}}>
+{{if .Termine}}
+<h2>Rapport de la fournée</h2>
+<p class="fournee">Fournée de <strong>{{.Total}}</strong> adresses.</p>
+{{with .Tag}}<p class="tag-de-la-fournee">Rassemblée sous le tag <a href="{{.URL}}">{{.Texte}}</a>.</p>{{end}}
+<ul class="familles">
+{{range .Comptes}}<li class="famille">{{.Libelle}} : <strong>{{.Compte}}</strong></li>
+{{end}}</ul>
+<p>Le détail des échecs :</p>
+<ul class="familles-echec">
+{{range .Detail}}<li class="famille-echec">{{.Libelle}} : <strong>{{.Compte}}</strong></li>
+{{end}}</ul>
+{{if .Echecs}}
+<p>Les adresses qui n'ont pas abouti, à reprendre une par une dans l'import unitaire :</p>
+<ul class="echecs">
+{{range .Echecs}}<li class="echec"><code>{{.URL}}</code> <span class="cause">{{.Cause}}</span></li>
+{{end}}</ul>
+{{end}}
+{{else}}
+<p class="progression"><strong>{{.Traitees}}</strong> adresses traitées sur <strong>{{.Total}}</strong> — {{.Etat}}.</p>
+{{if .Derniere}}<p class="derniere">Dernière recette entrée : {{.Derniere}}</p>{{end}}
+{{with .Tag}}<p class="tag-de-la-fournee">Fournée rassemblée sous le tag <a href="{{.URL}}">{{.Texte}}</a>.</p>{{end}}
+{{end}}
+</section>
