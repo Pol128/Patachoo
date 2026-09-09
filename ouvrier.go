@@ -198,20 +198,13 @@ func (o *ouvrier) traiteLeLot(ctx context.Context, lot *core.Record) error {
 		return fmt.Errorf("lecture des lignes du lot %s : %w", lot.Id, err)
 	}
 
-	// Le robots.txt de chaque hôte est lu une fois par fournée, et non à chaque
-	// page : vingt pages sur un même site lui coûtent vingt-et-une requêtes et
-	// non quarante. Le cache naît et meurt avec la fournée — porté par
-	// l'ouvrier, il vivrait autant que le service, et un site qui se ferme
-	// entre deux lots continuerait d'être récolté jusqu'au redémarrage.
-	robots := &recuperation.RobotsRetenus{}
-
 	files := parHote(lignes)
 	for debut := 0; debut < len(files); debut += filesMax {
 		vague := files[debut:min(debut+filesMax, len(files))]
 
 		taches := make([]func(), 0, len(vague))
 		for _, file := range vague {
-			taches = append(taches, func() { o.traiteLaFile(ctx, lot, file, robots) })
+			taches = append(taches, func() { o.traiteLaFile(ctx, lot, file) })
 		}
 		enFiles(o.horloge, taches)
 
@@ -256,12 +249,12 @@ func hoteDe(adresse string) string {
 }
 
 // traiteLaFile mène les lignes d'un même hôte, l'une après l'autre.
-func (o *ouvrier) traiteLaFile(ctx context.Context, lot *core.Record, lignes []*core.Record, robots *recuperation.RobotsRetenus) {
+func (o *ouvrier) traiteLaFile(ctx context.Context, lot *core.Record, lignes []*core.Record) {
 	for _, ligne := range lignes {
 		if ctx.Err() != nil {
 			return
 		}
-		if err := o.traiteLaLigne(ctx, lot, ligne, robots); err != nil {
+		if err := o.traiteLaLigne(ctx, lot, ligne); err != nil {
 			if ctx.Err() != nil {
 				return
 			}
@@ -274,7 +267,7 @@ func (o *ouvrier) traiteLaFile(ctx context.Context, lot *core.Record, lignes []*
 
 // traiteLaLigne mène une URL de bout en bout : PATA-8, puis PATA-7, puis la
 // recette.
-func (o *ouvrier) traiteLaLigne(ctx context.Context, lot, ligne *core.Record, robots *recuperation.RobotsRetenus) error {
+func (o *ouvrier) traiteLaLigne(ctx context.Context, lot, ligne *core.Record) error {
 	adresse := ligne.GetString("url")
 	if err := o.poseLeStatut(ligne, statutEnCours); err != nil {
 		return err
@@ -290,14 +283,22 @@ func (o *ouvrier) traiteLaLigne(ctx context.Context, lot, ligne *core.Record, ro
 		return o.poseLeStatut(ligne, statutDejaPresente)
 	}
 
-	// La cadence est rendue à recuperation plutôt que tenue ici : un appel en
-	// émet deux requêtes — le robots.txt, puis la page —, et les espacer
-	// depuis ce niveau-ci laisserait toujours partir la paire dans le même
-	// instant. C'est aussi elle qui rapporte le Crawl-delay lu, avant la
-	// requête de page, si bien qu'il vaut dès celle-là.
-	page, err := recuperePage(ctx, adresse,
-		recuperation.AvecCadence(cadenceDeRecuperation{o.cadence}),
-		recuperation.AvecRobotsRetenus(robots))
+	// La cadence porte sur les appels à recuperePage, et un appel émet deux
+	// requêtes : recuperation demande le robots.txt de l'hôte, puis la page,
+	// sans les mettre en cache. Une fournée de N URLs sur un même hôte lui en
+	// envoie donc 2N, par paires collées — la promesse « au plus une par
+	// seconde » ne vaut, ici, que pour la couture que nous tenons.
+	//
+	// Écart assumé et sorti de cette tâche : le corriger demande de faire
+	// attendre son tour à chaque requête depuis recuperation, ce que PATA-42
+	// met hors périmètre, et met en jeu la borne de temps que l'import
+	// unitaire de PATA-9 doit à son utilisateur. C'est PATA-47.
+	hote := hoteDe(adresse)
+	if err := o.cadence.attendSonTour(ctx, hote); err != nil {
+		return o.rendLaLigne(ligne, err)
+	}
+
+	page, err := recuperePage(ctx, adresse)
 	if err != nil {
 		if ctx.Err() != nil {
 			// Le serveur s'arrête : la ligne n'a pas échoué, elle n'a pas eu
@@ -306,6 +307,10 @@ func (o *ouvrier) traiteLaLigne(ctx context.Context, lot, ligne *core.Record, ro
 		}
 		return o.poseLEchec(ligne, err)
 	}
+	// Le Crawl-delay ne se lit qu'une fois la réponse obtenue : il s'applique
+	// donc à partir de la requête suivante, vers ce domaine seulement.
+	o.cadence.retiens(hote, page.DelaiAnnonce)
+
 	return o.enregistreSiInedite(lot, ligne, page)
 }
 

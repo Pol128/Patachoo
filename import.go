@@ -35,8 +35,8 @@ import (
 // point où les tests peuvent piéger le réseau pour vérifier qu'aucune requête
 // ne part. Le délai, la taille maximale, les redirections et le refus des
 // adresses non routables sont l'affaire de recuperation, jamais réécrits ici.
-var recuperePage = func(ctx context.Context, adresse string, choix ...recuperation.Option) (recuperation.Page, error) {
-	return recuperation.Recupere(ctx, adresse, choix...)
+var recuperePage = func(ctx context.Context, adresse string) (recuperation.Page, error) {
+	return recuperation.Recupere(ctx, adresse)
 }
 
 // brancheLImport pose les deux routes de l'import, toutes deux derrière la

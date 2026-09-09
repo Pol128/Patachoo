@@ -5,7 +5,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -43,56 +42,6 @@ type groupe struct {
 // borne, nous appliquons la borne — et l'écart se voit dans le rythme, pas
 // dans un refus silencieux.
 const delaiAnnonceMax = 5 * time.Minute
-
-// decisionRobots est ce que le robots.txt d'un hôte dit, une fois lu : de quoi
-// trancher n'importe quel chemin de cet hôte sans le redemander.
-//
-// interditTout se distingue de « aucune règle » : le premier vient d'un serveur
-// en panne, que le REP demande de laisser tranquille ; le second d'un
-// robots.txt absent, qui n'interdit rien.
-type decisionRobots struct {
-	interditTout bool
-	regles       robots
-}
-
-// RobotsRetenus garde ce que le robots.txt de chaque hôte a dit, pour la durée
-// que l'appelant lui donne — celle d'une fournée.
-//
-// Le zéro est utilisable. Sûr à partager entre goroutines : une fournée mène
-// plusieurs hôtes de front, et deux d'entre eux peuvent viser le même — c'est
-// le cas www.site.fr / site.fr, qui font deux files et un seul robots.txt.
-type RobotsRetenus struct {
-	mu  sync.Mutex
-	par map[string]decisionRobots
-}
-
-// lis rend ce qui est retenu pour cette adresse de robots.txt. Un cache nil ne
-// retient rien, et c'est ce qui rend l'option facultative sans garde ailleurs.
-func (r *RobotsRetenus) lis(adresse string) (decisionRobots, bool) {
-	if r == nil {
-		return decisionRobots{}, false
-	}
-
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	dit, vu := r.par[adresse]
-	return dit, vu
-}
-
-func (r *RobotsRetenus) garde(adresse string, dit decisionRobots) {
-	if r == nil {
-		return
-	}
-
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if r.par == nil {
-		r.par = map[string]decisionRobots{}
-	}
-	r.par[adresse] = dit
-}
 
 // robots est la décision d'accès d'un hôte.
 type robots struct {

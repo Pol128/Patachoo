@@ -51,7 +51,7 @@ const (
 const Agent = "Patachoo/0.1 (+https://github.com/Pol128/Patachoo)"
 
 const (
-	// DelaiMaxDefaut borne un échange — le robots.txt, puis la page.
+	// DelaiMaxDefaut borne l'échange entier — robots.txt compris.
 	DelaiMaxDefaut = 10 * time.Second
 	// TailleMaxDefaut borne le corps lu. Une page qui ne s'arrête jamais ne
 	// doit pas emporter le serveur.
@@ -67,6 +67,11 @@ type Page struct {
 	Corps       []byte
 	URLFinale   string
 	TypeContenu string
+	// DelaiAnnonce est le Crawl-delay que le robots.txt de l'hôte demande, ou
+	// zéro s'il n'en demande pas. Ce paquet le lit et ne l'applique pas : il va
+	// chercher une page, il n'en enchaîne pas. C'est l'appelant qui enchaîne
+	// — l'import en lot — qui espace ses requêtes de ce que l'hôte réclame.
+	DelaiAnnonce time.Duration
 }
 
 // Erreur porte la cause nommée, le code HTTP quand il y en a eu un, et l'URL sur
@@ -101,53 +106,12 @@ type options struct {
 	// transport court-circuite la pile réseau. Réservé aux tests qui vérifient
 	// qu'aucune requête ne part.
 	transport http.RoundTripper
-	// cadence espace les requêtes sortantes, hôte par hôte. Nil : elles
-	// partent dès qu'on les fait.
-	cadence Cadence
-	// robots garde le robots.txt déjà lu de chaque hôte. Nil : il est
-	// redemandé à chaque appel.
-	robots *RobotsRetenus
-}
-
-// Cadence est le rythme que l'appelant impose aux requêtes que ce paquet émet,
-// hôte par hôte.
-//
-// Un appel en émet deux : le robots.txt de l'hôte, que l'appelant n'a pas
-// demandé, puis la page. Sans cadence elles partent collées — un appelant qui
-// espace ses appels d'une seconde en envoie tout de même deux dans le même
-// instant, et sa politesse ne vaut que pour la couture qu'il tient. Avec,
-// chacun des deux échanges attend son tour, robots.txt compris.
-//
-// Retiens rapporte le Crawl-delay lu dans le robots.txt. Il est rapporté avant
-// la requête de page, et non après l'appel : c'est ce qui le fait valoir dès
-// cette page-là.
-type Cadence interface {
-	AttendSonTour(ctx context.Context, hote string) error
-	Retiens(hote string, annonce time.Duration)
-}
-
-// AvecCadence fait passer chaque requête sortante par le tour de rôle que
-// l'appelant tient.
-func AvecCadence(c Cadence) Option {
-	return func(o *options) { o.cadence = c }
-}
-
-// AvecRobotsRetenus garde le robots.txt de chaque hôte au lieu de le
-// redemander à chaque page.
-//
-// Une fournée de vingt pages sur un même site lui coûte alors vingt-et-une
-// requêtes et non quarante. Le cache appartient à l'appelant : c'est lui qui
-// décide de sa durée de vie — celle d'une fournée —, et rien ici ne le
-// périme.
-func AvecRobotsRetenus(r *RobotsRetenus) Option {
-	return func(o *options) { o.robots = r }
 }
 
 // Option règle un appel.
 type Option func(*options)
 
-// AvecDelaiMax borne un échange : le robots.txt, puis la page, chacun le sien.
-// L'attente qu'une cadence impose n'y est pas comptée — voir echange.
+// AvecDelaiMax borne l'échange entier, robots.txt compris.
 func AvecDelaiMax(d time.Duration) Option {
 	return func(o *options) { o.delaiMax = d }
 }
@@ -217,6 +181,9 @@ func Recupere(ctx context.Context, adresse string, choix ...Option) (Page, error
 		return Page{}, &Erreur{Cause: RefuseeParPolitique, URL: adresse}
 	}
 
+	ctx, arrete := context.WithTimeout(ctx, o.delaiMax)
+	defer arrete()
+
 	r := &recuperateur{o: o}
 	r.client = &http.Client{Transport: r.pile(), CheckRedirect: r.verifieRedirection}
 
@@ -224,28 +191,6 @@ func Recupere(ctx context.Context, adresse string, choix ...Option) (Page, error
 		return Page{}, refus
 	}
 	return r.page(ctx, cible)
-}
-
-// echange ouvre un aller-retour : il attend le tour de l'hôte, puis borne ce
-// seul échange.
-//
-// L'attente est prise avant la borne, et c'est tout l'enjeu. Prise dedans, elle
-// se consommerait sur le compte du délai maximal : un Crawl-delay plus long que
-// lui ferait échouer toutes les pages de l'hôte en delai_depasse au lieu de les
-// espacer, et la plage que delaiAnnonceMax accepte — jusqu'à cinq minutes —
-// serait injouable.
-//
-// Chaque échange a donc sa borne : le robots.txt, puis la page. Les sauts d'une
-// redirection restent sous celle de la page — c'est le site qui redirige, et
-// l'appelant n'a demandé qu'une adresse.
-func (r *recuperateur) echange(ctx context.Context, hote string) (context.Context, context.CancelFunc, error) {
-	if r.o.cadence != nil {
-		if err := r.o.cadence.AttendSonTour(ctx, hote); err != nil {
-			return nil, nil, err
-		}
-	}
-	borne, arrete := context.WithTimeout(ctx, r.o.delaiMax)
-	return borne, arrete, nil
 }
 
 // analyseURL n'accepte qu'une URL absolue de schéma http ou https, avec un hôte.
@@ -269,6 +214,9 @@ type recuperateur struct {
 	o      options
 	client *http.Client
 	refus  *Erreur
+	// delaiAnnonce est retenu à la lecture du robots.txt, et reporté sur la
+	// page rendue.
+	delaiAnnonce time.Duration
 }
 
 // pile monte le transport HTTP. Le proxy est retiré : un proxy déclaré dans
@@ -414,12 +362,6 @@ func estDelai(err error) bool {
 
 // page va chercher la page elle-même.
 func (r *recuperateur) page(ctx context.Context, cible *url.URL) (Page, error) {
-	ctx, arrete, err := r.echange(ctx, strings.ToLower(cible.Hostname()))
-	if err != nil {
-		return Page{}, r.echec(err, cible.String(), DelaiDepasse)
-	}
-	defer arrete()
-
 	reponse, err := r.demande(ctx, cible.String())
 	if err != nil {
 		return Page{}, r.echec(err, cible.String(), DelaiDepasse)
@@ -445,9 +387,10 @@ func (r *recuperateur) page(ctx context.Context, cible *url.URL) (Page, error) {
 	}
 
 	return Page{
-		Corps:       corps,
-		URLFinale:   finale,
-		TypeContenu: reponse.Header.Get("Content-Type"),
+		Corps:        corps,
+		URLFinale:    finale,
+		TypeContenu:  reponse.Header.Get("Content-Type"),
+		DelaiAnnonce: r.delaiAnnonce,
 	}, nil
 }
 
@@ -458,66 +401,10 @@ func (r *recuperateur) page(ctx context.Context, cible *url.URL) (Page, error) {
 // qui redirige, et l'utilisateur a demandé l'URL initiale.
 func (r *recuperateur) robotsInterdit(ctx context.Context, cible *url.URL) *Erreur {
 	adresse := (&url.URL{Scheme: cible.Scheme, Host: cible.Host, Path: "/robots.txt"}).String()
-	hote := strings.ToLower(cible.Hostname())
-
-	dit, refus := r.robotsDe(ctx, adresse, hote)
-	if refus != nil {
-		return refus
-	}
-	if dit.interditTout || !dit.regles.autorise(chemin(cible), Agent) {
-		return &Erreur{Cause: RobotsInterdit, URL: cible.String()}
-	}
-
-	// Rapporté même quand rien n'est interdit : c'est le cas ordinaire, et
-	// c'est justement là qu'un appelant qui enchaîne en a besoin. Rapporté
-	// maintenant, avant la requête de page : appris puis rapporté après coup,
-	// le Crawl-delay ne vaudrait qu'à partir de la page suivante, et celle-ci
-	// partirait à notre rythme et non à celui du site.
-	if r.o.cadence != nil {
-		r.o.cadence.Retiens(hote, dit.regles.delaiPour(Agent))
-	}
-	return nil
-}
-
-// robotsDe rend ce que le robots.txt de l'hôte dit, du cache s'il y est déjà.
-//
-// Ce qui se garde est la décision, pas la réponse : elle ne dépend plus du
-// chemin demandé, et c'est ce qui permet de la partager entre toutes les pages
-// d'un même hôte. Ne se gardent que les décisions que le site a rendues sur
-// lui-même — ses règles, ou l'absence de robots.txt. Ni le robots.txt qu'on n'a
-// pas atteint, ni celui qui a répondu en panne : les deux sont datés, et les
-// garder condamnerait l'hôte entier pour une seconde de dérangement.
-func (r *recuperateur) robotsDe(ctx context.Context, adresse, hote string) (decisionRobots, *Erreur) {
-	if dit, vu := r.o.robots.lis(adresse); vu {
-		return dit, nil
-	}
-
-	dit, refus := r.demandeRobots(ctx, adresse, hote)
-	if refus != nil {
-		return decisionRobots{}, refus
-	}
-	// Le refus né d'un serveur en panne ne se garde pas. Il est daté, pas
-	// définitif : gardé, une panne d'une seconde condamnerait l'hôte entier en
-	// robots_interdit — un sort définitif que rien ne rejoue — pour tous les
-	// lots, et jusqu'au redémarrage du processus. Ce qui se garde est ce que le
-	// site a dit de lui-même : ses règles, ou l'absence de robots.txt.
-	if !dit.interditTout {
-		r.o.robots.garde(adresse, dit)
-	}
-	return dit, nil
-}
-
-// demandeRobots va chercher le robots.txt et en tire ce qu'il dit de l'hôte.
-func (r *recuperateur) demandeRobots(ctx context.Context, adresse, hote string) (decisionRobots, *Erreur) {
-	ctx, arrete, err := r.echange(ctx, hote)
-	if err != nil {
-		return decisionRobots{}, r.echec(err, adresse, Injoignable)
-	}
-	defer arrete()
 
 	reponse, err := r.demande(ctx, adresse)
 	if err != nil {
-		return decisionRobots{}, r.echec(err, adresse, Injoignable)
+		return r.echec(err, adresse, Injoignable)
 	}
 	defer reponse.Body.Close()
 
@@ -526,16 +413,23 @@ func (r *recuperateur) demandeRobots(ctx context.Context, adresse, hote string) 
 		// Le REP demande de s'abstenir quand le serveur est en panne : une
 		// erreur n'est pas une autorisation. Le 403 anti-robot, lui, tombe du
 		// côté « autorisé », et c'est voulu.
-		return decisionRobots{interditTout: true}, nil
+		return &Erreur{Cause: RobotsInterdit, URL: cible.String()}
 	case reponse.StatusCode != http.StatusOK:
-		return decisionRobots{}, nil
+		return nil
 	}
 
 	texte, err := io.ReadAll(io.LimitReader(reponse.Body, r.o.tailleMax))
 	if err != nil {
-		return decisionRobots{}, r.echec(err, adresse, Injoignable)
+		return r.echec(err, adresse, Injoignable)
 	}
-	return decisionRobots{regles: analyseRobots(string(texte))}, nil
+	lu := analyseRobots(string(texte))
+	if !lu.autorise(chemin(cible), Agent) {
+		return &Erreur{Cause: RobotsInterdit, URL: cible.String()}
+	}
+	// Retenu même quand rien n'est interdit : c'est le cas ordinaire, et c'est
+	// justement là qu'un appelant qui enchaîne en a besoin.
+	r.delaiAnnonce = lu.delaiPour(Agent)
+	return nil
 }
 
 // chemin rend le chemin tel que robots.txt le compare.

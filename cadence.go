@@ -80,10 +80,10 @@ type cadence struct {
 	// et non le prochain créneau : c'est ce qui permet à un Crawl-delay appris
 	// entre-temps de s'appliquer dès la requête suivante.
 	//
-	// Rien n'en sort : une entrée par hôte jamais visité deux fois pèse une
-	// clé et un instant, et le nombre d'hôtes distincts qu'une instance verra
-	// se compte en milliers, pas en millions. Une péremption coûterait plus
-	// cher à écrire et à tester que ce qu'elle rendrait.
+	// Rien n'en sort : une entrée par hôte pèse une clé et un instant, et le
+	// nombre d'hôtes distincts qu'une instance verra se compte en milliers.
+	// Une péremption coûterait plus cher à écrire et à tester qu'elle ne
+	// rendrait.
 	dernier map[string]time.Time
 	// delais garde ce que chaque hôte a annoncé.
 	delais map[string]time.Duration
@@ -134,19 +134,6 @@ func (c *cadence) retiens(hote string, annonce time.Duration) {
 	if annonce > c.delais[hote] {
 		c.delais[hote] = annonce
 	}
-}
-
-// cadenceDeRecuperation présente la cadence sous le nom que recuperation
-// attend d'elle. Les majuscules viennent de son interface ; le reste du fichier
-// garde le sien.
-type cadenceDeRecuperation struct{ *cadence }
-
-func (c cadenceDeRecuperation) AttendSonTour(ctx context.Context, hote string) error {
-	return c.attendSonTour(ctx, hote)
-}
-
-func (c cadenceDeRecuperation) Retiens(hote string, annonce time.Duration) {
-	c.retiens(hote, annonce)
 }
 
 // delaiDe rend l'écart à respecter vers un hôte. À appeler sous le verrou.
