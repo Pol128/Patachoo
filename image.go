@@ -147,8 +147,16 @@ func (f formulaireRecette) URLDeLImage() string {
 // redirections comptées, plafond de taille, délai, et refus des adresses non
 // routables sur l'adresse résolue. Rien n'en est réécrit ici : cette fonction ne
 // juge que ce qui revient.
-func imageDistante(ctx context.Context, adresse string) (*filesystem.File, error) {
-	page, err := recuperation.Recupere(ctx, adresse, optionsDuTelechargement...)
+//
+// choix s'ajoute aux options du téléchargement, et n'existe que pour l'import en
+// lot : il tient sa cadence et son robots.txt retenu à la main, et son image
+// doit partir au même rythme que ses pages. L'unitaire n'en passe aucune — la
+// requête part d'une session qui attend sa réponse, il n'y a personne à
+// espacer.
+func imageDistante(ctx context.Context, adresse string, choix ...recuperation.Option) (*filesystem.File, error) {
+	// slices.Concat et non append : optionsDuTelechargement est une variable de
+	// paquet, et un append qui trouverait de la capacité écrirait dedans.
+	page, err := recuperation.Recupere(ctx, adresse, slices.Concat(optionsDuTelechargement, choix)...)
 	if err != nil {
 		return nil, err
 	}

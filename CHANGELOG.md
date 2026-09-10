@@ -15,3 +15,7 @@ diverger.
   l'impriment, et le pied de page l'affiche à un compte connecté, en lien vers
   les versions publiées. Construit sans `-ldflags`, il annonce ce qu'il est —
   `dev (1de2cd1, modifié)` — plutôt que de se taire.
+- Les recettes importées en fournée arrivent illustrées. L'image que la page
+  publie est téléchargée et attachée comme à l'import unitaire ; une image
+  injoignable ou refusée ne coûte plus la recette, elle la laisse simplement
+  sans illustration. Les fournées d'avant ne sont pas rattrapées.
