@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -345,7 +346,14 @@ func siteServi(robots string, urls ...string) map[string]string {
 // encoding/json plutôt que par un gabarit de chaîne : un titre à guillemets ne
 // doit pas casser la fixture.
 func htmlDeRecette(titre string, ingredients []string) []byte {
-	bloc, err := json.Marshal(map[string]any{
+	return htmlDeRecetteIllustree(titre, "", ingredients)
+}
+
+// htmlDeRecetteIllustree fabrique la même page, qui publie en plus l'adresse
+// d'une image. Une adresse vide n'écrit pas la propriété : une page sans image
+// n'est pas une page dont l'image est la chaîne vide.
+func htmlDeRecetteIllustree(titre, image string, ingredients []string) []byte {
+	recette := map[string]any{
 		"@context":           "https://schema.org",
 		"@type":              "Recipe",
 		"name":               titre,
@@ -354,7 +362,12 @@ func htmlDeRecette(titre string, ingredients []string) []byte {
 		"cookTime":           "PT35M",
 		"recipeIngredient":   ingredients,
 		"recipeInstructions": "Mélanger, puis cuire.",
-	})
+	}
+	if image != "" {
+		recette["image"] = image
+	}
+
+	bloc, err := json.Marshal(recette)
 	if err != nil {
 		panic(err)
 	}
@@ -365,6 +378,12 @@ func htmlDeRecette(titre string, ingredients []string) []byte {
 // sertLaRecette rend la page d'une recette, la réponse venant de urlFinale.
 func sertLaRecette(titre, urlFinale string, ingredients ...string) reponseDuSite {
 	return sertLaPage(htmlDeRecette(titre, ingredients), urlFinale)
+}
+
+// sertLaRecetteIllustree rend la page d'une recette qui publie une image, à
+// l'adresse donnée — absolue, ou relative à résoudre contre l'URL finale.
+func sertLaRecetteIllustree(titre, urlFinale, image string, ingredients ...string) reponseDuSite {
+	return sertLaPage(htmlDeRecetteIllustree(titre, image, ingredients), urlFinale)
 }
 
 // sertLaPage rend une page quelconque, telle que PATA-8 la ramènerait.
@@ -1309,6 +1328,227 @@ func TestUnLotEntierementTraitePasseEnTermine(t *testing.T) {
 	for rang, statut := range statutsDesLignes(t, app, lot) {
 		if statut == "a_faire" || statut == "en_cours" {
 			t.Errorf("ligne %d restée en %q dans un lot terminé", rang+1, statut)
+		}
+	}
+}
+
+// --- L'image de la fournée --------------------------------------------------
+//
+// Le lot illustre ses recettes comme l'import unitaire, et par le même chemin :
+// adresseDeLImage résout, imageDistante télécharge, et toute la politique de
+// recuperation s'applique. Ce que le lot ajoute est le placement — après la
+// transaction, hors du verrou de création — et le portage de ses deux options
+// jusqu'à l'image.
+
+// laRecetteDeLaLigne rend la recette qu'une ligne importée désigne.
+func laRecetteDeLaLigne(t *testing.T, app core.App, ligne *core.Record) *core.Record {
+	t.Helper()
+
+	if statut := ligne.GetString("status"); statut != statutImportee {
+		t.Fatalf("ligne en %q, attendu %q", statut, statutImportee)
+	}
+	recette, err := app.FindRecordById("recipes", ligne.GetString("recipe"))
+	if err != nil {
+		t.Fatalf("la ligne ne pointe aucune recette : %v", err)
+	}
+	return recette
+}
+
+// exigeRecetteSansImageEtLigneImportee dit le sort d'une image qui n'a pas
+// abouti : la recette est là, sans fichier, la ligne compte comme importée, et
+// le rapport ne la range pas en échec.
+func exigeRecetteSansImageEtLigneImportee(t *testing.T, app core.App, lignes []*core.Record) {
+	t.Helper()
+
+	recette := laRecetteDeLaLigne(t, app, lignes[0])
+	if nom := recette.GetString("image"); nom != "" {
+		t.Errorf("image %q attachée, aucune attendue", nom)
+	}
+	exigeStockageVide(t, app)
+
+	comptes, _, echecs := leRapport(lignes)
+	if len(echecs) != 0 {
+		t.Errorf("%d ligne(s) en échec au rapport, aucune attendue : %v", len(echecs), echecs)
+	}
+	for _, compte := range comptes {
+		if compte.Libelle == "Importées" && compte.Compte != len(lignes) {
+			t.Errorf("%d importées au rapport, attendu %d", compte.Compte, len(lignes))
+		}
+	}
+}
+
+// TestUneRecetteDeFourneeRecoitLImageDeLaPage : sans téléchargement, l'adresse
+// trouvée dans le balisage est perdue à l'enregistrement — le schéma n'a pas de
+// champ pour elle —, et rouvrir la fiche ne la propose pas davantage.
+func TestUneRecetteDeFourneeRecoitLImageDeLaPage(t *testing.T) {
+	app, titulaire, horloge, o := atelierDeLOuvrier(t)
+	const adresse = "https://a.example/tarte"
+	octets := pngDeTest(t)
+
+	serveur := serveurDImages(t, sertLesOctets(octets, "image/png"))
+	avecTelechargement(t, autoriseLesServeurs(serveur))
+	avecSite(t, horloge, map[string]reponseDuSite{
+		adresse: sertLaRecetteIllustree("Tarte", adresse, serveur.URL+"/photo.png", "200 g de farine"),
+	})
+
+	lot := lotDe(t, app, titulaire, adresse)
+	traite(t, o, lot)
+
+	recette := laRecetteDeLaLigne(t, app, lignesDuLot(t, app, lot)[0])
+	if stocke := fichierStocke(t, app, recette); !bytes.Equal(stocke, octets) {
+		t.Errorf("%d octets stockés, les %d octets servis attendus", len(stocke), len(octets))
+	}
+}
+
+// TestUneImageRelativeSeResoutContreLURLFinale : beaucoup de sites n'écrivent
+// que le chemin de leurs images. C'est l'URL du dernier saut qui la résout —
+// celle qui désigne déjà la recette dans source_url —, et non l'adresse
+// soumise : après une redirection qui change d'hôte, celle-ci viserait à côté.
+func TestUneImageRelativeSeResoutContreLURLFinale(t *testing.T) {
+	app, titulaire, horloge, o := atelierDeLOuvrier(t)
+	const soumise = "https://a.example/court"
+	octets := pngDeTest(t)
+
+	serveur := serveurDImages(t, sertLesOctets(octets, "image/png"))
+	avecTelechargement(t, autoriseLesServeurs(serveur))
+	avecSite(t, horloge, map[string]reponseDuSite{
+		soumise: sertLaRecetteIllustree("Tarte", serveur.URL+"/recettes/tarte", "/photo.png", "200 g de farine"),
+	})
+
+	lot := lotDe(t, app, titulaire, soumise)
+	traite(t, o, lot)
+
+	recette := laRecetteDeLaLigne(t, app, lignesDuLot(t, app, lot)[0])
+	if stocke := fichierStocke(t, app, recette); !bytes.Equal(stocke, octets) {
+		t.Errorf("%d octets stockés, les %d octets servis attendus — l'adresse relative "+
+			"n'a pas été résolue contre l'URL finale", len(stocke), len(octets))
+	}
+}
+
+// TestUneImageQuiNAboutitPasNeCoutePasLaRecette : une image en 404 ne doit
+// coûter ni la recette, ni une ligne au compteur des échecs. C'est ce que
+// poseLImage tient déjà à l'unitaire, et la fournée n'a pas de raison d'être
+// plus sévère — l'utilisateur a le formulaire d'édition pour l'illustrer.
+func TestUneImageQuiNAboutitPasNeCoutePasLaRecette(t *testing.T) {
+	cas := map[string]struct {
+		// sert répond à la place du site d'images. Nil : la page ne publie
+		// aucune adresse, et rien n'a à partir.
+		sert http.HandlerFunc
+	}{
+		"image introuvable": {sert: func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) }},
+		"image illisible":   {sert: sertLesOctets([]byte("<html>ceci n'est pas une image</html>"), "image/png")},
+		"page sans image":   {sert: nil},
+	}
+
+	for nom, c := range cas {
+		t.Run(nom, func(t *testing.T) {
+			app, titulaire, horloge, o := atelierDeLOuvrier(t)
+			const adresse = "https://a.example/tarte"
+
+			var image string
+			if c.sert != nil {
+				serveur := serveurDImages(t, c.sert)
+				avecTelechargement(t, autoriseLesServeurs(serveur))
+				image = serveur.URL + "/photo.png"
+			}
+			avecSite(t, horloge, map[string]reponseDuSite{
+				adresse: sertLaRecetteIllustree("Tarte", adresse, image, "200 g de farine"),
+			})
+
+			lot := lotDe(t, app, titulaire, adresse)
+			traite(t, o, lot)
+
+			exigeRecetteSansImageEtLigneImportee(t, app, lignesDuLot(t, app, lot))
+		})
+	}
+}
+
+// TestUneImageDeFourneeVersUneAdresseNonRoutableNEstPasTelechargee : DOD.md §3.
+// L'adresse ne vient pas de l'utilisateur mais d'une page tierce, et personne
+// n'est devant l'écran pour la relire. Elle passe donc par la politique
+// d'adresses de recuperation, après résolution DNS — un nom d'apparence
+// publique qui pointe vers une IP privée est refusé comme l'IP elle-même.
+func TestUneImageDeFourneeVersUneAdresseNonRoutableNEstPasTelechargee(t *testing.T) {
+	cas := map[string]struct {
+		image string
+		// table est la résolution injectée, pour les seuls cas qui passent par
+		// un nom d'hôte.
+		table map[string]string
+	}{
+		"boucle locale":         {image: "http://127.0.0.1:8090/photo.png"},
+		"métadonnées de l'hôte": {image: "http://169.254.169.254/latest/meta-data"},
+		"réseau privé":          {image: "http://10.0.0.1/photo.png"},
+		"nom public, adresse privée": {
+			image: "http://images.exemple.fr/photo.png",
+			table: map[string]string{"images.exemple.fr": "10.0.0.1"},
+		},
+		"schéma non suivi": {image: "file:///etc/passwd"},
+	}
+
+	for nom, c := range cas {
+		t.Run(nom, func(t *testing.T) {
+			app, titulaire, horloge, o := atelierDeLOuvrier(t)
+			const adresse = "https://a.example/tarte"
+
+			var choix []recuperation.Option
+			if c.table != nil {
+				choix = append(choix, resolutionDeTest(c.table))
+			}
+			avecTelechargement(t, choix...)
+			avecSite(t, horloge, map[string]reponseDuSite{
+				adresse: sertLaRecetteIllustree("Tarte", adresse, c.image, "200 g de farine"),
+			})
+
+			lot := lotDe(t, app, titulaire, adresse)
+			traite(t, o, lot)
+
+			exigeRecetteSansImageEtLigneImportee(t, app, lignesDuLot(t, app, lot))
+		})
+	}
+}
+
+// TestLImageDeLaFourneePasseParLaCadenceDeLaFournee : la politesse ne suit pas
+// l'image toute seule. imageDistante ne passe que optionsDuTelechargement, vide
+// en production ; la fournée, elle, tient sa cadence et son robots.txt retenu à
+// la main. Sans les lui porter, l'image partirait hors du tour de rôle et son
+// CDN paierait un robots.txt par page.
+//
+// Le compte se fait au transport, comme pour les pages : c'est là que la
+// promesse porte.
+func TestLImageDeLaFourneePasseParLaCadenceDeLaFournee(t *testing.T) {
+	app, titulaire, horloge, o := atelierDeLOuvrier(t)
+	const robots = "User-agent: *\nDisallow: /prive\n"
+	const image = "https://images.example/photo.png"
+	urls := []string{"https://a.example/1", "https://a.example/2"}
+
+	corps := map[string]string{
+		"https://a.example/robots.txt":      robots,
+		"https://images.example/robots.txt": robots,
+		image:                               string(pngDeTest(t)),
+	}
+	for i, adresse := range urls {
+		corps[adresse] = string(htmlDeRecetteIllustree(
+			"Recette "+string(rune('A'+i)), image, []string{"200 g de farine"}))
+	}
+	reseau := avecReseau(t, horloge, corps)
+	avecTelechargement(t, recuperation.AvecTransport(reseau))
+
+	traite(t, o, lotDe(t, app, titulaire, urls...))
+
+	// Un robots.txt pour l'hôte des images, puis une image par page : il est
+	// retenu pour la durée de la fournée, comme celui des pages.
+	versLesImages := reseau.appelsVers("images.example")
+	if len(versLesImages) != len(urls)+1 {
+		t.Fatalf("%d requêtes vers l'hôte des images, attendu %d — un robots.txt et %d images :\n%v",
+			len(versLesImages), len(urls)+1, len(urls), versLesImages)
+	}
+	if !strings.HasSuffix(versLesImages[0].url, "/robots.txt") {
+		t.Errorf("première requête vers %q, attendu le robots.txt", versLesImages[0].url)
+	}
+	for i, ecart := range ecartsEntre(versLesImages) {
+		if ecart < delaiEntreRequetes {
+			t.Errorf("requêtes %q et %q espacées de %v, attendu au moins %v",
+				versLesImages[i].url, versLesImages[i+1].url, ecart, delaiEntreRequetes)
 		}
 	}
 }
