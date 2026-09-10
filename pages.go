@@ -35,6 +35,12 @@ type donneesPage struct {
 	Message     string
 	Utilisateur *utilisateur
 
+	// Version n'est pas remplie par les pages non plus, et pour la même
+	// raison : c'est rendre qui la pose. Le pied de page ne l'affiche qu'à un
+	// compte connecté — c'est le gabarit qui tient cette règle, en testant
+	// Utilisateur.
+	Version string
+
 	// Recette n'est rempli que par la fiche, et nil partout ailleurs : le
 	// gabarit de la fiche s'ouvre sur un {{with}}, donc une page qui l'oublie
 	// ne rend rien plutôt que d'échouer à mi-parcours.
@@ -58,11 +64,18 @@ func (d *donneesPage) poseUtilisateur(compte *utilisateur) {
 	d.Utilisateur = compte
 }
 
+// poseVersion, de même : la version du binaire est une donnée de la mise en
+// page, pas de la page.
+func (d *donneesPage) poseVersion(v string) {
+	d.Version = v
+}
+
 // donneesDePage est ce que rendre sait remplir : n'importe quelle structure de
 // page, pourvu qu'elle embarque donneesPage. Un pointeur, toujours — une copie
 // recevrait l'utilisateur et le gabarit lirait l'original.
 type donneesDePage interface {
 	poseUtilisateur(*utilisateur)
+	poseVersion(string)
 }
 
 // pageAccueil renvoie à la liste des recettes.
@@ -109,6 +122,7 @@ func rendre(e *core.RequestEvent, page, fragment string, donnees donneesDePage, 
 // prendraient l'erreur pour une page valide.
 func rendreAvecStatut(e *core.RequestEvent, statut int, page, fragment string, donnees donneesDePage, enPlus ...string) error {
 	donnees.poseUtilisateur(utilisateurCourant(e))
+	donnees.poseVersion(versionAffichee)
 
 	motifs := []string{"vues/" + fragment}
 	if !estHTMX(e) {
