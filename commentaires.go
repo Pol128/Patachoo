@@ -290,7 +290,7 @@ func rendLeBloc(e *core.RequestEvent, recette *core.Record, bloc *donneesComment
 	donnees := &donneesPage{Commentaires: bloc}
 
 	if !estHTMX(e) {
-		fiche, err := ficheDeLaRecette(e.App, recette)
+		fiche, err := ficheDeLaRecette(e.App, recette, e.Auth.Id)
 		if err != nil {
 			return err
 		}

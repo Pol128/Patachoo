@@ -28,7 +28,14 @@ type donneesRecette struct {
 	// Id est ce qui rend la fiche capable de se désigner elle-même : le lien
 	// vers son formulaire d'édition en a besoin, et le gabarit n'a pas
 	// l'enregistrement sous la main.
-	Id          string
+	Id string
+
+	// Sienne dit que la recette est celle du compte connecté, et commande le
+	// lien de suppression : l'offrir sur la recette d'un autre serait
+	// promettre un 404. Le nom est celui que noteAffichee emploie déjà pour le
+	// même rôle (commentaires.go).
+	Sienne bool
+
 	Titre       string
 	Image       string
 	Faits       []fait
@@ -112,7 +119,7 @@ func pageRecette(e *core.RequestEvent) error {
 		return err
 	}
 
-	donnees, err := ficheDeLaRecette(e.App, recette)
+	donnees, err := ficheDeLaRecette(e.App, recette, e.Auth.Id)
 	if err != nil {
 		return err
 	}
@@ -141,7 +148,12 @@ func pageRecetteIntrouvable(e *core.RequestEvent) error {
 }
 
 // ficheDeLaRecette met la recette et ses ingrédients en forme pour le gabarit.
-func ficheDeLaRecette(app core.App, recette *core.Record) (*donneesRecette, error) {
+//
+// compte est l'identifiant du compte connecté, et il décide du seul affichage
+// conditionnel de la fiche. Un paramètre plutôt qu'un champ rempli chez les
+// appelants, qui sont deux — pageRecette et rendLeBloc : la même règle posée
+// deux fois finit par diverger.
+func ficheDeLaRecette(app core.App, recette *core.Record, compte string) (*donneesRecette, error) {
 	lignes, err := app.FindRecordsByFilter(
 		"ingredients",
 		"recipe = {:recette}",
@@ -160,6 +172,7 @@ func ficheDeLaRecette(app core.App, recette *core.Record) (*donneesRecette, erro
 
 	donnees := &donneesRecette{
 		Id:          recette.Id,
+		Sienne:      sienne(recette, compte),
 		Titre:       recette.GetString("title"),
 		Image:       urlDeLaMiniature(recette),
 		Faits:       faitsDeLaRecette(recette),

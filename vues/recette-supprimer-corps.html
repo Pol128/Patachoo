@@ -1,0 +1,14 @@
+<h1>Supprimer « {{.Nom}} » ?</h1>
+<p>Cette suppression est définitive : il n'y a pas de corbeille.</p>
+{{if or .Ingredients .Notes .Image}}
+<p>Partent avec la recette :</p>
+<ul class="emporte">
+{{if .Ingredients}}<li>{{.Ingredients}} ingrédient{{if gt .Ingredients 1}}s{{end}}</li>{{end}}
+{{if .Notes}}<li>{{.Notes}} note{{if gt .Notes 1}}s{{end}} de cuisine, quel qu'en soit l'auteur</li>{{end}}
+{{if .Image}}<li>la photo de la recette</li>{{end}}
+</ul>
+{{end}}
+<form method="post" action="/recettes/{{.Id}}/supprimer">
+<button type="submit">Supprimer définitivement</button>
+</form>
+<p><a href="/recettes/{{.Id}}">Annuler</a></p>

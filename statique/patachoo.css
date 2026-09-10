@@ -160,6 +160,13 @@ footer {
 	margin-bottom: 0.5rem;
 }
 
+/* Ce que la suppression d'une recette emporte avec elle. Les puces restent :
+   c'est un inventaire qu'on relit avant de trancher, pas une liste de plus. */
+.emporte {
+	margin: 0.4rem 0;
+	padding-left: 1.2rem;
+}
+
 /* Le champ de recherche et son bouton sur une ligne : le bouton n'existe que
    pour qui n'a pas JavaScript, il ne doit pas prendre la place du champ. */
 .recherche {

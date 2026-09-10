@@ -62,3 +62,17 @@ func restaureLAuteur(e *core.RecordRequestEvent) error {
 	e.Record.Set(champAuteur, e.Record.Original().GetString(champAuteur))
 	return e.Next()
 }
+
+// sienne dit si la recette appartient au compte donné.
+//
+// Le premier terme n'est pas décoratif, et c'est celui de DeleteRule :
+// created_by n'est pas Required, et une recette peut le porter vide. Sans lui,
+// une recette sans auteur appartiendrait à quiconque n'en a pas non plus.
+//
+// La règle de collection est transposée ici parce que e.App.Delete ne
+// l'applique pas : les règles gardent l'API REST, pas notre code. Elle reste
+// en place, celle-ci la redouble.
+func sienne(recette *core.Record, compte string) bool {
+	auteur := recette.GetString(champAuteur)
+	return auteur != "" && auteur == compte
+}
