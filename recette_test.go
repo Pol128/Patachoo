@@ -1084,3 +1084,44 @@ func TestLAttributTitreDeLaLigneBruteEstEchappe(t *testing.T) {
 		t.Errorf("guillemet double non échappé dans l'attribut title : %q", ouvrante)
 	}
 }
+
+// --- Le lien vers l'édition (PATA-50) -------------------------------------
+
+// lienDEdition capte le lien de la fiche vers son formulaire d'édition : ses
+// attributs, l'identifiant qu'il vise et son libellé.
+//
+// L'adresse est bornée par [^"/]+ pour ne pas attraper le lien des notes de
+// cuisine, qui se termine par le même mot après un /commentaires/.
+var lienDEdition = regexp.MustCompile(`<a\s([^>]*href="/recettes/([^"/]+)/modifier"[^>]*)>([^<]*)</a>`)
+
+// La fiche mène à son édition sans condition d'affichage : la règle de la
+// collection dit déjà qui modifie — tout compte connecté —, et la fiche est
+// derrière la session. Cette recette n'a aucun auteur, et le lien y est quand
+// même.
+func TestLaFicheMeneALEditionDeLaRecette(t *testing.T) {
+	app, mux, cookie := serveurConnecte(t)
+	recette := recetteEnBase(t, app, nil)
+
+	corps := fiche(mux, cookie, recette.Id).Body.String()
+
+	// L'assertion porte sur l'adresse, pas sur le mot « Modifier » : les notes
+	// de cuisine portent déjà le leur, et un test sur le libellé seul
+	// passerait au vert pour la mauvaise raison.
+	trouves := lienDEdition.FindAllStringSubmatch(corps, -1)
+	if len(trouves) != 1 {
+		t.Fatalf("%d lien(s) vers l'édition, attendu un seul :\n%s", len(trouves), corps)
+	}
+	attributs, vise, libelle := trouves[0][1], trouves[0][2], trouves[0][3]
+
+	if vise != recette.Id {
+		t.Errorf("le lien vise la recette %q, attendue %q", vise, recette.Id)
+	}
+	if libelle != "Modifier" {
+		t.Errorf("libellé du lien %q, attendu %q", libelle, "Modifier")
+	}
+	// Le formulaire d'édition est une page entière, pas un fragment : un
+	// attribut hx- l'échangerait dans la fiche au lieu de l'ouvrir.
+	if strings.Contains(attributs, "hx-") {
+		t.Errorf("le lien vers l'édition porte un attribut HTMX : %q", attributs)
+	}
+}

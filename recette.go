@@ -25,6 +25,10 @@ const miniatureDeLaFiche = "800x0"
 // champ vide y signifie donc « ce bloc n'existe pas », et c'est ce qui fait
 // disparaître les libellés des données manquantes.
 type donneesRecette struct {
+	// Id est ce qui rend la fiche capable de se désigner elle-même : le lien
+	// vers son formulaire d'édition en a besoin, et le gabarit n'a pas
+	// l'enregistrement sous la main.
+	Id          string
 	Titre       string
 	Image       string
 	Faits       []fait
@@ -155,6 +159,7 @@ func ficheDeLaRecette(app core.App, recette *core.Record) (*donneesRecette, erro
 	}
 
 	donnees := &donneesRecette{
+		Id:          recette.Id,
 		Titre:       recette.GetString("title"),
 		Image:       urlDeLaMiniature(recette),
 		Faits:       faitsDeLaRecette(recette),
