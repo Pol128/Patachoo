@@ -308,7 +308,65 @@ func (o *ouvrier) traiteLaLigne(ctx context.Context, lot, ligne *core.Record,
 		}
 		return o.poseLEchec(ligne, err)
 	}
-	return o.enregistreSiInedite(lot, ligne, page)
+
+	recette, trouvee, err := o.enregistreSiInedite(lot, ligne, page)
+	if err != nil || recette == nil {
+		return err
+	}
+
+	// L'image vient après, et c'est le placement qui compte : ici, le verrou de
+	// création est rendu et la transaction close. Voir poseLImageDeLaFournee.
+	o.poseLImageDeLaFournee(ctx, recette, page, trouvee, robots)
+	return nil
+}
+
+// poseLImageDeLaFournee télécharge l'image que la page publie et l'attache à la
+// recette déjà enregistrée, par une seconde écriture.
+//
+// Après la transaction, et hors du verrou de création : un téléchargement, c'est
+// une attente de cadence — une seconde au moins, jusqu'à cinq minutes sur un
+// Crawl-delay annoncé — puis un transfert. Posé sous le verrou, il sérialiserait
+// toutes les files sur une attente réseau et tiendrait une transaction ouverte
+// pendant ce temps, c'est-à-dire exactement ce que le commentaire de
+// enregistreSiInedite promet qu'il n'arrive jamais.
+//
+// Ce que ce placement coûte, et qui est assumé : une écriture de plus, et une
+// fenêtre où la recette existe sans son image. Un arrêt du serveur pendant
+// cette fenêtre la laisse sans image — comme les fournées d'avant celle-ci, que
+// rien ne rattrape.
+//
+// Aucun échec ne remonte : ni celui du téléchargement, ni celui de la seconde
+// écriture. La ligne est importée, la recette est là, et une image en 404 ne
+// doit coûter ni l'une ni l'autre — c'est mot pour mot ce que poseLImage tient
+// à l'unitaire. La cause reste au journal, en Warn.
+//
+// La cadence et le robots.txt retenu de la fournée sont portés jusqu'à l'image :
+// optionsDuTelechargement est vide en production, et sans eux l'image partirait
+// hors du tour de rôle. L'hôte qui la sert est souvent un autre — un CDN —, et
+// le robots.txt de la fournée le fait payer une fois pour toutes ses pages.
+func (o *ouvrier) poseLImageDeLaFournee(ctx context.Context, recette *core.Record,
+	page recuperation.Page, trouvee jsonld.Recette, robots *recuperation.RobotsRetenus) {
+	// Contre l'URL finale, celle du dernier saut : c'est elle qui désigne la
+	// recette, et une adresse relative résolue contre l'adresse soumise viserait
+	// à côté après une redirection.
+	adresse := adresseDeLImage(preRemplissageDe(trouvee).ImageDistante, page.URLFinale)
+	if adresse == "" {
+		return
+	}
+
+	distante, err := imageDistante(ctx, adresse,
+		recuperation.AvecCadence(cadenceDeRecuperation{o.cadence}),
+		recuperation.AvecRobotsRetenus(robots))
+	if err != nil {
+		o.app.Logger().Warn("image de la fournée non téléchargée", "url", adresse, "erreur", err)
+		return
+	}
+
+	recette.Set("image", distante)
+	if err := o.app.Save(recette); err != nil {
+		o.app.Logger().Warn("image de la fournée non attachée",
+			"recette", recette.Id, "url", adresse, "erreur", err)
+	}
 }
 
 // enregistreSiInedite est la déduplication par le second bout, et l'écriture
@@ -331,30 +389,37 @@ func (o *ouvrier) traiteLaLigne(ctx context.Context, lot, ligne *core.Record,
 // balisage cassé sur une page déjà importée passerait alors de « déjà
 // présente » à un échec. Ce qu'elle coûte est un calcul sur un corps déjà en
 // mémoire, borné par la taille maximale de PATA-8 — pas une attente.
-func (o *ouvrier) enregistreSiInedite(lot, ligne *core.Record, page recuperation.Page) error {
+//
+// Elle rend la recette créée, ou nil quand il n'y en a pas eu — page déjà
+// connue, balisage refusé, écriture en panne —, et le balisage lu. C'est par là
+// que l'image sort du verrou : son adresse est dans le balisage, et son
+// téléchargement n'a rien à faire ici.
+func (o *ouvrier) enregistreSiInedite(lot, ligne *core.Record, page recuperation.Page) (*core.Record, jsonld.Recette, error) {
 	o.creation.Lock()
 	defer o.creation.Unlock()
 
 	connue, err := laSourceEstConnue(o.app, page.URLFinale)
 	if err != nil {
-		return o.poseLaPanne(ligne, err)
+		return nil, jsonld.Recette{}, o.poseLaPanne(ligne, err)
 	}
 	if connue {
-		return o.poseLeStatut(ligne, statutDejaPresente)
+		return nil, jsonld.Recette{}, o.poseLeStatut(ligne, statutDejaPresente)
 	}
 
 	trouvee, err := jsonld.Extraire(page.Corps)
 	if err != nil {
-		return o.poseLEchec(ligne, err)
+		return nil, jsonld.Recette{}, o.poseLEchec(ligne, err)
 	}
 
-	return o.enregistre(lot, ligne, page, trouvee)
+	recette, err := o.enregistre(lot, ligne, page, trouvee)
+	return recette, trouvee, err
 }
 
 // enregistre écrit la recette et le sort de la ligne, en une transaction par
 // URL : une recette créée dont la ligne resterait en cours serait réimportée au
 // démarrage suivant.
-func (o *ouvrier) enregistre(lot, ligne *core.Record, page recuperation.Page, trouvee jsonld.Recette) error {
+func (o *ouvrier) enregistre(lot, ligne *core.Record, page recuperation.Page, trouvee jsonld.Recette) (*core.Record, error) {
+	var creee *core.Record
 	err := o.app.RunInTransaction(func(txApp core.App) error {
 		collection, err := txApp.FindCollectionByNameOrId("recipes")
 		if err != nil {
@@ -370,15 +435,20 @@ func (o *ouvrier) enregistre(lot, ligne *core.Record, page recuperation.Page, tr
 		ligne.Set("cause", "")
 		ligne.Set("code", 0)
 		ligne.Set("recipe", recette.Id)
-		return txApp.Save(ligne)
+		if err := txApp.Save(ligne); err != nil {
+			return err
+		}
+
+		creee = recette
+		return nil
 	})
 	if err == nil {
-		return nil
+		return creee, nil
 	}
 
 	// L'écriture a échoué et la transaction est défaite ; la ligne, elle, garde
 	// en mémoire ce qu'on lui avait posé. poseLaPanne la remet à plat.
-	return o.poseLaPanne(ligne, err)
+	return nil, o.poseLaPanne(ligne, err)
 }
 
 // creeLaRecetteImportee écrit la recette que la page publie.
@@ -400,9 +470,8 @@ func creeLaRecetteImportee(txApp core.App, recette, lot *core.Record, page recup
 	// déduplication.
 	recette.Set("source_url", page.URLFinale)
 	recette.Set("source_name", nomDuSite(litOpenGraph(page.Corps).NomDuSite, page.URLFinale))
-	// L'image n'est pas téléchargée : c'est PATA-10, et le lot s'en tient à
-	// l'unitaire d'avant elle — une recette importée en fournée s'illustre
-	// depuis le formulaire d'édition.
+	// L'image n'est pas posée ici : elle s'attache après la transaction, par une
+	// seconde écriture. Voir poseLImageDeLaFournee.
 
 	// Une recette créée par notre propre code passe par app.Save() et ne
 	// déclenche aucun hook de requête : attribueALAppelant ne la voit pas, et
