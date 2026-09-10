@@ -35,10 +35,19 @@ ARG TARGETOS
 ARG TARGETARCH
 ARG TARGETVARIANT
 
+# La version, déclarée ici aussi bien qu'à l'étape finale : un ARG ne vaut que
+# dans l'étape qui le déclare, et sans celui-ci le binaire ignorerait ce que
+# l'étiquette OCI annonce. Un seul --build-arg VERSION=0.1.0 alimente donc les
+# deux, et elles ne peuvent plus se contredire.
+#
+# .git/ est exclu du contexte de construction (.dockerignore) : il n'y a aucune
+# estampille VCS à lire dans l'image, c'est -ldflags ou rien.
+ARG VERSION=dev
+
 # -trimpath retire les chemins de la machine de construction du binaire, -s -w
 # ses tables de symboles et de débogage : c'est ce qui le ramène à 23 Mo.
 RUN CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" GOARM="${TARGETVARIANT#v}" \
-    go build -trimpath -ldflags "-s -w" -o /racine/patachoo .
+    go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o /racine/patachoo .
 
 # L'arborescence de l'image finale se prépare ici : dans un scratch, il n'y a
 # aucun outil pour créer un répertoire ou en changer le propriétaire.

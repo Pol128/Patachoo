@@ -125,6 +125,41 @@ Un contributeur espagnol écrit donc `lang/es.toml` et ouvre sa MR sur `moteur`.
 Patachoo n'a pas de point de réglage à offrir de son côté : il consomme le
 module, et hérite des langues que le module sait lire.
 
+## Versions
+
+Les numéros suivent [SemVer](https://semver.org/lang/fr/) — `MAJEUR.MINEUR.CORRECTIF` —
+et vivent dans le dépôt sous forme de **tag git annoté, préfixé** : `v0.1.0`.
+Pas de fichier `VERSION` à la racine, qui doublerait le tag et finirait par en
+diverger. Ce qui change d'une version à l'autre est dans
+[CHANGELOG.md](CHANGELOG.md).
+
+Où lire la version d'une instance :
+
+```sh
+patachoo version                    # imprime la version et sort
+docker compose exec patachoo /patachoo version
+```
+
+Le **pied de page** l'affiche aussi, à un compte connecté seulement, en lien
+vers les versions publiées : c'est une information d'exploitation, utile à qui
+administre l'instance, pas à qui frappe à la porte.
+
+Un binaire construit à la main n'est estampillé par aucun tag : il annonce alors
+`dev`, complété par la révision git et l'état de l'arbre au moment du build —
+`dev (1de2cd1, modifié)`. Une version publiée, elle, est construite avec
+`-ldflags "-X main.version=0.1.0"` ; l'image Docker la reçoit par
+`--build-arg VERSION=0.1.0`, qui alimente d'un seul geste le binaire et
+l'étiquette OCI de l'image.
+
+Les versions publiées sont sur
+[github.com/Pol128/Patachoo/releases](https://github.com/Pol128/Patachoo/releases).
+
+**Patachoo ne va jamais vérifier s'il est à jour.** L'instance n'appelle
+personne — ni au démarrage, ni périodiquement, ni derrière un bouton : elle
+affiche ce qu'elle est et pointe où lire le reste. Le produit doit fonctionner
+sur un réseau coupé d'Internet, et une instance auto-hébergée n'a pas à se
+signaler à un tiers pour tourner.
+
 ## Licence
 
 **Apache-2.0** — voir [LICENSE](LICENSE) et [NOTICE](NOTICE).
