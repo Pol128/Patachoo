@@ -72,10 +72,14 @@ func echoue(t *testing.T, err error) {
 
 // pageDuCorpus lit une page du corpus de PATA-28. Les entrées de l'import sont
 // celles-là : un second corpus finirait par diverger du premier.
+//
+// Le chemin remonte à la racine du module : go test place le répertoire
+// courant sur le paquet testé, et le corpus vit chez jsonld/, deux crans plus
+// haut depuis cmd/patachoo/.
 func pageDuCorpus(t *testing.T, nom string) []byte {
 	t.Helper()
 
-	corps, err := os.ReadFile(filepath.Join("jsonld", "testdata", nom+".html"))
+	corps, err := os.ReadFile(filepath.Join("..", "..", "jsonld", "testdata", nom+".html"))
 	if err != nil {
 		t.Fatalf("lecture du cas %q : %v", nom, err)
 	}

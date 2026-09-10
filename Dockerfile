@@ -47,7 +47,7 @@ ARG VERSION=dev
 # -trimpath retire les chemins de la machine de construction du binaire, -s -w
 # ses tables de symboles et de débogage : c'est ce qui le ramène à 23 Mo.
 RUN CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" GOARM="${TARGETVARIANT#v}" \
-    go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o /racine/patachoo .
+    go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o /racine/patachoo ./cmd/patachoo
 
 # L'arborescence de l'image finale se prépare ici : dans un scratch, il n'y a
 # aucun outil pour créer un répertoire ou en changer le propriétaire.

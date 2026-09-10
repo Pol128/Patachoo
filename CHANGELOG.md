@@ -19,3 +19,8 @@ diverger.
   publie est téléchargée et attachée comme à l'import unitaire ; une image
   injoignable ou refusée ne coûte plus la recette, elle la laisse simplement
   sans illustration. Les fournées d'avant ne sont pas rattrapées.
+- Les sources du programme vivent dans `cmd/patachoo/`, gabarits et assets
+  compris : la racine du dépôt ne porte plus que ses fichiers d'accueil. Rien
+  ne change pour qui installe le binaire ou l'image ; qui construit depuis les
+  sources écrit désormais `go run ./cmd/patachoo serve` et
+  `go build -o Patachoo ./cmd/patachoo`.

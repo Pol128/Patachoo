@@ -30,8 +30,8 @@ commande du dépôt.
 
 La passe longue dure une vingtaine de minutes là où la courte en dure deux : le
 détecteur multiplie par dix la durée d'un paquet qui monte une base PocketBase,
-et le paquet racine en monte une par test. Elle porte donc un `-timeout`
-explicite, largement au-dessus de cette durée — un rouge doit parler d'une
+et le paquet `cmd/patachoo` en monte une par test. Elle porte donc un
+`-timeout` explicite, largement au-dessus de cette durée — un rouge doit parler d'une
 course, jamais d'un dépassement de délai.
 
 ## 2. Tests unitaires

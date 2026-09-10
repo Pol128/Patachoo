@@ -320,7 +320,7 @@ supprimée, la restauration, la recette de retour — image comprise.
 ```sh
 ESSAI=$(mktemp -d)
 echo "$ESSAI"   # recopiez ce chemin : le second terminal en aura besoin
-go build -o "$ESSAI/patachoo" .
+go build -o "$ESSAI/patachoo" ./cmd/patachoo
 "$ESSAI/patachoo" superuser upsert essai@exemple.fr 'mot-de-passe-jetable-32' --dir "$ESSAI/pb_data"
 "$ESSAI/patachoo" serve --dir "$ESSAI/pb_data" --http 127.0.0.1:8137
 ```
