@@ -45,8 +45,12 @@ func rendu(t *testing.T, entetes map[string]string) (*httptest.ResponseRecorder,
 	t.Helper()
 
 	e, rec := requete(t, http.MethodGet, "/connexion", entetes)
-	if err := rendre(e, "connexion.html", "connexion-corps.html", &donneesPage{
-		Titre: "Connexion — Patachoo",
+	// donneesConnexion, et non donneesPage : c'est ce que pageConnexion passe
+	// au gabarit, et le corps y lit le réglage d'inscription. Un test qui
+	// rendrait la page avec une autre structure ne vérifierait qu'un montage
+	// qui n'existe nulle part.
+	if err := rendre(e, "connexion.html", "connexion-corps.html", &donneesConnexion{
+		donneesPage: donneesPage{Titre: "Connexion — Patachoo"},
 	}); err != nil {
 		t.Fatalf("rendre : %v", err)
 	}
@@ -162,9 +166,11 @@ func TestLeRenduEstUnDocumentCompletSansHTMX(t *testing.T) {
 func TestLeGabaritEchappeSesEntrees(t *testing.T) {
 	e, rec := requete(t, http.MethodGet, "/connexion", nil)
 
-	err := rendre(e, "connexion.html", "connexion-corps.html", &donneesPage{
-		Titre:   `<script>alert(1)</script>`,
-		Message: `Chausson aux pommes & cannelle`,
+	err := rendre(e, "connexion.html", "connexion-corps.html", &donneesConnexion{
+		donneesPage: donneesPage{
+			Titre:   `<script>alert(1)</script>`,
+			Message: `Chausson aux pommes & cannelle`,
+		},
 	})
 	if err != nil {
 		t.Fatalf("rendre : %v", err)
