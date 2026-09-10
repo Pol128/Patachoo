@@ -23,8 +23,8 @@ go vet ./...
 # refuse. La CI lance la passe longue, elle seule : elle contient la courte.
 #
 # Le -timeout n'est posé que là. Le détecteur multiplie la durée par dix là où
-# un paquet monte une base PocketBase, et le paquet racine en monte une par
-# test : le défaut de go test, dix minutes par paquet, est dépassé. Un rouge
+# un paquet monte une base PocketBase, et le paquet cmd/patachoo en monte une
+# par test : le défaut de go test, dix minutes par paquet, est dépassé. Un rouge
 # doit parler d'une course, pas d'un délai. Jamais -timeout=0 en revanche : un
 # test bloqué doit finir par rendre la main et sa pile.
 if [ "${AVEC_RACE:-}" = "1" ]; then

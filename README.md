@@ -11,8 +11,8 @@ comprises, source d'origine citée.
 ## Démarrer
 
 ```sh
-go run . serve                      # http://127.0.0.1:8090
-go run . superuser upsert vous@exemple.fr 'motdepasse'
+go run ./cmd/patachoo serve         # http://127.0.0.1:8090
+go run ./cmd/patachoo superuser upsert vous@exemple.fr 'motdepasse'
 ```
 
 L'interface d'administration répond sur `/_/`, l'API REST sur `/api/`.
@@ -21,7 +21,7 @@ L'interface d'administration répond sur `/_/`, l'API REST sur `/api/`.
 go test ./...                       # les tests, avant tout le reste
 ./verifie                           # gofmt, vet, tests, govulncheck — ~2 min
 AVEC_RACE=1 ./verifie               # la même chose avec -race — ~20 min
-go build -o Patachoo .              # un binaire, rien d'autre à installer
+go build -o Patachoo ./cmd/patachoo # un binaire, rien d'autre à installer
 ```
 
 `./verifie` nu est la boucle courte, celle qu'on lance à chaque geste.
@@ -29,8 +29,8 @@ go build -o Patachoo .              # un binaire, rien d'autre à installer
 que la CI lance à chaque poussée, et celle à lancer soi-même avant d'ouvrir une
 demande de fusion qui touche à du code concurrent. Elle dure une vingtaine de
 minutes — le détecteur multiplie par dix la durée d'un paquet qui monte une
-base PocketBase, et le paquet racine en monte une par test. Ce n'est pas
-qu'elle est bloquée.
+base PocketBase, et le paquet `cmd/patachoo` en monte une par test. Ce n'est
+pas qu'elle est bloquée.
 
 Ce qu'il faut avoir fait pour dire qu'une tâche est terminée est écrit dans
 [DOD.md](DOD.md) — tests unitaires, tests de sécurité, et la règle qui remplace
