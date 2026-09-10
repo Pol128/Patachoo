@@ -704,7 +704,7 @@ func (f formulaireRecette) lignesDIngredients() []string {
 	return lignes
 }
 
-// brancheLesRecettes pose les quatre routes du formulaire.
+// brancheLesRecettes pose les six routes du formulaire et de la suppression.
 //
 // Toutes derrière exigeUneSession : ce sont des routes d'écriture ou d'accès à
 // des recettes, et le contrôle passe avant tout le reste — avant la recherche
@@ -714,6 +714,11 @@ func brancheLesRecettes(routeur *router.Router[*core.RequestEvent]) {
 	routeur.POST("/recettes", creeLaRecette).Bind(exigeUneSession())
 	routeur.GET("/recettes/{id}/modifier", pageModifierRecette).Bind(exigeUneSession())
 	routeur.POST("/recettes/{id}", metAJourLaRecette).Bind(exigeUneSession())
+
+	// La suppression (suppression.go) : la confirmation, puis le geste.
+	supprimer := "/recettes/{id}/supprimer"
+	routeur.GET(supprimer, laRouteDUneSuppression(pageSupprimerRecette)).Bind(exigeUneSession())
+	routeur.POST(supprimer, laRouteDUneSuppression(supprimeLaRecette)).Bind(exigeUneSession())
 }
 
 // exigeUneSession renvoie un visiteur à la page de connexion.

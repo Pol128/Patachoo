@@ -14,5 +14,6 @@
 {{range .}}<li>{{.}}</li>
 {{end}}</ol>{{end}}
 <p><a href="/recettes/{{.Id}}/modifier">Modifier</a></p>
+{{if .Sienne}}<p><a href="/recettes/{{.Id}}/supprimer">Supprimer</a></p>{{end}}
 {{end}}
 {{template "commentaires.html" .}}
