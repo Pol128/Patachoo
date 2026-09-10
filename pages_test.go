@@ -124,13 +124,45 @@ func TestLeRenduNeSertQueDesAssetsLocaux(t *testing.T) {
 	}
 }
 
+// L'import est la fonction d'entrée du produit : ses deux routes doivent être
+// atteignables au clic. Les assertions portent sur le contenu de <nav> et non
+// sur la page entière — les gabarits du lot écrivent les mêmes adresses dans
+// leur corps, et un lien qui y vivrait seul ne serait pas une barre.
+//
+// La page est rendue sans utilisateur en session : les liens n'ont donc aucun
+// affichage conditionnel autour d'eux, ce sont les routes qui gardent la porte.
 func TestLaMiseEnPagePorteLaNavigation(t *testing.T) {
 	_, corps := rendu(t, nil)
 
-	for _, attendu := range []string{`href="/recettes"`, `href="/recettes/nouvelle"`} {
-		if !strings.Contains(corps, attendu) {
-			t.Errorf("navigation sans %q :\n%s", attendu, corps)
+	barre := entreBalises(corps, "<nav>", "</nav>")
+	if strings.TrimSpace(barre) == "" {
+		t.Fatalf("aucune barre de navigation dans :\n%s", corps)
+	}
+
+	attendus := []string{
+		`href="/recettes"`,
+		`href="/recettes/nouvelle"`,
+		`<a href="/recettes/importer">Importer</a>`,
+		`<a href="/recettes/importer/lot">Importer un lot</a>`,
+	}
+	for _, attendu := range attendus {
+		if !strings.Contains(barre, attendu) {
+			t.Errorf("navigation sans %q :\n%s", attendu, barre)
 		}
+	}
+
+	// L'ordre porte du sens : l'import vient à la suite de « Nouvelle recette »,
+	// et le lot après l'unité.
+	precedent := -1
+	for _, attendu := range attendus {
+		position := strings.Index(barre, attendu)
+		if position < 0 {
+			continue
+		}
+		if position < precedent {
+			t.Errorf("navigation : %q avant le lien qui devrait le précéder :\n%s", attendu, barre)
+		}
+		precedent = position
 	}
 }
 
