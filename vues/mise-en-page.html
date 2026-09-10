@@ -26,6 +26,6 @@
 {{end}}
 </header>
 <main>{{template "contenu" .}}</main>
-<footer>Patachoo — carnet de recettes</footer>
+<footer>Patachoo — carnet de recettes{{if .Utilisateur}} — <a href="https://github.com/Pol128/Patachoo/releases">{{.Version}}</a>{{end}}</footer>
 </body>
 </html>

@@ -14,6 +14,12 @@ AVEC_RACE=1 ./verifie    # la même chose avec -race — ~20 min
 Le script échoue au premier manquement. C'est le minimum, pas la DoD complète :
 les points 2 à 5 ne s'automatisent pas.
 
+**Une tâche livrée inscrit ce qu'elle change sous « À paraître » dans
+[CHANGELOG.md](CHANGELOG.md)**, dans la même demande de fusion que son code. Une
+ligne, en français, qui dit ce que l'utilisateur verra de différent — pas le
+détail de l'implémentation. Sans cette règle, le fichier naît et meurt le même
+jour.
+
 **Deux passes, un seul script.** `./verifie` nu est la boucle courte, à lancer à
 chaque geste. `AVEC_RACE=1 ./verifie` lance les mêmes tests sous le détecteur de
 courses : c'est ce que la CI exécute à chaque poussée, et ce qu'il faut avoir

@@ -30,6 +30,13 @@ func brancheLesCommandes(app core.App, racine *cobra.Command) (aEchoue func() bo
 		return err
 	}
 
+	// La version de Patachoo, et non celle de PocketBase : la bibliothèque pose
+	// « (untracked) » sur la racine, ce qui suffit à cobra pour ajouter
+	// --version. La laisser en l'état livrerait deux réponses contradictoires à
+	// la même question dans le même binaire.
+	racine.Version = versionAffichee
+
+	racine.AddCommand(commandeVersion())
 	racine.AddCommand(commandeTags(app, retient))
 
 	return func() bool { return echec }
