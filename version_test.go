@@ -86,27 +86,25 @@ func TestLaCommandeVersionImprimeLaVersionEtSort(t *testing.T) {
 		t.Error("patachoo version sort en échec")
 	}
 
-	imprime := strings.TrimSpace(sortie)
-	if imprime != versionAffichee {
+	// Ce qu'annonce le binaire, et rien d'autre. Que cette valeur commence par
+	// « dev » sur une construction sans -ldflags est le sujet de
+	// TestLaVersionParDefautEstDev : le répéter ici ferait rougir deux tests
+	// pour un seul comportement retiré (DOD.md §2).
+	if imprime := strings.TrimSpace(sortie); imprime != versionAffichee {
 		t.Errorf("sortie %q, attendu %q", imprime, versionAffichee)
-	}
-	// Les tests tournent sur un binaire non estampillé : ce que la commande
-	// imprime commence donc par « dev ».
-	if !strings.HasPrefix(imprime, "dev") {
-		t.Errorf("sortie %q, attendu une version commençant par « dev »", imprime)
 	}
 }
 
 // PocketBase pose Version = « (untracked) » sur la racine cobra, ce qui suffit
 // à cobra pour ajouter --version. Sans y toucher, le binaire livrerait deux
 // réponses contradictoires à la même question.
+//
+// Les deux annoncent donc la même chose, sans que ce test ait à lancer la
+// sous-commande : elles lisent la même versionAffichee, et c'est cette valeur
+// unique qui fait qu'elles ne peuvent pas diverger. Un test qui exécuterait les
+// deux rougirait aussi quand c'est la sous-commande qui manque (DOD.md §2).
 func TestLaRacineAnnonceLaMemeVersionQueLaSousCommande(t *testing.T) {
 	app := baseNeuve(t)
-
-	sousCommande, _, err := executeLaCommande(t, app, "version")
-	if err != nil {
-		t.Fatalf("patachoo version : %v", err)
-	}
 
 	drapeau, aEchoue, err := executeLaCommande(t, app, "--version")
 	if err != nil {
@@ -116,9 +114,8 @@ func TestLaRacineAnnonceLaMemeVersionQueLaSousCommande(t *testing.T) {
 		t.Error("patachoo --version sort en échec")
 	}
 
-	if !strings.Contains(drapeau, strings.TrimSpace(sousCommande)) {
-		t.Errorf("patachoo --version rend %q, sans la version %q de la sous-commande",
-			drapeau, strings.TrimSpace(sousCommande))
+	if !strings.Contains(drapeau, versionAffichee) {
+		t.Errorf("patachoo --version rend %q, sans la version %q", drapeau, versionAffichee)
 	}
 	if strings.Contains(drapeau, "(untracked)") {
 		t.Errorf("patachoo --version rend la version de PocketBase : %q", drapeau)
