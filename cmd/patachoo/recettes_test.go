@@ -2449,7 +2449,10 @@ func TestUneSourceRefuseeParLeSchemaNEcritRien(t *testing.T) {
 		if n := len(recettes(t, app)); n != 0 {
 			t.Errorf("%d recettes créées malgré le refus, 0 attendue", n)
 		}
-		if message := messageDErreur(t, rec.Body.String()); !strings.Contains(strings.ToLower(message), "source") {
+		// Le libellé, pas le nom de colonne : à défaut d'entrée dans
+		// libelleDuChamp, refusDuChamp se replierait sur « source_url », qui
+		// n'est pas un mot du formulaire.
+		if message := messageDErreur(t, rec.Body.String()); !strings.Contains(message, "« source »") {
 			t.Errorf("message d'erreur %q, attendu nommant le champ « source »", message)
 		}
 	})
