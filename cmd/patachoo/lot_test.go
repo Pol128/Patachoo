@@ -787,8 +787,11 @@ func TestUneErreurDEcritureDuLotNeSAfficheDansAucunePage(t *testing.T) {
 
 	rec := soumetLeLot(mux, cookie, strings.Join(urlsDeTest(2), "\n"))
 
+	// Errorf, et non Fatalf : c'est le corps qui porte le critère, et un test
+	// qui s'arrête sur le statut ne le vérifierait jamais dans le seul cas où
+	// il aurait quelque chose à dire.
 	if rec.Code == http.StatusOK {
-		t.Fatalf("statut %d pour une erreur d'écriture, attendu une erreur", rec.Code)
+		t.Errorf("statut %d pour une erreur d'écriture, attendu une erreur", rec.Code)
 	}
 	exigeSansAucun(t, rec.Body.String(), motif)
 }
