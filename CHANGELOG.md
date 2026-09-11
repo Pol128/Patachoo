@@ -11,6 +11,12 @@ diverger.
 
 ## À paraître
 
+- Les données ne sont plus lisibles par les autres comptes de la machine. Le
+  serveur crée `pb_data`, ses bases et ses sauvegardes en `0700` et `0600` :
+  `data.db` porte en clair de quoi fabriquer un jeton d'administration, et
+  n'importe quel compte local pouvait le lire. Une instance déjà installée garde
+  les droits de ses fichiers existants — `INSTALL.md` donne la commande de
+  rattrapage.
 - La source d'une recette se saisit et se corrige. Le formulaire porte un champ
   « Source — adresse de la page d'origine », prérempli par l'import et visible à
   la création comme à l'édition : une recette tapée à la main ou importée à
