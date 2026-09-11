@@ -99,8 +99,8 @@ func pageConnexion(e *core.RequestEvent) error {
 // Une redirection, et non un fragment : une réponse HTMX ne rend pas la mise
 // en page, et l'en-tête resterait donc sur son état de visiteur.
 func connexion(e *core.RequestEvent) error {
-	courriel := strings.TrimSpace(e.Request.FormValue("courriel"))
-	motDePasse := e.Request.FormValue("mot-de-passe")
+	courriel := strings.TrimSpace(e.Request.PostFormValue("courriel"))
+	motDePasse := e.Request.PostFormValue("mot-de-passe")
 
 	compte, err := e.App.FindAuthRecordByEmail("users", courriel)
 	if err != nil || !compte.ValidatePassword(motDePasse) {

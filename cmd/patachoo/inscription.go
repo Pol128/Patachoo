@@ -49,10 +49,10 @@ func inscription(e *core.RequestEvent) error {
 	// La liste blanche, et elle seule. Recopier le formulaire en vrac dans
 	// l'enregistrement laisserait un inscrit se poser verified à vrai, ou
 	// écrire tout champ ajouté plus tard à users sans que personne y repense.
-	courriel := strings.TrimSpace(e.Request.FormValue("email"))
-	motDePasse := e.Request.FormValue("password")
-	confirmation := e.Request.FormValue("passwordConfirm")
-	nom := strings.TrimSpace(e.Request.FormValue("name"))
+	courriel := strings.TrimSpace(e.Request.PostFormValue("email"))
+	motDePasse := e.Request.PostFormValue("password")
+	confirmation := e.Request.PostFormValue("passwordConfirm")
+	nom := strings.TrimSpace(e.Request.PostFormValue("name"))
 
 	if motDePasse != confirmation {
 		return echecDInscription(e, messageConfirmationDifferente)
