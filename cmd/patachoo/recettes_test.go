@@ -2479,6 +2479,34 @@ func TestUneSourceRefuseeParLeSchemaNEcritRien(t *testing.T) {
 	})
 }
 
+// DOD.md §3 : la source ressort désormais dans un attribut value, un endroit
+// de plus où du contenu étranger s'affiche. Un guillemet double y refermerait
+// l'attribut, et ce qui suit deviendrait de vrais attributs — la même menace
+// que sur le href de la fiche.
+func TestLAdresseDeSourceRessortEchappeeDansLeFormulaire(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	// Sans validation : l'URLField refuse déjà cette adresse au formulaire, et
+	// c'est justement ce qu'on ne veut pas prendre pour un rempart
+	// d'affichage — un import en lot écrit sans passer par là.
+	recette := recetteEnBaseSansValidation(t, app, map[string]any{
+		"source_url": `https://exemple.fr/x" onmouseover="alert(1)`,
+	})
+
+	corps := avecCookie(mux, http.MethodGet, "/recettes/"+recette.Id+"/modifier", cookie).Body.String()
+
+	champ := baliseDuChamp(t, corps, "source-url")
+
+	// Huit guillemets doubles, et huit seulement : les paires qui bornent
+	// type, id, name et value. Un neuvième serait un guillemet venu de la
+	// donnée, donc l'attribut refermé et onmouseover devenu un vrai attribut.
+	if guillemets := strings.Count(champ, `"`); guillemets != 8 {
+		t.Errorf("%d guillemets doubles dans la balise, attendus 8 : %s", guillemets, champ)
+	}
+	if !strings.Contains(champ, "&#34;") {
+		t.Errorf("le guillemet de l'adresse n'est pas échappé : %s", champ)
+	}
+}
+
 // Critère 8 : un formulaire refusé pour une autre raison revient avec ce que
 // l'utilisateur avait tapé, source comprise — retaper l'adresse d'origine
 // après une faute sur le titre serait une punition.
