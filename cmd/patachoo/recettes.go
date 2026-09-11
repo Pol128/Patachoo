@@ -657,13 +657,16 @@ type formulaireRecette struct {
 	// dit seulement s'il y a quelque chose à retirer.
 	Image string
 
-	// ImageDistante, SourceURL et SourceNom ne sont remplis que par l'import
-	// (PATA-9), et le gabarit ne les écrit alors que s'ils portent quelque
-	// chose. L'image y est montrée à distance et non attachée : la télécharger
-	// est PATA-10.
+	// ImageDistante n'est remplie que par l'import (PATA-9), et le gabarit ne
+	// l'écrit alors que si elle porte quelque chose. L'image y est montrée à
+	// distance et non attachée : la télécharger est PATA-10.
 	ImageDistante string
-	SourceURL     string
-	SourceNom     string
+
+	// SourceURL est un champ de saisie comme les autres : l'import la
+	// prérempli, l'utilisateur la tape ou la corrige. SourceNom reste caché —
+	// rien ne le saisit à la main, il ne vient que de l'import.
+	SourceURL string
+	SourceNom string
 
 	TypesDePlat      []optionTypeDePlat
 	ToutesLesSaisons []string
@@ -789,8 +792,10 @@ func creeLaRecette(e *core.RequestEvent) error {
 
 // metAJourLaRecette réécrit une recette existante.
 //
-// source_url, source_name et created_by ne sont pas touchés : corriger une
-// recette importée ne doit pas lui faire perdre son origine ni son auteur.
+// created_by n'est pas touché : corriger une recette importée ne doit pas lui
+// faire perdre son auteur. La source, elle, est corrigeable depuis PATA-86 —
+// le formulaire la porte, préremplie, et la repose telle quelle tant que
+// personne n'y touche.
 func metAJourLaRecette(e *core.RequestEvent) error {
 	recette, err := laRecetteDemandee(e)
 	if err != nil {
@@ -869,6 +874,7 @@ func poseLesChamps(txApp core.App, recette *core.Record, saisie formulaireRecett
 	recette.Set("instructions", saisie.Instructions)
 	recette.Set("meal_type", saisie.TypeDePlat)
 	recette.Set("seasons", saisie.Saisons)
+	poseLaSource(recette, saisie)
 
 	tags, err := tagsDepuisSaisie(txApp, saisie.Tags)
 	if err != nil {
@@ -882,6 +888,33 @@ func poseLesChamps(txApp core.App, recette *core.Record, saisie formulaireRecett
 	recette.Set("tags", ids)
 
 	return nil
+}
+
+// poseLaSource écrit l'adresse d'origine, et décide du sort du nom du site.
+//
+// L'adresse est rognée : le schéma la valide en URLField, et une suite
+// d'espaces n'en est pas une — alors qu'un champ qu'on a effleuré puis laissé
+// est une source vide, pas une faute de saisie.
+//
+// Le nom du site ne se saisit pas. À la création, il vaut ce que l'import a
+// trouvé et que le formulaire reposte. À l'édition, il ne survit pas à un
+// changement d'adresse : « Marmiton » en tête d'un lien qui pointe ailleurs
+// mentirait sur sa destination. L'affichage se replie alors sur l'hôte.
+//
+// Tant que l'adresse ne bouge pas, le nom enregistré n'est pas touché : c'est
+// ce qui garantit qu'une recette venue de l'import en lot — dont le formulaire
+// n'a jamais montré le nom — ne le perde pas à la première correction.
+func poseLaSource(recette *core.Record, saisie formulaireRecette) {
+	adresse := strings.TrimSpace(saisie.SourceURL)
+
+	switch {
+	case recette.IsNew():
+		recette.Set("source_name", saisie.SourceNom)
+	case adresse != strings.TrimSpace(recette.GetString("source_url")):
+		recette.Set("source_name", "")
+	}
+
+	recette.Set("source_url", adresse)
 }
 
 // poseLImage applique le téléversement, l'effacement, le téléchargement de
@@ -1001,6 +1034,8 @@ func formulaireSoumis(e *core.RequestEvent) (formulaireRecette, error) {
 	saisie.Tags = champs.Get("tags")
 	saisie.TypeDePlat = champs.Get("type-de-plat")
 	saisie.Saisons = champs["saisons"]
+	saisie.SourceURL = champs.Get("source-url")
+	saisie.SourceNom = champs.Get("source-nom")
 
 	// created_by n'est jamais lu ici, et c'est le seul endroit où il pourrait
 	// l'être : un champ posté à ce nom n'a nulle part où atterrir.
@@ -1065,6 +1100,8 @@ func formulaireDepuis(app core.App, recette *core.Record) (formulaireRecette, er
 	saisie.TypeDePlat = recette.GetString("meal_type")
 	saisie.Saisons = recette.GetStringSlice("seasons")
 	saisie.Image = recette.GetString("image")
+	saisie.SourceURL = recette.GetString("source_url")
+	saisie.SourceNom = recette.GetString("source_name")
 
 	lignes, err := app.FindAllRecords("ingredients", dbx.HashExp{"recipe": recette.Id})
 	if err != nil {
@@ -1217,5 +1254,6 @@ var libelleDuChamp = map[string]string{
 	"meal_type":    "type de plat",
 	"seasons":      "saisons",
 	"tags":         "tags",
+	"source_url":   "source",
 	"raw":          "ingrédients",
 }

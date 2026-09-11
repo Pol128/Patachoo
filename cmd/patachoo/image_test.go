@@ -725,8 +725,11 @@ func TestUneImageURLNonResolueNeDeclencheAucuneRequete(t *testing.T) {
 	cas := map[string]url.Values{
 		"champ vide":           {"image_url": {""}},
 		"relative sans source": {"image_url": {"/img/photo.png"}},
-		"source non absolue":   {"image_url": {"/img/photo.png"}, "source-url": {"carnet-de-mamie"}},
-		"image_url illisible":  {"image_url": {"://"}},
+		// Une adresse sans schéma : le formulaire l'accepte — source_url est
+		// un URLField, et « carnet-de-mamie » tout court n'en passerait pas la
+		// validation —, mais elle ne résout rien.
+		"source non absolue":  {"image_url": {"/img/photo.png"}, "source-url": {"carnet-de-mamie.fr"}},
+		"image_url illisible": {"image_url": {"://"}},
 	}
 
 	for nom, ajouts := range cas {
