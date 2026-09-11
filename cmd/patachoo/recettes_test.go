@@ -1977,22 +1977,24 @@ func TestUneEditionRemplaceLesIngredientsEnBloc(t *testing.T) {
 	}
 }
 
-// Corriger une recette importée ne doit pas lui faire perdre son origine ni
-// son auteur : trois champs qu'aucun champ du formulaire ne porte.
+// Critère 3 : corriger une recette importée — y compris venue d'un import en
+// lot — ne doit pas lui faire perdre son origine ni son auteur. L'origine
+// traverse désormais le formulaire et revient telle quelle ; l'auteur, lui,
+// n'est porté par aucun champ.
 func TestUneEditionConserveLOrigineEtLAuteur(t *testing.T) {
 	app, mux, cookie := carnetDeTest(t)
 	autre := creeCompte(t, app, "autre@exemple.fr", "Autre")
 	recette := recetteEnregistree(t, app, map[string]any{
-		"source_url":  "https://exemple.fr/tarte",
+		"source_url":  adresseDeSource,
 		"source_name": "Exemple",
 		champAuteur:   autre.Id,
 	})
 
-	poste(t, mux, "/recettes/"+recette.Id, cookie, champsValides())
+	poste(t, mux, "/recettes/"+recette.Id, cookie, champsAvecSource(adresseDeSource, "Exemple"))
 
 	relue := relitLaRecette(t, app, recette.Id)
-	if source := relue.GetString("source_url"); source != "https://exemple.fr/tarte" {
-		t.Errorf("source_url %q, attendue %q", source, "https://exemple.fr/tarte")
+	if source := relue.GetString("source_url"); source != adresseDeSource {
+		t.Errorf("source_url %q, attendue %q", source, adresseDeSource)
 	}
 	if nom := relue.GetString("source_name"); nom != "Exemple" {
 		t.Errorf("source_name %q, attendu %q", nom, "Exemple")
@@ -2239,6 +2241,262 @@ func messageDErreur(t *testing.T, corps string) string {
 }
 
 var alerteRendue = regexp.MustCompile(`(?s)<p class="erreur" role="alert">(.*?)</p>`)
+
+// --- La source d'origine (PATA-86) -----------------------------------------
+
+// adresseDeSource est l'adresse que ces tests font traverser le formulaire.
+const adresseDeSource = "https://exemple.fr/tarte-aux-pommes"
+
+// champsAvecSource rend la saisie valide, augmentée des deux champs de source
+// tels que le formulaire les poste.
+func champsAvecSource(adresse, nom string) url.Values {
+	champs := champsValides()
+	champs.Set("source-url", adresse)
+	champs.Set("source-nom", nom)
+	return champs
+}
+
+// baliseDuChamp rend la balise <input> qui porte ce nom, telle que le gabarit
+// l'a écrite : c'est sur ses attributs que se juge « visible » ou « caché ».
+func baliseDuChamp(t *testing.T, corps, nom string) string {
+	t.Helper()
+
+	motif := regexp.MustCompile(`<input[^>]*name="` + regexp.QuoteMeta(nom) + `"[^>]*>`)
+	trouve := motif.FindString(corps)
+	if trouve == "" {
+		t.Fatalf("champ %q introuvable dans la réponse :\n%s", nom, corps)
+	}
+	return trouve
+}
+
+// Déroulé n° 1 : l'adresse de la source cesse d'être un champ caché réservé à
+// l'import. Le même gabarit sert la création et l'édition, donc les deux
+// pages portent le champ et son libellé.
+func TestLeFormulairePorteUnChampDeSourceVisible(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	recette := recetteEnregistree(t, app, map[string]any{"source_url": adresseDeSource})
+
+	cas := map[string]string{
+		"création": "/recettes/nouvelle",
+		"édition":  "/recettes/" + recette.Id + "/modifier",
+	}
+	for nom, cible := range cas {
+		t.Run(nom, func(t *testing.T) {
+			corps := avecCookie(mux, http.MethodGet, cible, cookie).Body.String()
+
+			if champ := baliseDuChamp(t, corps, "source-url"); strings.Contains(champ, `type="hidden"`) {
+				t.Errorf("le champ de source est encore caché : %s", champ)
+			}
+			exigeContient(t, corps, `<label for="source-url">`, "Source")
+		})
+	}
+}
+
+// Déroulé n° 2 : le nom du site ne se saisit pas — rien ne le tape à la main,
+// il ne vient que de l'import. Il reste donc un champ caché.
+func TestLeNomDeLaSourceResteUnChampCache(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	recette := recetteEnregistree(t, app, map[string]any{
+		"source_url":  adresseDeSource,
+		"source_name": "Exemple",
+	})
+
+	corps := avecCookie(mux, http.MethodGet, "/recettes/"+recette.Id+"/modifier", cookie).Body.String()
+
+	if champ := baliseDuChamp(t, corps, "source-nom"); !strings.Contains(champ, `type="hidden"`) {
+		t.Errorf("le nom de la source est devenu saisissable : %s", champ)
+	}
+}
+
+// Critère 1 : une adresse tapée à la création se retrouve en base, et la fiche
+// affiche le bloc de source qui n'attendait qu'elle.
+func TestUneSourceSaisieALaCreationEstEnregistreeEtAffichee(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+
+	champs := champsValides()
+	champs.Set("source-url", adresseDeSource)
+	poste(t, mux, "/recettes", cookie, champs)
+
+	recette := laRecette(t, app)
+	if source := recette.GetString("source_url"); source != adresseDeSource {
+		t.Fatalf("source_url %q, attendue %q", source, adresseDeSource)
+	}
+
+	corps := fiche(mux, cookie, recette.Id).Body.String()
+	if !strings.Contains(corps, `<a href="`+adresseDeSource+`"`) {
+		t.Errorf("la fiche n'affiche pas le lien de source :\n%s", corps)
+	}
+}
+
+// Critère 2 : valider un import unitaire, c'est poster le formulaire que
+// l'import a pré-rempli — les deux champs de source compris.
+func TestValiderUnImportEnregistreLAdresseEtLeNomDuSite(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+
+	poste(t, mux, "/recettes", cookie, champsAvecSource(adresseDeSource, "Exemple"))
+
+	recette := laRecette(t, app)
+	if source := recette.GetString("source_url"); source != adresseDeSource {
+		t.Errorf("source_url %q, attendue %q", source, adresseDeSource)
+	}
+	if nom := recette.GetString("source_name"); nom != "Exemple" {
+		t.Errorf("source_name %q, attendu %q", nom, "Exemple")
+	}
+}
+
+// Critère 3 : rouvrir le formulaire d'édition montre l'adresse enregistrée.
+// Sans ce pré-remplissage, réenregistrer la recette effacerait sa source.
+func TestLeFormulaireDEditionPrerempliLaSource(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	recette := recetteEnregistree(t, app, map[string]any{
+		"source_url":  adresseDeSource,
+		"source_name": "Exemple",
+	})
+
+	corps := avecCookie(mux, http.MethodGet, "/recettes/"+recette.Id+"/modifier", cookie).Body.String()
+
+	if source := valeurDe(t, corps, "source-url"); source != adresseDeSource {
+		t.Errorf("champ source-url %q, attendu %q", source, adresseDeSource)
+	}
+	if nom := valeurDe(t, corps, "source-nom"); nom != "Exemple" {
+		t.Errorf("champ source-nom %q, attendu %q", nom, "Exemple")
+	}
+}
+
+// Critère 4 : changer l'adresse vide le nom du site. Un « Exemple » qui
+// survivrait au changement ferait un lien qui ment sur sa destination ; le
+// repli sur l'hôte reprend la main à l'affichage.
+func TestChangerLAdresseDeSourceVideLeNomDuSite(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	recette := recetteEnregistree(t, app, map[string]any{
+		"source_url":  adresseDeSource,
+		"source_name": "Exemple",
+	})
+
+	const nouvelle = "https://autre-site.fr/la-vraie-recette"
+	poste(t, mux, "/recettes/"+recette.Id, cookie, champsAvecSource(nouvelle, "Exemple"))
+
+	relue := relitLaRecette(t, app, recette.Id)
+	if source := relue.GetString("source_url"); source != nouvelle {
+		t.Errorf("source_url %q, attendue %q", source, nouvelle)
+	}
+	if nom := relue.GetString("source_name"); nom != "" {
+		t.Errorf("source_name %q, attendu vide : il désigne le site de l'ancienne adresse", nom)
+	}
+}
+
+// Critère 5 : vider le champ efface la source. Le bloc disparaît alors de la
+// fiche, le nom du site étant vidé avec l'adresse.
+func TestViderLeChampDeSourceEffaceLaSource(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	recette := recetteEnregistree(t, app, map[string]any{
+		"source_url":  adresseDeSource,
+		"source_name": "Exemple",
+	})
+
+	poste(t, mux, "/recettes/"+recette.Id, cookie, champsAvecSource("", "Exemple"))
+
+	relue := relitLaRecette(t, app, recette.Id)
+	if source := relue.GetString("source_url"); source != "" {
+		t.Errorf("source_url %q, attendue vide", source)
+	}
+	if nom := relue.GetString("source_name"); nom != "" {
+		t.Errorf("source_name %q, attendu vide", nom)
+	}
+	if corps := fiche(mux, cookie, recette.Id).Body.String(); strings.Contains(corps, "Exemple") {
+		t.Errorf("la fiche affiche encore une source :\n%s", corps)
+	}
+}
+
+// Critère 6 : une recette sans source reste le cas normal. Un champ vide ou
+// rempli d'espaces enregistre une source vide, sans message d'erreur — et le
+// schéma refuserait « ␣␣␣ » si l'adresse n'était pas rognée avant d'être
+// posée.
+func TestUneSourceVideOuDEspacesEstAcceptee(t *testing.T) {
+	for nom, saisie := range map[string]string{"champ vide": "", "espaces": "   "} {
+		t.Run(nom, func(t *testing.T) {
+			app, mux, cookie := carnetDeTest(t)
+
+			champs := champsValides()
+			champs.Set("source-url", saisie)
+			rec := poste(t, mux, "/recettes", cookie, champs)
+
+			if rec.Code != http.StatusSeeOther {
+				t.Fatalf("statut %d, attendu %d :\n%s", rec.Code, http.StatusSeeOther, rec.Body.String())
+			}
+			if source := laRecette(t, app).GetString("source_url"); source != "" {
+				t.Errorf("source_url %q, attendue vide", source)
+			}
+		})
+	}
+}
+
+// Critère 7 : une adresse que le schéma refuse n'écrit rien, ni à la création
+// ni à l'édition, et le refus se dit dans les mots du formulaire.
+func TestUneSourceRefuseeParLeSchemaNEcritRien(t *testing.T) {
+	const refusee = "javascript:alert(1)"
+
+	t.Run("création", func(t *testing.T) {
+		app, mux, cookie := carnetDeTest(t)
+
+		champs := champsValides()
+		champs.Set("source-url", refusee)
+		rec := poste(t, mux, "/recettes", cookie, champs)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("statut %d, attendu %d", rec.Code, http.StatusOK)
+		}
+		if n := len(recettes(t, app)); n != 0 {
+			t.Errorf("%d recettes créées malgré le refus, 0 attendue", n)
+		}
+		if message := messageDErreur(t, rec.Body.String()); !strings.Contains(strings.ToLower(message), "source") {
+			t.Errorf("message d'erreur %q, attendu nommant le champ « source »", message)
+		}
+	})
+
+	t.Run("édition", func(t *testing.T) {
+		app, mux, cookie := carnetDeTest(t)
+		recette := recetteEnregistree(t, app, map[string]any{
+			"title":      "Clafoutis",
+			"source_url": adresseDeSource,
+		})
+
+		rec := poste(t, mux, "/recettes/"+recette.Id, cookie, champsAvecSource(refusee, ""))
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("statut %d, attendu %d", rec.Code, http.StatusOK)
+		}
+		relue := relitLaRecette(t, app, recette.Id)
+		if source := relue.GetString("source_url"); source != adresseDeSource {
+			t.Errorf("source_url %q, attendue %q : la recette a été modifiée malgré le refus", source, adresseDeSource)
+		}
+		if titre := relue.GetString("title"); titre != "Clafoutis" {
+			t.Errorf("titre %q, attendu « Clafoutis » : la recette a été modifiée malgré le refus", titre)
+		}
+	})
+}
+
+// Critère 8 : un formulaire refusé pour une autre raison revient avec ce que
+// l'utilisateur avait tapé, source comprise — retaper l'adresse d'origine
+// après une faute sur le titre serait une punition.
+func TestUnFormulaireRefuseRendLAdresseDeSourceSaisie(t *testing.T) {
+	_, mux, cookie := carnetDeTest(t)
+
+	champs := champsAvecSource(adresseDeSource, "Exemple")
+	champs.Set("titre", "   ")
+	rec := poste(t, mux, "/recettes", cookie, champs)
+
+	corps := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("statut %d, attendu %d", rec.Code, http.StatusOK)
+	}
+	if source := valeurDe(t, corps, "source-url"); source != adresseDeSource {
+		t.Errorf("champ source-url %q, attendu %q", source, adresseDeSource)
+	}
+	if nom := valeurDe(t, corps, "source-nom"); nom != "Exemple" {
+		t.Errorf("champ source-nom %q, attendu %q", nom, "Exemple")
+	}
+}
 
 // --- Échappement et texte brut --------------------------------------------
 
