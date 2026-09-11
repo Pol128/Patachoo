@@ -11,6 +11,12 @@ diverger.
 
 ## À paraître
 
+- La source d'une recette se saisit et se corrige. Le formulaire porte un champ
+  « Source — adresse de la page d'origine », prérempli par l'import et visible à
+  la création comme à l'édition : une recette tapée à la main ou importée à
+  l'unité affiche désormais son origine, là où seules les fournées le
+  faisaient. Changer l'adresse oublie le nom du site enregistré, qui désignait
+  l'ancienne ; vider le champ retire la source.
 - Le binaire porte sa version. `patachoo version` et `patachoo --version`
   l'impriment, et le pied de page l'affiche à un compte connecté, en lien vers
   les versions publiées. Construit sans `-ldflags`, il annonce ce qu'il est —

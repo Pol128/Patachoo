@@ -40,7 +40,8 @@
 {{range .ToutesLesSaisons}}<label class="case"><input type="checkbox" name="saisons" value="{{.}}"{{if $.Formulaire.SaisonCochee .}} checked{{end}}> {{.}}</label>
 {{end}}</fieldset>
 
-{{if .SourceURL}}<input type="hidden" name="source-url" value="{{.SourceURL}}">{{end}}
+<label for="source-url">Source — adresse de la page d'origine</label>
+<input type="text" id="source-url" name="source-url" value="{{.SourceURL}}">
 {{if .SourceNom}}<input type="hidden" name="source-nom" value="{{.SourceNom}}">{{end}}
 
 <button type="submit">Enregistrer</button>
