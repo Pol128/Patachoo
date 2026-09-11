@@ -94,10 +94,12 @@ func brancheLesRoutes(routeur *router.Router[*core.RequestEvent]) {
 	routeur.GET("/recettes", pageListeRecettes)
 	routeur.GET("/recettes/{id}", pageRecette)
 	routeur.GET("/connexion", pageConnexion)
-	routeur.POST("/connexion", connexion).Bind(rendLeDepassementEnHTML())
+	routeur.POST("/connexion", connexion).
+		Bind(rendLeDepassementEnHTML("patachooDepassementConnexion", rendLeDepassementDeConnexion))
 	routeur.POST("/deconnexion", deconnexion)
 	routeur.GET("/inscription", pageInscription)
-	routeur.POST("/inscription", inscription)
+	routeur.POST("/inscription", inscription).
+		Bind(rendLeDepassementEnHTML("patachooDepassementInscription", rendLeDepassementDInscription))
 	brancheLesRecettes(routeur)
 	brancheLesTags(routeur)
 	brancheLesCommentaires(routeur)
