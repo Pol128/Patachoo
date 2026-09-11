@@ -100,7 +100,7 @@ func brancheLesRoutes(routeur *router.Router[*core.RequestEvent]) {
 	routeur.GET("/connexion", pageConnexion)
 	routeur.POST("/connexion", connexion).
 		Bind(rendLeDepassementEnHTML("patachooDepassementConnexion", rendLeDepassementDeConnexion))
-	routeur.POST("/deconnexion", deconnexion)
+	routeur.POST("/deconnexion", deconnexion).Bind(exigeUneSession())
 	routeur.GET("/inscription", pageInscription)
 	routeur.POST("/inscription", inscription).
 		Bind(rendLeDepassementEnHTML("patachooDepassementInscription", rendLeDepassementDInscription))
