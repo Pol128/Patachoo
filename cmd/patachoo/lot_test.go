@@ -800,3 +800,22 @@ func TestUneErreurDEcritureDuLotNeSAfficheDansAucunePage(t *testing.T) {
 func nomDeFournee(instant time.Time) string {
 	return "Import du " + instant.Format("02/01/2006") + " à " + instant.Format("15h04")
 }
+
+// La page de dépassement rend une saisie que le gestionnaire n'a jamais lue :
+// elle sort du corps de la requête refusée pour retourner dans le formulaire.
+// C'est du contenu étranger dans une page, et DOD.md §3 lui demande son test
+// d'échappement — le rattrapage ne passe pas par les mêmes mains que le refus
+// ordinaire, et rien ne garantit de l'extérieur qu'il emprunte le même gabarit.
+func TestLaSaisieRepriseAuDepassementEstEchappee(t *testing.T) {
+	_, mux, cookie := atelierDeLot(t)
+
+	corps := epuiseLePlafondDuLot(t, mux, cookie, "203.0.113.25",
+		"<script>alert(1)</script>\nhttps://exemple.fr/recette").Body.String()
+
+	if strings.Contains(corps, "<script>alert(1)</script>") {
+		t.Errorf("la saisie reprise ressort telle quelle :\n%s", corps)
+	}
+	if !strings.Contains(corps, "&lt;script&gt;alert(1)&lt;/script&gt;") {
+		t.Errorf("la saisie reprise n'apparaît pas échappée :\n%s", corps)
+	}
+}
