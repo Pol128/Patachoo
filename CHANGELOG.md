@@ -11,6 +11,12 @@ diverger.
 
 ## À paraître
 
+- Le lancement d'un import en lot est plafonné : cinq fournées par minute et par
+  adresse. Au-delà, la page de saisie revient avec un message et la liste collée
+  encore dans le champ, au lieu du JSON brut d'une erreur d'API. Et une minute
+  dont tous les noms de fournée sont déjà pris n'est plus une panne : elle rend
+  la même page et invite à réessayer, là où elle rendait une erreur.
+
 - La source d'une recette se saisit et se corrige. Le formulaire porte un champ
   « Source — adresse de la page d'origine », prérempli par l'import et visible à
   la création comme à l'édition : une recette tapée à la main ou importée à
