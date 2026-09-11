@@ -66,6 +66,72 @@ Dans le conteneur, Patachoo écoute sur `0.0.0.0:8090`, et cela ne change pas :
 si 8090 est déjà pris sur la machine, c'est le **port de gauche** de
 `"8090:8090"` que l'on modifie, par exemple `"8091:8090"`.
 
+### Derrière un proxy inverse
+
+Un proxy inverse — Caddy, nginx, Traefik, l'ingress d'un NAS — se place entre
+les visiteurs et Patachoo, le plus souvent pour terminer le TLS. La connexion
+TCP que voit alors l'application ne vient plus du visiteur : elle vient du
+proxy, et **tous les visiteurs partagent la même adresse aux yeux de
+Patachoo**.
+
+**Le symptôme, avant le réglage.** La page de connexion refuse les gens avec
+« trop de tentatives » alors qu'ils n'ont rien tenté. Le plafond posé sur
+`POST /connexion` — cinq tentatives par 60 secondes, compté **par adresse IP**
+— devient un compteur unique partagé par l'ensemble des visiteurs : cinq
+mauvais mots de passe entrés n'importe où dans le monde, et plus personne ne
+se connecte pendant la minute qui suit. Le symptôme ne désigne pas sa cause,
+c'est pour cela qu'il est écrit ici : un hébergeant qui ne connaît pas ce
+piège cherche longtemps du côté des comptes.
+
+**Le réglage.** Dans `/_/` → **Settings** → **Application** → l'accordéon
+**IP proxy headers** :
+
+- **Trusted IP proxy headers** : le nom de l'en-tête que *votre* proxy pose.
+  `X-Forwarded-For` pour Caddy, nginx et Traefik dans leur configuration
+  courante ; `CF-Connecting-IP` derrière Cloudflare.
+- **IP priority** : laissez **Use rightmost IP**, la valeur par défaut. L'en-tête
+  peut porter plusieurs adresses séparées par des virgules ; la dernière est
+  celle qu'a ajoutée le proxy le plus proche, donc la seule que vous
+  contrôlez. *Use leftmost IP* fait lire la première, que le client peut
+  préfixer lui-même — à ne choisir qu'en connaissance de cause, et seulement
+  si votre chaîne de proxys l'impose.
+
+Champ vide = mécanisme désactivé, et **c'est le défaut** : Patachoo ne pose
+aucune valeur à l'installation.
+
+> **Ne renseignez jamais ce champ sur une instance joignable en direct.** Le
+> défaut vide n'est pas un oubli, c'est ce qui protège une installation sans
+> proxy : tant qu'il est vide, un `X-Forwarded-For` forgé par un client est
+> ignoré. Le renseigner rend l'en-tête croyable — n'importe qui en pose un,
+> change d'adresse à chaque requête, et déplace le compteur à volonté. Le
+> plafond de connexion ne compte alors plus rien, et on a remplacé un compteur
+> trop large par un compteur qu'un attaquant choisit.
+>
+> La même prudence vaut si l'application reste atteignable **à la fois** par le
+> proxy et en direct : fermez le port direct au pare-feu, ou ne publiez plus le
+> port 8090 de la machine hôte (dans le `docker-compose.yml`, `"127.0.0.1:8090:8090"`
+> au lieu de `"8090:8090"`).
+
+**Vérifier que c'est bon.** Connecté en superutilisateur, `GET /api/health`
+rend un champ `realIP` : après réglage, il doit porter **l'adresse du
+visiteur**, pas celle du proxy.
+
+```sh
+JETON=$(curl -s -X POST https://recettes.exemple.fr/api/collections/_superusers/auth-with-password \
+  -H 'Content-Type: application/json' \
+  -d '{"identity":"vous@exemple.fr","password":"votre-mot-de-passe"}' | jq -r .token)
+
+curl -s https://recettes.exemple.fr/api/health -H "Authorization: $JETON" | jq -r .data.realIP
+```
+
+La commande doit rendre l'adresse publique de la machine depuis laquelle vous
+la lancez. Si elle rend l'adresse du proxy — souvent une adresse privée,
+`172.x.x.x` dans un réseau Docker —, l'en-tête nommé n'est pas celui que votre
+proxy pose : vérifiez sa configuration, puis corrigez le champ.
+
+Sans jeton de superutilisateur, la réponse ne contient pas `realIP` : c'est
+voulu, l'adresse n'est pas une information publique.
+
 ### Créer le premier superutilisateur
 
 Rien n'est créé à l'avance : il faut un premier compte d'administration.
