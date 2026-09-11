@@ -1,9 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -204,4 +206,173 @@ func authentifieParLAPI(t *testing.T, mux http.Handler, ip string) *httptest.Res
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	return rec
+}
+
+// --- L'inscription --------------------------------------------------------
+
+// seuilDInscription est le nombre de POST /inscription qu'une même adresse a le
+// droit de jouer dans la fenêtre.
+//
+// Écrit en clair, et non relu depuis la migration, pour la même raison que
+// seuilDeConnexion. Dix par heure, et non cinq par minute : s'inscrire n'est
+// pas se connecter, et c'est la fenêtre longue qui protège la table users.
+const seuilDInscription = 10
+
+// Sans plafond, un visiteur sans compte remplissait la table users aussi vite
+// que le serveur sait hacher — 612 comptes par minute et par cœur, mesurés. La
+// onzième inscription d'une même adresse est donc refusée, la dixième ne l'est
+// pas.
+//
+// Et elle est refusée *avant* le gestionnaire : ni l'un ni l'autre des deux
+// messages de refus n'est dans le corps — or c'est le gestionnaire, et lui
+// seul, qui les pose — et aucun compte de plus n'est créé.
+func TestLaOnziemeInscriptionEstRefusee(t *testing.T) {
+	app, mux := serveurDeTest(t)
+	ouvreLInscription(t, app)
+
+	const ip = "203.0.113.20"
+
+	for tentative := 1; tentative <= seuilDInscription; tentative++ {
+		rec := sInscritDepuis(t, mux, ip, courrielNumerote(tentative))
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("inscription %d : statut %d, attendu %d — le plafond tombe avant le seuil",
+				tentative, rec.Code, http.StatusSeeOther)
+		}
+	}
+
+	avant := nombreDeComptes(t, app)
+
+	rec := sInscritDepuis(t, mux, ip, courrielNumerote(seuilDInscription+1))
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("inscription %d : statut %d, attendu %d — la route d'inscription n'a pas de plafond",
+			seuilDInscription+1, rec.Code, http.StatusTooManyRequests)
+	}
+	exigeSansAucun(t, rec.Body.String(), messageEchecInscription, messageConfirmationDifferente)
+
+	if apres := nombreDeComptes(t, app); apres != avant {
+		t.Errorf("%d comptes après l'inscription refusée, attendu %d : le gestionnaire a été atteint", apres, avant)
+	}
+}
+
+// Le dépassement de PocketBase sort en JSON, écrit par router.ErrorHandler. Or
+// /inscription est un formulaire HTML ordinaire, comme /connexion : celui qui
+// s'y reprend à onze fois verrait du JSON brut à la place de sa page.
+func TestLeDepassementRendLaPageDInscriptionEnHTML(t *testing.T) {
+	app, mux := serveurDeTest(t)
+	ouvreLInscription(t, app)
+
+	rec := epuiseLePlafondDInscription(t, mux, "203.0.113.21")
+
+	if typeDeContenu := rec.Header().Get("Content-Type"); !strings.Contains(typeDeContenu, "text/html") {
+		t.Errorf("Content-Type %q, attendu du text/html : le dépassement est rendu en JSON", typeDeContenu)
+	}
+	exigeContient(t, rec.Body.String(),
+		`<form method="post" action="/inscription">`,
+		`name="email"`,
+		`name="password"`,
+		`role="alert"`,
+	)
+}
+
+// La page d'inscription ne dit pas quels courriels existent — messageEchec
+// Inscription est muet sur son motif —, et le plafond ne doit pas rouvrir par
+// un autre canal ce que ce message ferme : la page de dépassement ne nomme ni
+// le courriel soumis, ni le nom de compte.
+func TestLeMessageDeDepassementDInscriptionNeNommeAucunCompte(t *testing.T) {
+	app, mux := serveurDeTest(t)
+	ouvreLInscription(t, app)
+
+	rec := epuiseLePlafondDInscription(t, mux, "203.0.113.22")
+
+	exigeSansAucun(t, rec.Body.String(), courrielNumerote(seuilDInscription+1), nomDeTest)
+}
+
+// Un plafond compté par IP enfermerait tout le monde s'il était global. Une
+// seconde adresse doit donc s'inscrire encore, la première épuisée.
+func TestLePlafondDInscriptionNEnfermePasLesAutresClients(t *testing.T) {
+	app, mux := serveurDeTest(t)
+	ouvreLInscription(t, app)
+
+	epuiseLePlafondDInscription(t, mux, "203.0.113.23")
+
+	rec := sInscritDepuis(t, mux, "203.0.113.24", "voisine@exemple.fr")
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("statut %d pour une seconde adresse, attendu %d : le plafond d'une IP ferme la porte aux autres",
+			rec.Code, http.StatusSeeOther)
+	}
+	if cookie := cookieEventuelDe(rec); cookie == nil {
+		t.Error("aucun cookie de session pour une seconde adresse : son inscription n'a pas abouti")
+	}
+}
+
+// Le limiteur compte les requêtes que l'inscription soit ouverte ou non. Rendre
+// la page au-delà du seuil sur une instance fermée afficherait le formulaire
+// que pageInscription refuse d'afficher : le dépassement y reste donc le 404
+// d'aujourd'hui.
+func TestSurUneInscriptionFermeeLeDepassementResteUn404(t *testing.T) {
+	_, mux := serveurDeTest(t)
+
+	const ip = "203.0.113.25"
+
+	premier := sInscritDepuis(t, mux, ip, courrielNumerote(1))
+	if premier.Code != http.StatusNotFound {
+		t.Fatalf("statut %d à la première inscription sur une instance fermée, attendu %d",
+			premier.Code, http.StatusNotFound)
+	}
+
+	var rec *httptest.ResponseRecorder
+	for tentative := 2; tentative <= seuilDInscription+1; tentative++ {
+		rec = sInscritDepuis(t, mux, ip, courrielNumerote(tentative))
+	}
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("statut %d à l'inscription %d sur une instance fermée, attendu %d : le dépassement révèle la page",
+			rec.Code, seuilDInscription+1, http.StatusNotFound)
+	}
+	exigeSansAucun(t, rec.Body.String(), "<form")
+}
+
+// epuiseLePlafondDInscription joue une inscription de trop depuis la même
+// adresse et rend la réponse au dépassement.
+func epuiseLePlafondDInscription(t *testing.T, mux http.Handler, ip string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	var rec *httptest.ResponseRecorder
+	for tentative := 1; tentative <= seuilDInscription+1; tentative++ {
+		rec = sInscritDepuis(t, mux, ip, courrielNumerote(tentative))
+	}
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("statut %d après %d inscriptions depuis %s, attendu %d",
+			rec.Code, seuilDInscription+1, ip, http.StatusTooManyRequests)
+	}
+	return rec
+}
+
+// sInscritDepuis poste le formulaire d'inscription depuis l'adresse donnée.
+//
+// Un courriel par appel : sans cela, la deuxième inscription buterait sur un
+// courriel déjà pris et ne répondrait plus « comme aujourd'hui » — le test
+// mesurerait le refus du gestionnaire au lieu de celui du plafond.
+func sInscritDepuis(t *testing.T, mux http.Handler, ip, courriel string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	champs := url.Values{
+		"email":           {courriel},
+		"password":        {motDePasseDeTest},
+		"passwordConfirm": {motDePasseDeTest},
+		"name":            {nomDeTest},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/inscription", strings.NewReader(champs.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.RemoteAddr = net.JoinHostPort(ip, "1234")
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+// courrielNumerote rend un courriel distinct par tentative.
+func courrielNumerote(tentative int) string {
+	return fmt.Sprintf("inscrit-%d@exemple.fr", tentative)
 }
