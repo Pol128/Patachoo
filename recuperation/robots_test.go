@@ -318,3 +318,36 @@ func TestLaDirectiveCoupeeParLePlafondEstEcartee(t *testing.T) {
 		t.Error("la dernière ligne, coupée par le plafond, a été analysée : un motif tronqué interdit plus que le site ne l'a écrit")
 	}
 }
+
+// TestLesMotifsSontCompilesALAnalyse : l'expression d'un motif à joker ou à
+// ancre est fabriquée une fois, à l'analyse. Recompilée à chaque chemin jugé,
+// elle l'était pour chaque règle du groupe et pour chaque page de l'hôte — un
+// robots.txt à cinq cent mille règles coûtait alors une seconde de calcul par
+// page. Le motif sans joker n'en porte pas : il se compare par préfixe.
+func TestLesMotifsSontCompilesALAnalyse(t *testing.T) {
+	lu := analyseRobots("User-agent: *\nDisallow: /recettes/recette-0*\nDisallow: /dossier\nDisallow: /a$\n")
+
+	if len(lu.groupes) != 1 {
+		t.Fatalf("%d groupes, attendu 1", len(lu.groupes))
+	}
+	cas := []struct {
+		motif    string
+		compilee bool
+	}{
+		{"/recettes/recette-0*", true},
+		{"/dossier", false},
+		{"/a$", true},
+	}
+	regles := lu.groupes[0].regles
+	if len(regles) != len(cas) {
+		t.Fatalf("%d règles, attendu %d", len(regles), len(cas))
+	}
+	for i, c := range cas {
+		if regles[i].motif != c.motif {
+			t.Fatalf("règle %d : motif %q, attendu %q", i, regles[i].motif, c.motif)
+		}
+		if porte := regles[i].expression != nil; porte != c.compilee {
+			t.Errorf("motif %q : expression compilée=%t, attendu %t", c.motif, porte, c.compilee)
+		}
+	}
+}
