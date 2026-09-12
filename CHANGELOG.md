@@ -17,6 +17,11 @@ diverger.
   secret dès la première requête, l'adresse complète étant recopiée dans les
   journaux du serveur, dans les sauvegardes de la nuit et dans l'historique du
   navigateur.
+- La création de comptes est plafonnée. Une même adresse dispose de dix
+  inscriptions par heure ; au-delà, la page d'inscription revient sous un
+  « Trop de tentatives d'inscription », sans qu'aucun compte de plus soit créé.
+  Une instance qui garde son inscription fermée continue de répondre comme
+  avant. Le plafond de la page de connexion, lui, ne bouge pas.
 - La source d'une recette se saisit et se corrige. Le formulaire porte un champ
   « Source — adresse de la page d'origine », prérempli par l'import et visible à
   la création comme à l'édition : une recette tapée à la main ou importée à
