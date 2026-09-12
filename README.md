@@ -44,6 +44,10 @@ Ce qu'il faut avoir fait pour dire qu'une tâche est terminée est écrit dans
 [DOD.md](DOD.md) — tests unitaires, tests de sécurité, et la règle qui remplace
 un seuil de couverture.
 
+Une faille se signale **en privé**, jamais par une issue publique :
+[SECURITY.md](SECURITY.md) dit par où, ce qu'un bon signalement contient, et ce
+qu'il faut en attendre.
+
 ## Ouvrir ou fermer l'inscription
 
 Une instance neuve s'installe **porte fermée** : personne ne peut créer de
