@@ -48,7 +48,7 @@ var recuperePage = func(ctx context.Context, adresse string, choix ...recuperati
 // champ, avant le moindre appel.
 func brancheLImport(routeur *router.Router[*core.RequestEvent]) {
 	routeur.GET("/recettes/importer", pageImport).Bind(exigeUneSession())
-	routeur.POST("/recettes/importer", importe).Bind(exigeUneSession())
+	routeur.POST("/recettes/importer", importe).Bind(exigeLeJetonAntiRejeu(), exigeUneSession())
 }
 
 // donneesImport est ce que la page « coller l'URL » donne à son gabarit. URL

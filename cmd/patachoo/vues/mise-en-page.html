@@ -19,7 +19,7 @@
 {{with .Utilisateur}}
 <div class="compte">
 <span>Connecté en tant que {{.Nom}}</span>
-<form method="post" action="/deconnexion"><button type="submit">Déconnexion</button></form>
+<form method="post" action="/deconnexion"><input type="hidden" name="_antirejeu" value="{{$.JetonAntiRejeu}}"><button type="submit">Déconnexion</button></form>
 </div>
 {{else}}
 <div class="compte"><a href="/connexion">Connexion</a></div>

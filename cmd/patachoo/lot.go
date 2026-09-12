@@ -104,7 +104,7 @@ type donneesLot struct {
 // de la saisie comme avant celle du lot.
 func brancheLImportEnLot(routeur *router.Router[*core.RequestEvent]) {
 	routeur.GET(cheminDuLot, pageImportEnLot).Bind(exigeUneSession())
-	routeur.POST(cheminDuLot, lanceLeLot).Bind(exigeUneSession(),
+	routeur.POST(cheminDuLot, lanceLeLot).Bind(exigeLeJetonAntiRejeu(), exigeUneSession(),
 		rendLeDepassementEnHTML("patachooDepassementLot", rendLeDepassementDuLot))
 	routeur.GET(cheminDuSuivi, suiviDuLot).Bind(exigeUneSession())
 }

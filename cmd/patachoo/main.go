@@ -93,17 +93,20 @@ func main() {
 // montage ne vérifierait que lui-même.
 func brancheLesRoutes(routeur *router.Router[*core.RequestEvent]) {
 	brancheLaSession(routeur)
+	brancheLAntiRejeu(routeur)
 
 	routeur.GET("/", pageAccueil)
 	routeur.GET("/recettes", pageListeRecettes)
 	routeur.GET("/recettes/{id}", pageRecette)
 	routeur.GET("/connexion", pageConnexion)
 	routeur.POST("/connexion", connexion).
-		Bind(rendLeDepassementEnHTML("patachooDepassementConnexion", rendLeDepassementDeConnexion))
-	routeur.POST("/deconnexion", deconnexion)
+		Bind(exigeLeJetonAntiRejeu(),
+			rendLeDepassementEnHTML("patachooDepassementConnexion", rendLeDepassementDeConnexion))
+	routeur.POST("/deconnexion", deconnexion).Bind(exigeLeJetonAntiRejeu())
 	routeur.GET("/inscription", pageInscription)
 	routeur.POST("/inscription", inscription).
-		Bind(rendLeDepassementEnHTML("patachooDepassementInscription", rendLeDepassementDInscription))
+		Bind(exigeLeJetonAntiRejeu(),
+			rendLeDepassementEnHTML("patachooDepassementInscription", rendLeDepassementDInscription))
 	brancheLesRecettes(routeur)
 	brancheLesTags(routeur)
 	brancheLesCommentaires(routeur)

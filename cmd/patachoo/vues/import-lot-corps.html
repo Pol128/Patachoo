@@ -1,6 +1,7 @@
 <h1>Import en lot</h1>
 {{if .Message}}<p class="erreur" role="alert">{{.Message}}</p>{{end}}
 <form class="formulaire-lot" method="post" action="/recettes/importer/lot">
+<input type="hidden" name="_antirejeu" value="{{$.JetonAntiRejeu}}">
 <label for="urls">Adresses à importer — une par ligne</label>
 <textarea id="urls" name="urls" rows="12" required>{{.Saisie}}</textarea>
 

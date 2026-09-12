@@ -10,6 +10,7 @@
 {{if .EnEdition}}
 <form method="post" action="/recettes/{{$recette}}/commentaires/{{.Id}}"
  hx-post="/recettes/{{$recette}}/commentaires/{{.Id}}" hx-target="#commentaires" hx-swap="outerHTML">
+<input type="hidden" name="_antirejeu" value="{{$.JetonAntiRejeu}}">
 <label for="corps-{{.Id}}">Modifier la note du {{.Date}}</label>
 <textarea id="corps-{{.Id}}" name="corps" rows="4">{{.Texte}}</textarea>
 <button type="submit">Enregistrer</button>
@@ -24,6 +25,7 @@
  hx-get="/recettes/{{$recette}}/commentaires/{{.Id}}/modifier" hx-target="#commentaires" hx-swap="outerHTML">Modifier</a>
 <form method="post" action="/recettes/{{$recette}}/commentaires/{{.Id}}/supprimer"
  hx-post="/recettes/{{$recette}}/commentaires/{{.Id}}/supprimer" hx-target="#commentaires" hx-swap="outerHTML">
+<input type="hidden" name="_antirejeu" value="{{$.JetonAntiRejeu}}">
 <button type="submit">Supprimer</button>
 </form>
 </div>{{end}}
@@ -34,6 +36,7 @@
 {{end}}
 <form class="ajout-de-note" method="post" action="/recettes/{{$recette}}/commentaires"
  hx-post="/recettes/{{$recette}}/commentaires" hx-target="#commentaires" hx-swap="outerHTML">
+<input type="hidden" name="_antirejeu" value="{{$.JetonAntiRejeu}}">
 <label for="corps">Ajouter une note</label>
 <textarea id="corps" name="corps" rows="4">{{.Brouillon}}</textarea>
 <button type="submit">Publier</button>
