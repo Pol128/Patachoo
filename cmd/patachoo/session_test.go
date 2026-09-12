@@ -678,6 +678,45 @@ func TestAucuneRequeteDePocketBaseNeReposeLeCookieDeSession(t *testing.T) {
 	}
 }
 
+// La variante que le cas du cookie seul ne couvre pas, et c'est le marqueur
+// qu'elle garde. Une requête d'API peut porter les deux : son propre en-tête
+// Authorization — compte B — et, le navigateur aidant, le cookie de session du
+// compte A. L'en-tête n'est alors pas récrit, puisqu'il est déjà là, et le
+// cookie seul ne prouve donc rien : seul le marqueur dirait encore que le
+// cookie a authentifié la requête. Posé, il ferait décider le renouvellement
+// sur le jeton de A et réémettre pour B — la réponse d'un appel d'API
+// reposerait la session du navigateur, sur un compte que son cookie ne
+// désignait pas.
+//
+// Ce test est né de la passe de sabotages de la DoD : une garde qui filtrerait
+// l'en-tête sans filtrer le marqueur passait tous les autres.
+func TestUneRequeteDAPIQuiPorteSonEnTeteNeReposePasLeCookie(t *testing.T) {
+	app, mux := serveurDeTest(t)
+	porteur := compteParDefaut(t, app)
+	autre := creeCompte(t, app, "autre@exemple.fr", "Autre")
+	recette := creeRecette(t, app, recetteVoulue{titre: "Tarte aux pommes"})
+
+	// Sous la mi-vie et renouvelable : tout ce que le renouvellement demande
+	// du jeton que le marqueur porterait.
+	court := jetonRenouvelableCourt(t, app, porteur, time.Minute)
+	jetonDeLAutre, err := autre.NewAuthToken()
+	if err != nil {
+		t.Fatalf("émission du jeton : %v", err)
+	}
+
+	rec := avecEnTete(mux, http.MethodGet, "/api/collections/recipes/records/"+recette.Id,
+		jetonDeLAutre, &http.Cookie{Name: nomCookieSession, Value: court})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("statut %d, attendu %d : le client d'API doit rester servi, c'est le cookie qui est en cause\n%s",
+			rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if poses := cookiesDeSession(rec); len(poses) != 0 {
+		t.Errorf("la réponse d'un appel d'API repose la session du navigateur : le compte %q y gagnerait celle de %q — %q",
+			porteur.Id, autre.Id, rec.Header().Values("Set-Cookie"))
+	}
+}
+
 // --- La page de connexion -------------------------------------------------
 
 func TestLaPageDeConnexionPorteLeFormulaire(t *testing.T) {
