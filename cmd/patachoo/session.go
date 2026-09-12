@@ -21,8 +21,8 @@ import (
 // un cookie ainsi nommé s'il ne vient pas d'une origine sûre, s'il porte un
 // Domain, ou si son Path n'est pas « / ». Sans lui, un voisin qui partage
 // notre domaine enregistrable — blog.exemple.fr à côté de patachoo.exemple.fr
-// — pose patachoo_session=<son jeton>; Domain=exemple.fr, et le navigateur
-// envoie deux cookies du même nom dont rien ici ne peut distinguer l'origine :
+// — pose ce même nom avec son propre jeton et Domain=exemple.fr, et le
+// navigateur envoie deux cookies dont rien ici ne peut distinguer l'origine :
 // la victime se retrouve connectée au compte de l'attaquant. Le préfixe ferme
 // cette porte du côté du navigateur, à condition que cookieDeSession continue
 // de poser Secure et Path=/ sans jamais poser de Domain — les trois attributs
