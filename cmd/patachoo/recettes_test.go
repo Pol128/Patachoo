@@ -1511,7 +1511,7 @@ func poste(t *testing.T, mux http.Handler, cible string, cookie *http.Cookie, ch
 
 	corps := &bytes.Buffer{}
 	ecrivain := multipart.NewWriter(corps)
-	for nom, valeurs := range champs {
+	for nom, valeurs := range leJetonEstPose(champs) {
 		for _, valeur := range valeurs {
 			if err := ecrivain.WriteField(nom, valeur); err != nil {
 				t.Fatalf("champ %q : %v", nom, err)
@@ -1533,6 +1533,7 @@ func poste(t *testing.T, mux http.Handler, cible string, cookie *http.Cookie, ch
 
 	req := httptest.NewRequest(http.MethodPost, cible, corps)
 	req.Header.Set("Content-Type", ecrivain.FormDataContentType())
+	req.AddCookie(cookieDuJetonDeTest())
 	if cookie != nil {
 		req.AddCookie(cookie)
 	}

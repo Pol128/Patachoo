@@ -190,9 +190,10 @@ func seConnecte(t *testing.T, mux http.Handler, courriel, motDePasse string) *ht
 func seConnecteDepuis(t *testing.T, mux http.Handler, ip, courriel, motDePasse string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	champs := url.Values{"courriel": {courriel}, "mot-de-passe": {motDePasse}}
+	champs := leJetonEstPose(url.Values{"courriel": {courriel}, "mot-de-passe": {motDePasse}})
 	req := httptest.NewRequest(http.MethodPost, "/connexion", strings.NewReader(champs.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookieDuJetonDeTest())
 	req.RemoteAddr = net.JoinHostPort(ip, "1234")
 
 	rec := httptest.NewRecorder()
@@ -236,8 +237,19 @@ func plusCourtEchecDeConnexion(t *testing.T, mux http.Handler, courriel string, 
 
 // avecCookie joue une requête portant ce seul cookie, sans en-tête
 // Authorization : c'est ce que fait un navigateur qui demande une page.
+//
+// Un POST y part muni de la paire anti-rejeu, et un GET sans : le jeton est ce
+// qu'un formulaire rendu par le serveur porte, et une page demandée par un
+// navigateur neuf n'en a encore aucun à joindre.
 func avecCookie(mux http.Handler, methode, cible string, cookie *http.Cookie) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(methode, cible, nil)
+	var req *http.Request
+	if methode == http.MethodPost {
+		req = httptest.NewRequest(methode, cible, strings.NewReader(leJetonEstPose(nil).Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.AddCookie(cookieDuJetonDeTest())
+	} else {
+		req = httptest.NewRequest(methode, cible, nil)
+	}
 	if cookie != nil {
 		req.AddCookie(cookie)
 	}

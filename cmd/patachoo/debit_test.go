@@ -183,10 +183,12 @@ func tenteAvecCookie(t *testing.T, mux http.Handler, ip string, cookie *http.Coo
 	t.Helper()
 
 	req := httptest.NewRequest(http.MethodPost, "/connexion",
-		strings.NewReader("courriel="+courrielDeTest+"&mot-de-passe=pas-le-bon-mot-de-passe"))
+		strings.NewReader("courriel="+courrielDeTest+"&mot-de-passe=pas-le-bon-mot-de-passe"+
+			"&"+nomDuChampAttendu+"="+jetonDeTest))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.RemoteAddr = net.JoinHostPort(ip, "1234")
 	req.AddCookie(cookie)
+	req.AddCookie(cookieDuJetonDeTest())
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -363,8 +365,9 @@ func sInscritDepuis(t *testing.T, mux http.Handler, ip, courriel string) *httpte
 		"passwordConfirm": {motDePasseDeTest},
 		"name":            {nomDeTest},
 	}
-	req := httptest.NewRequest(http.MethodPost, "/inscription", strings.NewReader(champs.Encode()))
+	req := httptest.NewRequest(http.MethodPost, "/inscription", strings.NewReader(leJetonEstPose(champs).Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookieDuJetonDeTest())
 	req.RemoteAddr = net.JoinHostPort(ip, "1234")
 
 	rec := httptest.NewRecorder()
