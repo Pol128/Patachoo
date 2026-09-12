@@ -548,11 +548,14 @@ func (r *recuperateur) demandeRobots(ctx context.Context, adresse, hote string) 
 		return decisionRobots{}, nil
 	}
 
-	texte, err := io.ReadAll(io.LimitReader(reponse.Body, r.o.tailleMax))
+	// Un octet de plus que le plafond du robots.txt suffit à savoir qu'il est
+	// dépassé — le même procédé que pour la page, et ce que sousLePlafond
+	// attend pour distinguer une lecture complète d'une lecture tranchée.
+	lu, err := io.ReadAll(io.LimitReader(reponse.Body, tailleMaxRobots+1))
 	if err != nil {
 		return decisionRobots{}, r.echec(err, adresse, Injoignable)
 	}
-	return decisionRobots{regles: analyseRobots(string(texte))}, nil
+	return decisionRobots{regles: analyseRobots(sousLePlafond(lu))}, nil
 }
 
 // hoteDe rend l'hôte d'une cible, en minuscules : c'est la clé de la cadence,

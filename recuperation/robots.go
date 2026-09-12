@@ -1,6 +1,7 @@
 package recuperation
 
 import (
+	"bytes"
 	"math"
 	"regexp"
 	"strconv"
@@ -43,6 +44,37 @@ type groupe struct {
 // borne, nous appliquons la borne — et l'écart se voit dans le rythme, pas
 // dans un refus silencieux.
 const delaiAnnonceMax = 5 * time.Minute
+
+// tailleMaxRobots borne le robots.txt, indépendamment du plafond de la page.
+//
+// Il lui faut le sien : une fournée en lit un par hôte, et en retient les
+// règles analysées pour toute sa durée. Emprunté à la page, le plafond de
+// 5 Mio laisse un lot de 500 hôtes tenir des gibioctets de règles en mémoire,
+// et dévore le budget de temps de l'appel au point de faire échouer en
+// delai_depasse des pages parfaitement saines. La valeur est celle du
+// récolteur de référence, qui ignore lui aussi ce qui dépasse.
+const tailleMaxRobots = 512 << 10
+
+// sousLePlafond rend, des octets lus, le texte à analyser.
+//
+// Le dépassement n'est pas une erreur : le REP demande d'appliquer ce qu'on a
+// lu. Mais la lecture s'arrête où elle tombe, éventuellement au milieu d'une
+// directive — « Disallow: /recettes » devenu « Disallow: /rec » interdirait
+// plus que le site ne l'a écrit. Ce qui suit le dernier saut de ligne lu est
+// donc écarté, et seulement quand le plafond a été atteint.
+func sousLePlafond(lu []byte) string {
+	if int64(len(lu)) <= tailleMaxRobots {
+		return string(lu)
+	}
+	tronque := lu[:tailleMaxRobots]
+	fin := bytes.LastIndexByte(tronque, '\n')
+	if fin < 0 {
+		// Pas un seul saut de ligne sous le plafond : tout ce qui a été lu
+		// est une directive coupée, il n'en reste rien d'interprétable.
+		return ""
+	}
+	return string(tronque[:fin+1])
+}
 
 // decisionRobots est ce que le robots.txt d'un hôte dit, une fois lu : de quoi
 // trancher n'importe quel chemin de cet hôte sans le redemander.
