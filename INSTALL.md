@@ -52,8 +52,10 @@ docker run -d --name patachoo --restart unless-stopped \
 ### L'adresse et le port
 
 L'application répond sur le **port 8090** de la machine hôte, soit
-`http://<adresse-de-la-machine>:8090` — et `http://localhost:8090` si c'est la
-machine devant laquelle on est assis :
+`http://localhost:8090` si c'est la machine devant laquelle on est assis, et
+`http://<adresse-de-la-machine>:8090` depuis un autre poste — mais **en clair,
+cette seconde adresse ne permet pas de se connecter** : voir « Hors de la
+machine locale : il faut du TLS », juste en dessous.
 
 | Chemin        | Ce qu'on y trouve                  |
 |---------------|------------------------------------|
@@ -65,6 +67,129 @@ machine devant laquelle on est assis :
 Dans le conteneur, Patachoo écoute sur `0.0.0.0:8090`, et cela ne change pas :
 si 8090 est déjà pris sur la machine, c'est le **port de gauche** de
 `"8090:8090"` que l'on modifie, par exemple `"8091:8090"`.
+
+### Hors de la machine locale : il faut du TLS
+
+**Le symptôme, d'abord**, parce que c'est par lui qu'on arrive ici. Depuis un
+autre poste, sur `http://192.168.1.20:8090`, la page de connexion accepte les
+identifiants sans broncher — et rend la page d'accueil **en visiteur**, comme si
+rien ne s'était passé. Pas de message d'erreur, rien dans les journaux du
+serveur. Réessayer donne la même chose.
+
+**La cause** est que le cookie de session est posé avec le drapeau `Secure`
+(`cmd/patachoo/session.go`), et qu'un navigateur n'enregistre un tel cookie que
+s'il vient d'une **origine sûre** : `https://…`, ou bien `http://localhost` et
+`http://127.0.0.1`, que les navigateurs traitent comme sûres par exception. Une
+adresse IP de réseau local en clair n'en est pas une. Le cookie est donc jeté à
+la réception, et la requête suivante repart anonyme — d'où la page d'accueil en
+visiteur.
+
+**Ne pas retirer `Secure`, et ne pas passer `SameSite` à `None`** pour faire
+passer la connexion. Ce sont les deux pistes que le symptôme suggère, et les
+deux sont des régressions de sécurité :
+
+- sans `Secure`, le jeton de session voyage en clair sur le réseau, lisible par
+  quiconque partage le Wi-Fi — et il vaut le compte, pas seulement le mot de
+  passe ;
+- `SameSite=None` fait tomber la seule défense CSRF du produit : les formulaires
+  POST de Patachoo ne portent pas encore de jeton anti-rejeu, et c'est
+  `SameSite=Lax` qui les protège.
+
+C'est la documentation qui décrivait un déploiement impossible, pas le code qui
+est trop strict. La suite donne les trois issues.
+
+#### 1. Un proxy inverse qui termine le TLS — la voie normale
+
+Patachoo ne change pas : il continue de servir en clair sur son 8090, et le
+proxy, devant, porte le certificat. Avec [Caddy](https://caddyserver.com/), le
+`Caddyfile` tient en trois lignes, certificat Let's Encrypt obtenu et renouvelé
+tout seul :
+
+```caddyfile
+patachoo.exemple.fr {
+	reverse_proxy 127.0.0.1:8090
+}
+```
+
+Ce qu'il faut avoir avant : un **nom de domaine** qui pointe vers la machine, et
+les ports **80 et 443** joignables depuis l'extérieur — c'est par eux que passe
+la validation du certificat. Le proxy tournant sur la même machine, autant ne
+plus publier 8090 sur tout le réseau : `"127.0.0.1:8090:8090"` dans le
+`docker-compose.yml` le réserve à la boucle locale, donc au proxy.
+
+#### 2. Patachoo termine le TLS lui-même, sans rien devant
+
+PocketBase sait obtenir son certificat seul : un nom de domaine passé en
+argument de `serve` bascule les écoutes sur HTTP + HTTPS, obtient le certificat
+par ACME et redirige le HTTP vers le HTTPS. Le `docker-compose.yml` complet :
+
+```yaml
+services:
+  patachoo:
+    image: ghcr.io/pol128/patachoo:latest
+    restart: unless-stopped
+    ports:
+      - "80:8080"
+      - "443:8443"
+    command:
+      - "serve"
+      - "patachoo.exemple.fr"
+      - "--http=0.0.0.0:8080"
+      - "--https=0.0.0.0:8443"
+      - "--dir=/pb_data"
+    healthcheck:
+      # Voir plus bas : la sonde de l'image ne sait pas interroger une instance
+      # qui sert en HTTPS.
+      disable: true
+    volumes:
+      - pb_data:/pb_data
+
+volumes:
+  pb_data:
+```
+
+Trois choses à savoir sur ce fichier :
+
+**Le certificat est rangé dans `pb_data/.autocert_cache`.** Il est donc
+sauvegardé avec le reste, et un redémarrage ne relance pas une demande à Let's
+Encrypt — qui plafonne les siennes.
+
+**Les ports de gauche sont 80 et 443, ceux de droite 8080 et 8443**, et ce
+décalage n'est pas de la coquetterie. À gauche, il n'y a pas le choix : c'est
+sur les ports 80 et 443 que Let's Encrypt vient valider le domaine, et la
+redirection vers le HTTPS que PocketBase installe pointe vers le port 443, sans
+numéro de port explicite. À droite, écouter sous 1024 demanderait un réglage du
+démon Docker, puisque l'image tourne en **UID 65532** — sur le démon où ceci a
+été vérifié, `ip_unprivileged_port_start` vaut `0` et le bind sur 80 passe en
+65532, mais ce n'est ni garanti ni universel (Docker sans racine, démon plus
+ancien, sysctl durci). Écouter au-dessus de 1024 dans le conteneur marche
+partout.
+
+**La sonde de santé de l'image est désactivée**, et c'est une perte assumée.
+Quand `--https` est actif, l'écoute en clair ne sert plus l'application : elle ne
+répond qu'aux validations ACME et redirige tout le reste. `patachoo healthcheck`
+fait un `GET` en clair sur `/api/health` ; il reçoit la redirection, la suit vers
+le port 443 du conteneur où rien n'écoute, et échoue. Laissée en place, la sonde
+marquerait `unhealthy` un conteneur qui sert parfaitement. La surveillance se
+fait alors depuis l'extérieur, sur `https://patachoo.exemple.fr/api/health`.
+
+#### 3. Sans nom de domaine : `http://localhost`, tunnel SSH compris
+
+C'est l'issue de dépannage, celle qui ne demande ni certificat ni installation.
+`http://localhost:8090` **depuis la machine elle-même** fonctionne, puisque le
+navigateur y voit une origine sûre et garde le cookie.
+
+Depuis un autre poste, un tunnel SSH donne la même chose, et pour la même
+raison — le navigateur s'adresse à `localhost`, et ignore tout du reste du
+chemin :
+
+```sh
+ssh -L 8090:localhost:8090 utilisateur@192.168.1.20
+```
+
+Le tunnel ouvert, `http://localhost:8090` dans le navigateur du poste distant
+sert Patachoo, chiffré par SSH de bout en bout. C'est la voie à prendre un soir
+de mise en service plutôt que d'aller toucher au cookie.
 
 ### Créer le premier superutilisateur
 
@@ -177,6 +302,12 @@ affichent `healthy` quand l'application répond. Il n'y a rien à ajouter dans l
 La sonde est une sous-commande du binaire lui-même, `patachoo healthcheck`, qui
 interroge `/api/health`. C'est ce que le `FROM scratch` impose : sans shell, il
 n'y a ni `curl` ni `wget` à appeler.
+
+Une seule exception : le déploiement où **Patachoo termine le TLS lui-même**. La
+sonde interroge l'application en clair, et cette écoute-là ne sert plus que les
+redirections — elle ne peut donc plus répondre. Le `docker-compose.yml` de
+« Hors de la machine locale : il faut du TLS » la désactive pour cette raison,
+et dit par quoi la remplacer.
 
 ## Sauvegarde et restauration
 
