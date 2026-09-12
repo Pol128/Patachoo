@@ -23,9 +23,42 @@ import (
 // incompatible (DOD.md §4).
 
 // regle est un motif de chemin et ce qu'il en dit.
+//
+// expression porte la forme compilée du motif, quand il a des jokers ou une
+// ancre de fin. Elle est fabriquée une fois, à l'analyse : recompilée à chaque
+// chemin jugé, elle l'était pour chaque règle du groupe et pour chaque page de
+// l'hôte. Nil pour un motif ordinaire, qui se compare par préfixe — et nil
+// aussi pour un motif qu'on n'a pas su compiler, qui ne vaut pas interdiction.
 type regle struct {
-	motif    string
-	autorise bool
+	motif      string
+	autorise   bool
+	expression *regexp.Regexp
+}
+
+// nouvelleRegle fabrique la règle d'un motif, et compile ce qui doit l'être.
+// C'est le seul endroit où une regle naît.
+func nouvelleRegle(motif string, autorise bool) regle {
+	r := regle{motif: motif, autorise: autorise}
+	if !strings.ContainsAny(motif, "*$") {
+		return r
+	}
+
+	var expression strings.Builder
+	expression.WriteString("^")
+	for i, c := range motif {
+		switch {
+		case c == '*':
+			expression.WriteString(".*")
+		case c == '$' && i == len(motif)-1:
+			expression.WriteString("$")
+		default:
+			expression.WriteString(regexp.QuoteMeta(string(c)))
+		}
+	}
+	// Une expression qu'on ne sait pas compiler laisse le champ nil, et
+	// motifCorrespond en fait un motif qui ne correspond à rien.
+	r.expression, _ = regexp.Compile(expression.String())
+	return r
 }
 
 // groupe rassemble les règles qui valent pour une liste d'agents, et le
@@ -179,7 +212,7 @@ func analyseRobots(texte string) robots {
 				continue
 			}
 			dernier := &r.groupes[len(r.groupes)-1]
-			dernier.regles = append(dernier.regles, regle{motif: valeur, autorise: champ == "allow"})
+			dernier.regles = append(dernier.regles, nouvelleRegle(valeur, champ == "allow"))
 		default:
 			suiteDAgents = false
 		}
@@ -231,7 +264,7 @@ func (r robots) autorise(chemin, agent string) bool {
 
 	poidsRetenu, autorise := -1, true
 	for _, regle := range g.regles {
-		if !motifCorrespond(regle.motif, chemin) {
+		if !motifCorrespond(regle, chemin) {
 			continue
 		}
 		poids := len(regle.motif)
@@ -272,34 +305,19 @@ func (r robots) groupePour(agent string) *groupe {
 	return etoile
 }
 
-// motifCorrespond compare un motif de robots.txt à un chemin : * vaut n'importe
-// quelle suite, un $ final ancre la fin, et le motif s'aligne toujours sur le
-// début du chemin.
-func motifCorrespond(motif, chemin string) bool {
-	if motif == "" {
+// motifCorrespond compare une règle de robots.txt à un chemin : * vaut
+// n'importe quelle suite, un $ final ancre la fin, et le motif s'aligne
+// toujours sur le début du chemin. Il ne fabrique plus rien : l'expression lui
+// arrive compilée depuis l'analyse.
+func motifCorrespond(r regle, chemin string) bool {
+	switch {
+	case r.expression != nil:
+		return r.expression.MatchString(chemin)
+	case r.motif == "" || strings.ContainsAny(r.motif, "*$"):
+		// Le motif vide ne vise rien, et un motif à joker sans expression est
+		// un motif qu'on n'a pas su compiler : ni l'un ni l'autre n'interdit.
 		return false
+	default:
+		return strings.HasPrefix(chemin, r.motif)
 	}
-	if !strings.ContainsAny(motif, "*$") {
-		return strings.HasPrefix(chemin, motif)
-	}
-
-	var expression strings.Builder
-	expression.WriteString("^")
-	for i, c := range motif {
-		switch {
-		case c == '*':
-			expression.WriteString(".*")
-		case c == '$' && i == len(motif)-1:
-			expression.WriteString("$")
-		default:
-			expression.WriteString(regexp.QuoteMeta(string(c)))
-		}
-	}
-
-	compilee, err := regexp.Compile(expression.String())
-	if err != nil {
-		// Un motif qu'on ne sait pas lire ne vaut pas interdiction.
-		return false
-	}
-	return compilee.MatchString(chemin)
 }
