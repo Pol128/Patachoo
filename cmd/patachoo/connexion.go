@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/pocketbase/pocketbase/core"
-	"github.com/pocketbase/pocketbase/tools/hook"
 )
 
 // messageEchecConnexion est le seul message qu'un échec produise, quel qu'en
@@ -31,21 +30,21 @@ type donneesConnexion struct {
 // messageEchecConnexion ferme.
 const messageDebitDepasse = "Trop de tentatives de connexion. Réessayez dans une minute."
 
-// rendLeDepassementEnHTML rattrape le refus du limiteur sur la route de
-// connexion — le squelette est dans debit.go, partagé avec celle du lot.
-func rendLeDepassementEnHTML() *hook.Handler[*core.RequestEvent] {
-	return rattrapeLeDepassement("patachooDepassementConnexion", func(e *core.RequestEvent) error {
-		// donneesConnexion, et non donneesPage : la page de dépassement est la
-		// page de connexion, et son gabarit lit le réglage d'inscription.
-		// Rendue sans lui, elle échoue à l'exécution et ressort en JSON —
-		// précisément ce que ce rattrapage évite.
-		return rendreAvecStatut(e, http.StatusTooManyRequests, "connexion.html", "connexion-corps.html", &donneesConnexion{
-			donneesPage: donneesPage{
-				Titre:   "Connexion — Patachoo",
-				Message: messageDebitDepasse,
-			},
-			InscriptionOuverte: inscriptionOuverte(e.App),
-		})
+// rendLeDepassementDeConnexion est ce que rendLeDepassementEnHTML rend quand le
+// plafond de POST /connexion tombe : la page de connexion elle-même, sous un
+// 429.
+//
+// donneesConnexion, et non donneesPage : la page de dépassement est la page de
+// connexion, et son gabarit lit le réglage d'inscription. Rendue sans lui, elle
+// échoue à l'exécution et ressort en JSON — précisément ce que le rattrapage
+// évite.
+func rendLeDepassementDeConnexion(e *core.RequestEvent) error {
+	return rendreAvecStatut(e, http.StatusTooManyRequests, "connexion.html", "connexion-corps.html", &donneesConnexion{
+		donneesPage: donneesPage{
+			Titre:   "Connexion — Patachoo",
+			Message: messageDebitDepasse,
+		},
+		InscriptionOuverte: inscriptionOuverte(e.App),
 	})
 }
 

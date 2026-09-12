@@ -39,24 +39,25 @@ const prioriteRattrapageDuDebit = apis.DefaultRateLimitMiddlewarePriority - 1
 // disque.
 const borneDuCorpsRattrape = 1 << 20
 
-// rattrapeLeDepassement rend en page le refus du limiteur, au lieu du JSON.
+// rendLeDepassementEnHTML rattrape le refus du limiteur pour le rendre en page.
 //
 // PocketBase répond au dépassement par e.TooManyRequestsError(""), que
 // router.ErrorHandler écrit en JSON — et cet écrivain-là n'est pas
-// configurable. Or nos formulaires sont des pages HTML ordinaires :
-// l'utilisateur verrait du JSON brut à la place de la sienne. ErrorHandler
-// s'abstient si la réponse est déjà écrite, d'où ce rattrapage, qui rend la
-// page avant lui.
+// configurable. Or /connexion, /inscription et le lancement d'un lot sont des
+// formulaires HTML ordinaires : l'utilisateur y verrait du JSON brut à la place
+// de sa page. ErrorHandler s'abstient si la réponse est déjà écrite, d'où ce
+// rattrapage, qui rend la page avant lui.
 //
-// Posé route par route, et jamais sur le routeur : l'API REST parle JSON à ses
+// Sur ces seules routes, et non sur le routeur : l'API REST parle JSON à ses
 // clients, et lui rendre une de nos pages remplacerait une erreur lisible par
-// du HTML qu'aucun client ne sait lire. Chaque route passe donc son propre
-// identifiant de crochet — deux gestionnaires qui partageraient le leur, le
-// second remplacerait le premier (tools/hook).
+// du HTML qu'aucun client ne sait lire.
 //
-// Seul le StatusTooManyRequests est rattrapé : tout le reste ressort tel quel,
-// et une erreur qui n'est pas un dépassement ne doit pas se déguiser en page.
-func rattrapeLeDepassement(id string, rendLaPage func(*core.RequestEvent) error) *hook.Handler[*core.RequestEvent] {
+// Paramétré, parce que plusieurs pages en ont besoin et que ce qui est subtil
+// ici — la priorité, le e.Next(), le test sur le statut, la borne du corps —
+// doit tenir en un seul endroit. Le reste, message et gabarits, redescend au
+// point de montage. Un identifiant de crochet par route : deux crochets de même
+// identifiant sur le même hook se remplacent (tools/hook).
+func rendLeDepassementEnHTML(id string, rendLaPage func(*core.RequestEvent) error) *hook.Handler[*core.RequestEvent] {
 	return &hook.Handler[*core.RequestEvent]{
 		Id:       id,
 		Priority: prioriteRattrapageDuDebit,

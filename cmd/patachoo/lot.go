@@ -12,7 +12,6 @@ import (
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
-	"github.com/pocketbase/pocketbase/tools/hook"
 	"github.com/pocketbase/pocketbase/tools/router"
 
 	"github.com/Pol128/Patachoo/internal/texte"
@@ -105,7 +104,8 @@ type donneesLot struct {
 // de la saisie comme avant celle du lot.
 func brancheLImportEnLot(routeur *router.Router[*core.RequestEvent]) {
 	routeur.GET(cheminDuLot, pageImportEnLot).Bind(exigeUneSession())
-	routeur.POST(cheminDuLot, lanceLeLot).Bind(exigeUneSession(), rendLeDepassementDuLotEnHTML())
+	routeur.POST(cheminDuLot, lanceLeLot).Bind(exigeUneSession(),
+		rendLeDepassementEnHTML("patachooDepassementLot", rendLeDepassementDuLot))
 	routeur.GET(cheminDuSuivi, suiviDuLot).Bind(exigeUneSession())
 }
 
@@ -132,17 +132,18 @@ func rendLaSaisieAvecStatut(e *core.RequestEvent, statut int, saisie, message st
 	})
 }
 
-// rendLeDepassementDuLotEnHTML rattrape le refus du limiteur sur la route de
-// lancement — le squelette est dans debit.go, partagé avec la connexion.
+// rendLeDepassementDuLot est ce que rendLeDepassementEnHTML rend quand le
+// plafond de POST /recettes/importer/lot tombe : la page de saisie elle-même,
+// sous un 429.
 //
 // La saisie est reprise de la requête refusée : « un lot refusé ne doit pas se
-// retaper » vaut aussi quand c'est le plafond qui refuse, et le gestionnaire
-// n'a jamais été appelé pour la lire.
-func rendLeDepassementDuLotEnHTML() *hook.Handler[*core.RequestEvent] {
-	return rattrapeLeDepassement("patachooDepassementLot", func(e *core.RequestEvent) error {
-		return rendLaSaisieAvecStatut(e, http.StatusTooManyRequests,
-			e.Request.PostFormValue("urls"), messageDebitDuLotDepasse)
-	})
+// retaper » vaut aussi quand c'est le plafond qui refuse, et lanceLeLot n'a
+// jamais été appelé pour la lire. Au-delà de borneDuCorpsRattrape la lecture
+// échoue et le champ revient vide — le refus reste lisible, c'est ce qui
+// compte.
+func rendLeDepassementDuLot(e *core.RequestEvent) error {
+	return rendLaSaisieAvecStatut(e, http.StatusTooManyRequests,
+		e.Request.PostFormValue("urls"), messageDebitDuLotDepasse)
 }
 
 // lanceLeLot valide la liste collée, puis écrit la fournée.
