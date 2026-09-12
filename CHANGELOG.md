@@ -11,6 +11,12 @@ diverger.
 
 ## À paraître
 
+- Les données ne sont plus lisibles par les autres comptes de la machine. Le
+  serveur crée `pb_data`, ses bases et ses sauvegardes en `0700` et `0600` :
+  `data.db` porte en clair de quoi fabriquer un jeton d'administration, et
+  n'importe quel compte local pouvait le lire. Une instance déjà installée garde
+  les droits de ses fichiers existants — `INSTALL.md` donne la commande de
+  rattrapage.
 - Les pages ne sont plus conservées par les caches. Le serveur répond
   `Cache-Control: private, no-store` sur ses pages et ses fragments : un proxy
   ou un CDN placé devant l'instance ne peut plus servir à un visiteur la page
