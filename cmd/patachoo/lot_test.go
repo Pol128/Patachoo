@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -736,6 +737,106 @@ func demandeDepuis(mux http.Handler, ip, cible string, cookie *http.Cookie) *htt
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	return rec
+}
+
+// borneDuCorpsAuDepassement est la taille maximale du corps que le rattrapage
+// accepte de lire pour reprendre la saisie.
+//
+// Écrite en clair ici, et non relue depuis debit.go : une borne comparée à
+// elle-même ne vérifie qu'elle-même, et « une valeur codée sans test finit
+// augmentée temporairement » (DOD.md §3).
+const borneDuCorpsAuDepassement = 1 << 20
+
+// Le rattrapage enveloppe le limiteur, donc aussi le garde-fou de taille de
+// PocketBase : apis.BodyLimit est branché à DefaultRateLimitMiddlewarePriority
+// + 10, à l'intérieur du limiteur, quand prioriteRattrapageDuDebit est un cran
+// à l'extérieur. Le plafond tombé, le limiteur rend son erreur sans appeler
+// e.Next() : le middleware de taille n'a jamais tourné, et le corps que le
+// rattrapage lit pour reprendre la saisie n'est plus borné par personne.
+//
+// Ce que ça donnerait : un multipart en chunked — Content-Length à -1, donc
+// hors de portée du contrôle optimiste lui aussi — se déverse dans un fichier
+// temporaire au fil de la lecture. Celui qui a dépassé son quota obtiendrait,
+// sur la route même que le plafond ferme, un chemin moins borné que celui qui
+// reste sous le quota, et le dommage visé par le constat : le disque.
+func TestLeDepassementDuLotNeLitPasUnCorpsSansBorne(t *testing.T) {
+	_, mux, cookie := atelierDeLot(t)
+
+	const ip = "203.0.113.25"
+	for fournee := 1; fournee <= seuilDuLot; fournee++ {
+		if rec := soumetLeLotDepuis(mux, ip, cookie, strings.Join(urlsDeTest(2), "\n")); rec.Code != http.StatusOK {
+			t.Fatalf("fournée %d : statut %d, attendu %d", fournee, rec.Code, http.StatusOK)
+		}
+	}
+
+	// Quatre fois la borne : assez au-dessus pour qu'une lecture complète ne
+	// puisse pas passer pour une lecture bornée.
+	const bourrage = 4 * borneDuCorpsAuDepassement
+	corps := &corpsCompte{Reader: strings.NewReader(multipartDUrls(strings.Repeat("a", bourrage)))}
+
+	req := httptest.NewRequest(http.MethodPost, cheminDuLot, corps)
+	req.Header.Set("Content-Type", "multipart/form-data; boundary="+frontiereDeTest)
+	req.RemoteAddr = net.JoinHostPort(ip, "1234")
+	req.AddCookie(cookie)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	// Le refus reste lisible : borner le corps ne doit pas ramener le JSON que
+	// le rattrapage existe pour éviter.
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("statut %d, attendu %d", rec.Code, http.StatusTooManyRequests)
+	}
+	if typeDeContenu := rec.Header().Get("Content-Type"); !strings.Contains(typeDeContenu, "text/html") {
+		t.Errorf("Content-Type %q, attendu du text/html", typeDeContenu)
+	}
+	exigeContient(t, rec.Body.String(), `name="urls"`, `role="alert"`)
+
+	// La marge couvre la lecture en cours quand la borne est franchie : ce
+	// qu'on refuse, c'est de lire le corps entier, pas de dépasser d'un tampon.
+	const marge = 64 << 10
+	if corps.lus > borneDuCorpsAuDepassement+marge {
+		t.Errorf("%d octets lus du corps refusé, attendu au plus %d : le rattrapage lit un corps sans borne",
+			corps.lus, borneDuCorpsAuDepassement+marge)
+	}
+
+	// Et rien de ce bourrage ne ressort dans la page : au-delà de la borne, la
+	// reprise de la saisie est abandonnée — c'est un confort, il ne vaut pas un
+	// disque.
+	if champ := entreBalises(rec.Body.String(), `name="urls"`, "</textarea>"); strings.Contains(champ, "aaaa") {
+		t.Errorf("le corps refusé est repris dans le champ de saisie")
+	}
+}
+
+// frontiereDeTest sépare les parties du corps multipart construit à la main.
+const frontiereDeTest = "frontiereDePatachoo"
+
+// multipartDUrls emballe un contenu dans une partie « urls » portant un nom de
+// fichier — c'est ce nom qui fait déverser la partie dans un fichier temporaire
+// plutôt que de la garder en mémoire, et donc le disque qui est en jeu.
+func multipartDUrls(contenu string) string {
+	return "--" + frontiereDeTest + "\r\n" +
+		"Content-Disposition: form-data; name=\"urls\"; filename=\"liste.txt\"\r\n" +
+		"Content-Type: text/plain\r\n\r\n" +
+		contenu + "\r\n" +
+		"--" + frontiereDeTest + "--\r\n"
+}
+
+// corpsCompte compte ce que le serveur lit réellement du corps.
+//
+// Il n'est ni *bytes.Buffer, ni *bytes.Reader, ni *strings.Reader :
+// httptest.NewRequest pose donc un Content-Length à -1, exactement comme un
+// envoi en chunked. C'est la moitié du piège — le contrôle optimiste de
+// applyBodyLimit ne compare que ce Content-Length.
+type corpsCompte struct {
+	io.Reader
+	lus int64
+}
+
+func (c *corpsCompte) Read(b []byte) (int, error) {
+	n, err := c.Reader.Read(b)
+	c.lus += int64(n)
+	return n, err
 }
 
 // --- Les noms de fournée épuisés -------------------------------------------
