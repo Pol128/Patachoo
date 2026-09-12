@@ -15,7 +15,10 @@ go run ./cmd/patachoo serve         # http://127.0.0.1:8090
 go run ./cmd/patachoo superuser upsert vous@exemple.fr 'motdepasse'
 ```
 
-L'interface d'administration répond sur `/_/`, l'API REST sur `/api/`.
+L'interface d'administration répond sur `/_/`, l'API REST sur `/api/` — sur le
+**même port que le site**, donc sur les mêmes interfaces que lui. Ni l'une ni
+l'autre ne doit être joignable depuis l'Internet sans filtre devant : voir
+[Exposer Patachoo hors de chez soi](INSTALL.md#exposer-patachoo-hors-de-chez-soi).
 
 ```sh
 go test ./...                       # les tests, avant tout le reste
