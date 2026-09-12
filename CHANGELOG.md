@@ -11,6 +11,12 @@ diverger.
 
 ## À paraître
 
+- L'import refuse désormais les adresses d'un tailnet ou d'un réseau CGNAT, au
+  même titre que les adresses privées. Une installation posée sur un tailnet —
+  Tailscale numérote ses pairs dans la plage partagée `100.64.0.0/10` — ne peut
+  plus servir à en explorer les machines depuis une URL collée dans l'import.
+  Trois plages réservées voisines sont refusées avec elle : `0.0.0.0/8`,
+  `198.18.0.0/15` et `240.0.0.0/4`.
 - Les données ne sont plus lisibles par les autres comptes de la machine. Le
   serveur crée `pb_data`, ses bases et ses sauvegardes en `0700` et `0600` :
   `data.db` porte en clair de quoi fabriquer un jeton d'administration, et
