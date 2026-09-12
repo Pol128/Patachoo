@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -35,6 +36,33 @@ const plafondDuLot = 500
 // par un discriminant, cherché de proche en proche. Sans borne, une base dont
 // les tags seraient tous pris ferait boucler la requête indéfiniment.
 const fourneesMaxParMinute = 100
+
+// messageDebitDuLotDepasse est ce que voit celui qui a dépassé le plafond de
+// débit posé par la migration 1789158900_debit_lot.
+//
+// Il parle de l'adresse, et non du compte : le limiteur compte par e.RealIP()
+// quelle que soit l'audience de la règle, et promettre un plafond par compte
+// serait promettre ce que le code ne fait pas.
+const messageDebitDuLotDepasse = "Trop de lots lancés depuis cette adresse. Réessayez dans une minute."
+
+// messageFourneesEpuisees est ce que voit celui qui tombe sur une minute dont
+// tous les noms de fournée sont pris.
+//
+// Distinct du précédent, et volontairement : les deux disent d'attendre une
+// minute, mais l'un vient du plafond de débit et l'autre de la liste des tags.
+// Un message unique rendrait le second indiscernable du premier dans un
+// rapport de bogue.
+const messageFourneesEpuisees = "Trop de lots ont déjà été lancés pendant cette minute. Réessayez dans une minute."
+
+// erreurFourneesEpuisees marque le seul échec de creeLeLot qui se traduise en
+// page : les fourneesMaxParMinute noms de la minute sont pris.
+//
+// Un sentinel plutôt qu'un rendu fait sur place, comme erreurIntrouvable
+// (commentaires.go) : creeLeLot ne choisit pas ce que la route affiche. Et un
+// sentinel plutôt que le texte de l'erreur, parce que rendre err.Error() tel
+// quel afficherait aussi les échecs d'écriture — un message de la couche SQL
+// n'a rien à faire dans du HTML, il dit la forme des tables à qui le lit.
+var erreurFourneesEpuisees = errors.New("tous les noms de fournée de la minute sont pris")
 
 // disclaimerDuLot : les trois phrases affichées juste au-dessus du bouton qui
 // lance la fournée, et non dans une page d'aide que personne n'ouvre. Elles
@@ -76,7 +104,8 @@ type donneesLot struct {
 // de la saisie comme avant celle du lot.
 func brancheLImportEnLot(routeur *router.Router[*core.RequestEvent]) {
 	routeur.GET(cheminDuLot, pageImportEnLot).Bind(exigeUneSession())
-	routeur.POST(cheminDuLot, lanceLeLot).Bind(exigeUneSession())
+	routeur.POST(cheminDuLot, lanceLeLot).Bind(exigeUneSession(),
+		rendLeDepassementEnHTML("patachooDepassementLot", rendLeDepassementDuLot))
 	routeur.GET(cheminDuSuivi, suiviDuLot).Bind(exigeUneSession())
 }
 
@@ -88,11 +117,33 @@ func pageImportEnLot(e *core.RequestEvent) error {
 // rendLaSaisie rend la page de saisie, avec un message s'il y en a un et la
 // liste telle qu'elle a été collée : un lot refusé ne doit pas se retaper.
 func rendLaSaisie(e *core.RequestEvent, saisie, message string) error {
-	return rendre(e, "import-lot.html", "import-lot-corps.html", &donneesLot{
+	return rendLaSaisieAvecStatut(e, http.StatusOK, saisie, message)
+}
+
+// rendLaSaisieAvecStatut rend la même page sous un autre code de retour.
+//
+// Le dépassement du plafond en a besoin : un refus du limiteur rendu 200 ferait
+// passer pour une page valide ce que le protocole doit signaler comme un refus.
+func rendLaSaisieAvecStatut(e *core.RequestEvent, statut int, saisie, message string) error {
+	return rendreAvecStatut(e, statut, "import-lot.html", "import-lot-corps.html", &donneesLot{
 		donneesPage: donneesPage{Titre: "Import en lot — Patachoo", Message: message},
 		Disclaimer:  disclaimerDuLot,
 		Saisie:      saisie,
 	})
+}
+
+// rendLeDepassementDuLot est ce que rendLeDepassementEnHTML rend quand le
+// plafond de POST /recettes/importer/lot tombe : la page de saisie elle-même,
+// sous un 429.
+//
+// La saisie est reprise de la requête refusée : « un lot refusé ne doit pas se
+// retaper » vaut aussi quand c'est le plafond qui refuse, et lanceLeLot n'a
+// jamais été appelé pour la lire. Au-delà de borneDuCorpsRattrape la lecture
+// échoue et le champ revient vide — le refus reste lisible, c'est ce qui
+// compte.
+func rendLeDepassementDuLot(e *core.RequestEvent) error {
+	return rendLaSaisieAvecStatut(e, http.StatusTooManyRequests,
+		e.Request.PostFormValue("urls"), messageDebitDuLotDepasse)
 }
 
 // lanceLeLot valide la liste collée, puis écrit la fournée.
@@ -113,6 +164,12 @@ func lanceLeLot(e *core.RequestEvent) error {
 	// renvoie.
 	lot, _, err := creeLeLot(e.App, e.Auth, retenues, time.Now())
 	if err != nil {
+		// Les noms de fournée épuisés sont un refus de saisie comme les
+		// autres, et le seul de creeLeLot à en être un : tout le reste remonte
+		// tel quel, et ErrorHandler s'en charge.
+		if errors.Is(err, erreurFourneesEpuisees) {
+			return rendLaSaisie(e, saisie, messageFourneesEpuisees)
+		}
 		return err
 	}
 
@@ -302,7 +359,7 @@ func tagDeLaFournee(txApp core.App, instant time.Time) (*core.Record, error) {
 		return tag, nil
 	}
 
-	return nil, fmt.Errorf("%d lots portent déjà le nom %q : réessayez dans une minute", fourneesMaxParMinute, base)
+	return nil, fmt.Errorf("%w : %d lots portent déjà le nom %q", erreurFourneesEpuisees, fourneesMaxParMinute, base)
 }
 
 // leSlugEstLibre dit si aucun tag ne porte déjà ce slug.
