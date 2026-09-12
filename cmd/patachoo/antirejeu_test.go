@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/tools/router"
 )
 
 // --- Les deux moitiés de la double soumission ------------------------------
@@ -543,5 +544,47 @@ func TestLAPIRestNexigeAucunJeton(t *testing.T) {
 	}
 	if apres := len(recettes(t, app)); apres != avant+1 {
 		t.Errorf("%d recettes après la création par l'API, attendu %d", apres, avant+1)
+	}
+}
+
+// --- Le couplage des deux middlewares -------------------------------------
+
+// Le contrôle refuse tout quand la pose n'a pas tourné, plutôt que de laisser
+// passer un POST au champ vide.
+//
+// Ce n'est pas un état que le produit atteint : brancheLesRoutes pose les deux
+// middlewares ensemble. C'est celui qu'un branchement futur pourrait
+// atteindre, et il s'ouvrirait alors sans bruit sur les onze routes — la
+// comparaison de deux chaînes vides est vraie. La route témoin reproduit
+// exactement ce cas sur le montage réel, en écartant d'elle le seul middleware
+// de pose.
+func TestLeControleRefuseQuandLaPoseNaPasTourne(t *testing.T) {
+	_, mux := serveurDeTest(t, func(routeur *router.Router[*core.RequestEvent]) {
+		routeur.POST("/sonde-antirejeu", func(e *core.RequestEvent) error {
+			return e.String(http.StatusOK, "atteint")
+		}).Bind(exigeLeJetonAntiRejeu()).Unbind("patachooPoseLeJetonAntiRejeu")
+	})
+
+	for _, cas := range []struct {
+		nom    string
+		champs url.Values
+	}{
+		{"champ absent", url.Values{}},
+		{"champ vide", url.Values{nomDuChampAttendu: {""}}},
+		{"champ garni", url.Values{nomDuChampAttendu: {jetonDeTest}}},
+	} {
+		t.Run(cas.nom, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/sonde-antirejeu",
+				strings.NewReader(cas.champs.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusForbidden {
+				t.Errorf("statut %d, attendu %d — le gestionnaire a été atteint sans jeton posé",
+					rec.Code, http.StatusForbidden)
+			}
+		})
 	}
 }
