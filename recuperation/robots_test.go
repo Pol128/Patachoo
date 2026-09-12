@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -275,5 +276,45 @@ func TestLeCrawlDelayEstBorne(t *testing.T) {
 				t.Errorf("Crawl-delay lu %v, attendu %v", lu, c.attendu)
 			}
 		})
+	}
+}
+
+// robotsDeTaille fabrique un robots.txt qui commence par entete, se poursuit en
+// une seule ligne de commentaire jusqu'à l'octet jusqua, et finit par queue.
+//
+// Le bourrage tient sur une ligne unique pour que l'octet où le plafond tombe
+// se calcule à la main, sans compter des sauts de ligne.
+func robotsDeTaille(t *testing.T, entete string, jusqua int, queue string) string {
+	t.Helper()
+
+	bourrage := jusqua - len(entete)
+	if bourrage < 2 {
+		t.Fatalf("bourrage de %d octets : l'en-tête %q ne tient pas sous %d", bourrage, entete, jusqua)
+	}
+	// « # », les x, puis le saut de ligne : exactement bourrage octets.
+	return entete + "#" + strings.Repeat("x", bourrage-2) + "\n" + queue
+}
+
+// TestLeRobotsTxtALeSienDePlafond : le robots.txt n'emprunte plus le plafond de
+// la page (5 Mio). Ce qui suit son propre plafond n'est pas lu, donc la
+// directive posée en queue de fichier ne s'applique pas — et le dépassement
+// n'est pas une erreur : le REP demande d'appliquer ce qu'on a lu.
+func TestLeRobotsTxtALeSienDePlafond(t *testing.T) {
+	robots := robotsDeTaille(t, "User-agent: *\n", tailleMaxRobots+1, "Disallow: /recettes\n")
+
+	if !autorisePar(t, robots, "/recettes/tarte") {
+		t.Error("la queue du robots.txt, au-delà du plafond, a été appliquée : le fichier emprunte encore le plafond de la page")
+	}
+}
+
+// TestLaDirectiveCoupeeParLePlafondEstEcartee : le plafond tranche où il tombe,
+// éventuellement au milieu d'une directive. « Disallow: /recettes » tronqué en
+// « Disallow: /rec » interdirait bien plus que le site ne l'a écrit : ce qui
+// suit le dernier saut de ligne effectivement lu est donc écarté.
+func TestLaDirectiveCoupeeParLePlafondEstEcartee(t *testing.T) {
+	robots := robotsDeTaille(t, "User-agent: *\n", tailleMaxRobots-len("Disallow: /rec"), "Disallow: /recettes\n")
+
+	if !autorisePar(t, robots, "/recettes/tarte") {
+		t.Error("la dernière ligne, coupée par le plafond, a été analysée : un motif tronqué interdit plus que le site ne l'a écrit")
 	}
 }
