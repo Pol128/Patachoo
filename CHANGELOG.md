@@ -17,6 +17,16 @@ diverger.
   rendue pour le compte d'un autre. Le navigateur redemande donc la page au
   serveur lors d'une navigation arrière. La feuille de style, htmx et les
   illustrations restent mis en cache comme avant.
+- Le lancement d'un import en lot est plafonné : cinq fournées par minute et par
+  adresse. Au-delà, la page de saisie revient avec un message et la liste collée
+  encore dans le champ, au lieu du JSON brut d'une erreur d'API. Et une minute
+  dont tous les noms de fournée sont déjà pris n'est plus une panne : elle rend
+  la même page et invite à réessayer, là où elle rendait une erreur.
+- La création de comptes est plafonnée. Une même adresse dispose de dix
+  inscriptions par heure ; au-delà, la page d'inscription revient sous un
+  « Trop de tentatives d'inscription », sans qu'aucun compte de plus soit créé.
+  Une instance qui garde son inscription fermée continue de répondre comme
+  avant. Le plafond de la page de connexion, lui, ne bouge pas.
 - La source d'une recette se saisit et se corrige. Le formulaire porte un champ
   « Source — adresse de la page d'origine », prérempli par l'import et visible à
   la création comme à l'édition : une recette tapée à la main ou importée à
