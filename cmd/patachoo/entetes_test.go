@@ -29,13 +29,19 @@ func TestNosPagesPortentLaPolitiqueDeSecuriteDuContenu(t *testing.T) {
 	app, mux, cookie := serveurConnecte(t)
 	recette := recetteEnBase(t, app, nil)
 
-	cas := map[string]string{
-		"page de connexion": "/connexion",
-		"fiche de recette":  "/recettes/" + recette.Id,
+	// La page de connexion se demande en visiteur : un compte déjà connecté y
+	// est renvoyé vers son carnet, et la réponse serait une redirection.
+	cas := map[string]struct {
+		cible  string
+		cookie *http.Cookie
+	}{
+		"page de connexion": {"/connexion", nil},
+		"fiche de recette":  {"/recettes/" + recette.Id, cookie},
 	}
-	for nom, cible := range cas {
+	for nom, cas := range cas {
 		t.Run(nom, func(t *testing.T) {
-			rec := avecCookie(mux, http.MethodGet, cible, cookie)
+			cible := cas.cible
+			rec := avecCookie(mux, http.MethodGet, cible, cas.cookie)
 
 			if rec.Code != http.StatusOK {
 				t.Fatalf("statut %d sur %s, attendu %d", rec.Code, cible, http.StatusOK)
