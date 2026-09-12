@@ -151,6 +151,35 @@ sudo chown -R 65532:65532 /volume1/docker/patachoo
 
 (en remplaçant `/volume1/docker/patachoo` par le chemin choisi.)
 
+#### `pb_data` n'est lisible que par le compte du serveur
+
+Le serveur crée son répertoire de données, ses bases et ses sauvegardes **sans
+accorder le moindre droit aux autres comptes de la machine** : `0700` pour les
+répertoires, `0600` pour les fichiers. Ce n'est pas un réglage, et il n'y a rien
+à faire pour l'obtenir.
+
+Ce n'est pas de la prudence de principe. `data.db` porte **en clair** les
+secrets de signature des jetons d'authentification : qui peut lire ce fichier
+peut fabriquer un jeton d'administration valable et entrer dans `/_/` sans
+connaître aucun mot de passe. Une archive de `pb_data/backups/` contient le même
+fichier. Sur une machine que le serveur partage avec d'autres services — un
+binaire sous systemd, un NAS, un conteneur voisin monté sur le même chemin —
+c'est la différence entre un compte local quelconque et l'administration
+complète de l'instance.
+
+**Sur une instance déjà installée**, les fichiers écrits avant cette version
+gardent leurs droits : un umask ne vaut que pour ce qui est créé après. Serveur
+arrêté, rattrapage en une commande :
+
+```sh
+chmod -R go-rwx /volume1/docker/patachoo
+```
+
+(sur le chemin de votre `pb_data` ; pour un volume Docker nommé, `docker volume
+inspect` en donne le chemin réel sur l'hôte.) La vérifier avec
+`ls -ln /volume1/docker/patachoo` : plus aucun droit ne doit figurer dans les
+deux derniers groupes de trois caractères.
+
 ### Mettre à jour
 
 ```sh
@@ -267,6 +296,15 @@ source de vérité.
 > réglages illisibles. À défaut, réservez au bucket de sauvegarde des
 > identifiants qui ne servent qu'à lui, en écriture seule si le service le
 > permet.
+>
+> **Ce que l'option ne fait pas, et c'est le piège.** `--encryptionEnv` chiffre
+> les *réglages*, et eux seuls — la table `_params`. Le reste de `data.db`
+> n'est pas touché, et notamment les **secrets de signature des jetons**
+> d'authentification, qui restent en clair dans `_collections.options`. Or ces
+> secrets suffisent à fabriquer un jeton d'administration valable : la clé
+> protège vos identifiants S3, elle ne met pas `data.db` à l'abri. Ce qui
+> protège le fichier, c'est le mode sous lequel il est écrit — voir
+> « `pb_data` n'est lisible que par le compte du serveur » plus haut.
 
 ### Sauvegarder à la main
 

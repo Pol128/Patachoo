@@ -15,6 +15,26 @@ on:
   push:
   pull_request:
     branches: [main]
+  # Et une fois par semaine sans que personne n'ait rien poussé : `./verifie`
+  # lance `govulncheck`, qui interroge vuln.go.dev à l'exécution. Un rouge du
+  # lundi sur du code inchangé signale donc une faille publiée depuis la
+  # dernière poussée — le seul signal que les deux déclencheurs ci-dessus ne
+  # peuvent pas donner, puisqu'ils ont la date du dernier commit et non celle
+  # du jour.
+  #
+  # Deux limites, et on les écrit plutôt que de les contourner :
+  #   - une planification ne s'exécute que sur la dernière version de ce
+  #     fichier telle qu'elle est sur la branche par défaut ; elle ne tourne
+  #     donc jamais depuis une branche de travail ;
+  #   - sur un dépôt public, GitHub désactive automatiquement les workflows
+  #     planifiés après soixante jours sans activité sur le dépôt — c'est-à-dire
+  #     exactement dans le cas du projet dormant, celui où cette passe servirait
+  #     le plus.
+  #
+  # L'heure n'est pas ronde exprès : GitHub retarde les planifications posées
+  # au haut de l'heure, où tout le monde les pose.
+  schedule:
+    - cron: "17 4 * * 1"
 
 jobs:
   verifie:

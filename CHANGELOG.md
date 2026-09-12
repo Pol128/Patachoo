@@ -18,6 +18,12 @@ diverger.
   argument laisse voir dans `ps` et dans l'historique du shell, et comment s'en
   prémunir ; les blocs `curl` de sauvegarde, de restauration et de répétition
   lisent désormais le mot de passe au clavier.
+- Les données ne sont plus lisibles par les autres comptes de la machine. Le
+  serveur crée `pb_data`, ses bases et ses sauvegardes en `0700` et `0600` :
+  `data.db` porte en clair de quoi fabriquer un jeton d'administration, et
+  n'importe quel compte local pouvait le lire. Une instance déjà installée garde
+  les droits de ses fichiers existants — `INSTALL.md` donne la commande de
+  rattrapage.
 - Le lancement d'un import en lot est plafonné : cinq fournées par minute et par
   adresse. Au-delà, la page de saisie revient avec un message et la liste collée
   encore dans le champ, au lieu du JSON brut d'une erreur d'API. Et une minute
