@@ -11,6 +11,11 @@ diverger.
 
 ## À paraître
 
+- L'authentification par l'API est plafonnée comme la page de connexion : cinq
+  tentatives par minute et par adresse sur
+  `POST /api/collections/users/auth-with-password`, là où la règle livrée par
+  PocketBase en laissait quarante. La porte d'à côté gardait son plafond, celle-ci
+  ne l'avait pas. L'authentification d'administration, elle, ne bouge pas.
 - Les données ne sont plus lisibles par les autres comptes de la machine. Le
   serveur crée `pb_data`, ses bases et ses sauvegardes en `0700` et `0600` :
   `data.db` porte en clair de quoi fabriquer un jeton d'administration, et
