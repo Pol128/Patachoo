@@ -90,23 +90,28 @@ const tailleMaxRobots = 512 << 10
 
 // sousLePlafond rend, des octets lus, le texte à analyser.
 //
+// Le plafond, lui, est tenu par la lecture et par elle seule : cette fonction
+// ne le réapplique pas — deux endroits qui bornent la même chose, et l'un des
+// deux finit par mentir. Elle lit dans la longueur reçue que la lecture a été
+// tranchée, puisque son appelant demande un octet de plus que le plafond.
+//
 // Le dépassement n'est pas une erreur : le REP demande d'appliquer ce qu'on a
 // lu. Mais la lecture s'arrête où elle tombe, éventuellement au milieu d'une
 // directive — « Disallow: /recettes » devenu « Disallow: /rec » interdirait
 // plus que le site ne l'a écrit. Ce qui suit le dernier saut de ligne lu est
-// donc écarté, et seulement quand le plafond a été atteint.
+// donc écarté, et seulement quand le plafond a été atteint. L'octet de surplus
+// n'est gardé que s'il est lui-même ce saut de ligne, où il ne pèse rien.
 func sousLePlafond(lu []byte) string {
 	if int64(len(lu)) <= tailleMaxRobots {
 		return string(lu)
 	}
-	tronque := lu[:tailleMaxRobots]
-	fin := bytes.LastIndexByte(tronque, '\n')
+	fin := bytes.LastIndexByte(lu, '\n')
 	if fin < 0 {
-		// Pas un seul saut de ligne sous le plafond : tout ce qui a été lu
-		// est une directive coupée, il n'en reste rien d'interprétable.
+		// Pas un seul saut de ligne : tout ce qui a été lu est une directive
+		// coupée, il n'en reste rien d'interprétable.
 		return ""
 	}
-	return string(tronque[:fin+1])
+	return string(lu[:fin+1])
 }
 
 // decisionRobots est ce que le robots.txt d'un hôte dit, une fois lu : de quoi
