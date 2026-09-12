@@ -297,8 +297,13 @@ func avecEnTete(mux http.Handler, methode, cible, jeton string, cookie *http.Coo
 	return rec
 }
 
-// attributsDeSession vérifie les quatre attributs qui ne changent jamais,
-// que le cookie soit déposé, renouvelé ou effacé.
+// attributsDeSession vérifie les attributs qui ne changent jamais, que le
+// cookie soit déposé, renouvelé ou effacé.
+//
+// Trois d'entre eux — Secure, Path=/ et l'absence de Domain — sont ce que le
+// préfixe __Host- du nom exige : le navigateur rejette le cookie si l'un
+// manque, et la protection contre le sous-domaine voisin tombe avec lui. Les
+// vérifier ici les fait porter d'un coup sur les quatre chemins de pose.
 func attributsDeSession(t *testing.T, cookie *http.Cookie) {
 	t.Helper()
 
@@ -313,6 +318,10 @@ func attributsDeSession(t *testing.T, cookie *http.Cookie) {
 	}
 	if cookie.Path != "/" {
 		t.Errorf("Path %q, attendu %q", cookie.Path, "/")
+	}
+	if cookie.Domain != "" {
+		t.Errorf("Domain %q, attendu aucun : un Domain fait rejeter le cookie __Host- "+
+			"et le rendrait visible des sous-domaines voisins", cookie.Domain)
 	}
 }
 
@@ -384,6 +393,59 @@ func TestUneConnexionReussieDeposeUnCookieDeSession(t *testing.T) {
 	duree := int(compte.Collection().AuthToken.Duration)
 	if cookie.MaxAge != duree {
 		t.Errorf("Max-Age %d, attendu %d — la durée de vie du jeton", cookie.MaxAge, duree)
+	}
+}
+
+// Le nom est écrit ici en toutes lettres, et non relu dans nomCookieSession :
+// un test qui reprendrait la constante suivrait n'importe quel renommage sans
+// rien dire, alors que c'est le préfixe __Host- qui fait tout le travail. Il
+// interdit au navigateur d'accepter sous ce nom un cookie venu d'un
+// sous-domaine voisin, ou porteur d'un Domain — c'est-à-dire de laisser le
+// voisin remplacer la session de la victime par la sienne.
+//
+// Les quatre chemins de pose passent aujourd'hui par cookieDeSession, mais
+// c'est le nom rendu au navigateur qui compte, pas la fonction qui l'écrit :
+// chacun est donc joué pour lui-même.
+func TestLeCookieDeSessionPorteLePrefixeHost(t *testing.T) {
+	const attendu = "__Host-patachoo_session"
+
+	cas := []struct {
+		chemin string
+		pose   func(t *testing.T) *http.Cookie
+	}{
+		{"connexion", func(t *testing.T) *http.Cookie {
+			app, mux := serveurDeTest(t)
+			compteParDefaut(t, app)
+			return cookieDe(t, seConnecte(t, mux, courrielDeTest, motDePasseDeTest))
+		}},
+		{"inscription", func(t *testing.T) *http.Cookie {
+			app, mux := serveurDeTest(t)
+			ouvreLInscription(t, app)
+			return cookieDe(t, sInscrit(t, mux, champsDInscription()))
+		}},
+		{"renouvellement à mi-vie", func(t *testing.T) *http.Cookie {
+			app, mux := serveurDeTest(t, sonde)
+			compte := compteParDefaut(t, app)
+			court := jetonRenouvelableCourt(t, app, compte, time.Minute)
+			return cookieDe(t, avecCookie(mux, http.MethodGet, "/sonde",
+				&http.Cookie{Name: nomCookieSession, Value: court}))
+		}},
+		{"effacement à la déconnexion", func(t *testing.T) *http.Cookie {
+			app, mux := serveurDeTest(t)
+			compteParDefaut(t, app)
+			cookie := cookieDe(t, seConnecte(t, mux, courrielDeTest, motDePasseDeTest))
+			return cookieDe(t, avecCookie(mux, http.MethodPost, "/deconnexion", cookie))
+		}},
+	}
+
+	for _, c := range cas {
+		t.Run(c.chemin, func(t *testing.T) {
+			if nom := c.pose(t).Name; nom != attendu {
+				t.Errorf("cookie nommé %q, attendu %q : sans le préfixe, un sous-domaine "+
+					"voisin peut poser le même nom avec un Domain et remplacer la session",
+					nom, attendu)
+			}
+		})
 	}
 }
 
