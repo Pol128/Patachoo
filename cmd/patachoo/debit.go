@@ -20,6 +20,25 @@ import (
 // glisser.
 const prioriteRattrapageDuDebit = apis.DefaultRateLimitMiddlewarePriority - 1
 
+// borneDuCorpsRattrape borne ce qu'un rattrapage lit du corps qu'il refuse.
+//
+// Un rattrapage enveloppe le limiteur ; il enveloppe donc aussi tout ce que le
+// limiteur enveloppait, apis.BodyLimit compris — branché à
+// DefaultRateLimitMiddlewarePriority + 10, soit un cran à l'intérieur. Le
+// plafond tombé, le limiteur rend son erreur sans appeler e.Next() : le
+// garde-fou de taille n'a jamais tourné, et une page de refus qui relit la
+// saisie travaillerait sur un corps que personne ne borne. Un multipart en
+// chunked s'y déverse dans un fichier temporaire au fil de la lecture, et son
+// Content-Length à -1 met aussi le contrôle optimiste hors jeu : celui qui a
+// dépassé son quota obtiendrait, par le refus même, un chemin moins borné que
+// celui qui reste dessous.
+//
+// Un mébioctet, là où la voie ordinaire en autorise trente-deux : il s'agit de
+// reproposer une saisie, pas d'accepter un envoi. Au-delà, la lecture échoue et
+// la saisie n'est pas reprise — la reprise est un confort, elle ne vaut pas un
+// disque.
+const borneDuCorpsRattrape = 1 << 20
+
 // rattrapeLeDepassement rend en page le refus du limiteur, au lieu du JSON.
 //
 // PocketBase répond au dépassement par e.TooManyRequestsError(""), que
@@ -46,6 +65,12 @@ func rattrapeLeDepassement(id string, rendLaPage func(*core.RequestEvent) error)
 			if err == nil || router.ToApiError(err).Status != http.StatusTooManyRequests {
 				return err
 			}
+
+			// Avant que rendLaPage n'ait la moindre chance de lire le corps :
+			// c'est ici, et nulle part plus loin, qu'il est encore temps de le
+			// borner.
+			e.Request.Body = http.MaxBytesReader(e.Response, e.Request.Body, borneDuCorpsRattrape)
+
 			return rendLaPage(e)
 		},
 	}
