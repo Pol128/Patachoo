@@ -132,6 +132,50 @@ docker compose up -d
 Seule l'image change ; les données restent dans le volume. Sauvegarder `pb_data`
 avant une montée de version reste la précaution d'usage.
 
+### Épingler une version, et vérifier ce qu'on a tiré
+
+`:latest` est le chemin par défaut, et il le reste : le `docker-compose.yml`
+ci-dessus doit marcher tel quel, déposé seul dans un répertoire vide. Ce qui
+suit est une option, pour qui veut décider lui-même quand il monte de version,
+ou s'assurer que l'image qu'il fait tourner vient bien de ce dépôt.
+
+Chaque version publie trois références — `0.1.0`, `0.1` et `latest` — et une
+pré-version (`0.2.0-rc.1`) ne déplace pas `latest`.
+
+**Épingler par empreinte.** Un tag est mouvant : `latest`, et même `0.1`,
+désignent une autre image après chaque publication. Une empreinte, non — c'est
+le contenu lui-même qu'elle nomme :
+
+```yaml
+    image: ghcr.io/pol128/patachoo@sha256:0000000000000000000000000000000000000000000000000000000000000000
+```
+
+L'empreinte de la version visée se lit dans le registre, sans rien télécharger :
+
+```sh
+docker buildx imagetools inspect ghcr.io/pol128/patachoo:0.1.0
+```
+
+La ligne `Digest:` de la sortie est celle à recopier. Un `docker compose pull`
+ne ramènera alors plus rien de nouveau : monter de version devient un geste
+explicite — changer l'empreinte —, ce qui est tout l'intérêt.
+
+**Vérifier la provenance.** L'image est construite et poussée par
+[le workflow `publier`](.github/workflows/publier.yml), qui lui attache une
+attestation de provenance. Elle se vérifie avec la commande `gh`, sans que
+l'image ait à être tirée :
+
+```sh
+gh attestation verify oci://ghcr.io/pol128/patachoo:0.1.0 --repo Pol128/Patachoo
+```
+
+Ce que cela prouve : cette image a bien été produite par ce dépôt, par ce
+workflow, à partir d'un commit nommé dans l'attestation — pas construite sur une
+machine tierce ni substituée dans le registre après coup.
+
+Ce que cela ne prouve pas : que le commit attesté soit digne de confiance. La
+provenance dit d'où vient l'image, jamais ce que fait le code qu'elle contient.
+
 ### Fuseau horaire
 
 Les tâches planifiées de Patachoo tournent en **UTC**, quel que soit le fuseau

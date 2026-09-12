@@ -11,6 +11,12 @@ diverger.
 
 ## À paraître
 
+- L'image Docker est construite et publiée par la forge, sur tag de
+  version, et porte une attestation de provenance qui la relie au commit
+  dont elle sort. Chaque version publie ses références `0.1.0` et `0.1` à
+  côté de `latest` ; INSTALL.md dit comment épingler l'image par empreinte
+  pour décider soi-même quand on monte de version, et comment vérifier
+  d'une commande que celle qu'on a tirée vient bien de ce dépôt.
 - La source d'une recette se saisit et se corrige. Le formulaire porte un champ
   « Source — adresse de la page d'origine », prérempli par l'import et visible à
   la création comme à l'édition : une recette tapée à la main ou importée à
