@@ -9,10 +9,18 @@
 name: verifie
 
 on:
-  # Toutes les branches : « sur chaque poussée » pris au mot. Une branche qui
-  # porte une demande de fusion déclenche donc deux fois ; c'est accepté, le
-  # dépôt est petit.
+  # `main` seulement, et non plus toutes les branches. Le double déclenchement
+  # était assumé tant que les runners étaient ceux de GitHub, lancés en
+  # parallèle et sans file : une branche portant une demande de fusion payait
+  # deux jobs, et personne n'attendait. Depuis la bascule sur un runner
+  # auto-hébergé, les jobs se suivent au lieu de se croiser, et ce doublon coûte
+  # la moitié de la capacité de la machine — 38 minutes par job, mesurées.
+  #
+  # Ce qu'on perd : une branche poussée sans demande de fusion n'est plus
+  # vérifiée. En pratique la boucle d'agents en ouvre une systématiquement, et
+  # `pull_request` couvre alors le même commit.
   push:
+    branches: [main]
   pull_request:
     branches: [main]
   # Et une fois par semaine sans que personne n'ait rien poussé : `./verifie`
@@ -38,7 +46,13 @@ on:
 
 jobs:
   verifie:
-    runs-on: ubuntu-latest
+    # Runner auto-hébergé : les minutes hébergées par GitHub sont facturées,
+    # et une boucle d'agents qui pousse toutes les dix minutes en consomme
+    # plus qu'aucun plafond raisonnable n'en couvre. Les runners qu'on héberge
+    # soi-même ne le sont pas. Le jour où ce dépôt devient public, il faudra
+    # revenir en arrière : une demande de fusion venue d'un fork exécuterait
+    # du code non fiable sur la machine.
+    runs-on: [self-hosted, Linux, X64]
 
     # Le job ne pousse rien, ne publie rien, ne commente rien. Il lit le dépôt.
     permissions:
@@ -50,6 +64,12 @@ jobs:
     # la seule définition du vert, et la règle de l'en-tête tient.
     env:
       AVEC_RACE: "1"
+      # Le répertoire de travail d'un runner auto-hébergé survit d'un job au
+      # suivant, et avec lui le cache de `go test` — que les runners jetables
+      # de GitHub laissaient toujours froid. Sans ce `-count=1`, un job rendrait
+      # un vert sorti du cache : acceptable pour un test déterministe, pas pour
+      # `-race`, qui ne trouve une course qu'en la rejouant.
+      GOFLAGS: -count=1
 
     steps:
       - uses: actions/checkout@v4
