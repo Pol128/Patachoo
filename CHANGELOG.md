@@ -19,12 +19,6 @@ diverger.
 
 ## À paraître
 
-- `INSTALL.md` explique comment servir Patachoo en HTTPS hors de la machine
-  locale — proxy inverse, certificat obtenu par Patachoo lui-même, ou simple
-  tunnel SSH — et nomme le symptôme d'un accès en clair depuis un autre poste :
-  la connexion est acceptée mais reste sans effet, parce que le navigateur jette
-  un cookie `Secure` venu d'une origine qui ne l'est pas. Rien ne change dans le
-  produit ; c'est la documentation qui décrivait un déploiement impossible.
 - Les données ne sont plus lisibles par les autres comptes de la machine. Le
   serveur crée `pb_data`, ses bases et ses sauvegardes en `0700` et `0600` :
   `data.db` porte en clair de quoi fabriquer un jeton d'administration, et
