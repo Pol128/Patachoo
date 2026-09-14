@@ -1,0 +1,19 @@
+# Le CHANGELOG ne fait que s'allonger : chaque tâche livrée ajoute sa puce sous
+# « À paraître », toutes au même endroit. Sans ce pilote, le moindre merge dans
+# `main` met en conflit toutes les autres demandes de fusion ouvertes — mesuré
+# le 12/09/2026 : cinq PR en conflit, et `git merge-tree` ne rendait que ce
+# fichier-ci. Or `revue.py` classe un conflit en CORRIGEABLE et lui fait
+# consommer un aller-retour de correction sur deux : une tâche finit `bloque`
+# sur une ligne de journal, sans qu'aucun avis n'ait été porté sur son code.
+#
+# `union` garde les deux côtés bout à bout au lieu de refuser. Chaque puce
+# restant un bloc complet, le fichier reste bien formé — vérifié sur PATA-95 et
+# PATA-92 fusionnées d'affilée, zéro conflit, les deux puces intactes.
+#
+# Deux limites, écrites plutôt que découvertes plus tard. La résolution est
+# silencieuse, donc : publier une version pendant qu'une tâche est en vol classe
+# sa puce dans la version qu'on vient de publier ; et deux branches qui
+# reformulent la *même* puce existante la dupliquent sans avertissement. Les
+# deux supposent qu'on touche à des lignes déjà écrites — « À paraître », lui,
+# ne fait que grandir. Ne publier une version que quand rien n'est en vol.
+CHANGELOG.md merge=union

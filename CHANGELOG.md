@@ -1,8 +1,16 @@
 # Journal des versions
 
-**Une section par version, la plus récente en haut.** « À paraître » recueille au
-fil de l'eau ce que chaque tâche livrée change : c'est ce qui permet de savoir ce
-qui bouge d'une version à l'autre sans parcourir l'historique git.
+**Une section par version, la plus récente en haut.**
+
+Ce qui n'est pas encore publié ne s'écrit plus ici : chaque tâche livrée dépose
+son entrée dans `changelog.d/`, un fichier par tâche, et `./journal` les
+assemble. Toutes les tâches écrivaient autrefois sur la même ligne de « À
+paraître » — deux branches ouvertes en même temps entraient donc en conflit sans
+rien avoir en commun, et la review dépensait un aller-retour de correction pour
+une ligne de journal. `changelog.d/LISEZ-MOI.md` raconte la mesure qui a mené là.
+
+    ./journal                 # ce que « À paraître » contiendra
+    ./journal publier 0.2.0   # assemble les fragments ici, et les retire
 
 Les numéros suivent [SemVer](https://semver.org/lang/fr/) et vivent dans le
 dépôt sous forme de **tag git annoté, préfixé** — `v0.1.0`. Il n'y a pas de
@@ -11,12 +19,12 @@ diverger.
 
 ## À paraître
 
-- La connexion et l'inscription ne lisent plus leurs champs que dans le corps
-  du formulaire. Un mot de passe placé dans l'adresse — `?courriel=…&mot-de-passe=…` —
-  n'ouvre plus de session et ne crée plus de compte : il cessait d'être un
-  secret dès la première requête, l'adresse complète étant recopiée dans les
-  journaux du serveur, dans les sauvegardes de la nuit et dans l'historique du
-  navigateur.
+- Les données ne sont plus lisibles par les autres comptes de la machine. Le
+  serveur crée `pb_data`, ses bases et ses sauvegardes en `0700` et `0600` :
+  `data.db` porte en clair de quoi fabriquer un jeton d'administration, et
+  n'importe quel compte local pouvait le lire. Une instance déjà installée garde
+  les droits de ses fichiers existants — `INSTALL.md` donne la commande de
+  rattrapage.
 - Le lancement d'un import en lot est plafonné : cinq fournées par minute et par
   adresse. Au-delà, la page de saisie revient avec un message et la liste collée
   encore dans le champ, au lieu du JSON brut d'une erreur d'API. Et une minute
