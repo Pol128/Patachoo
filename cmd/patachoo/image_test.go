@@ -493,6 +493,113 @@ func TestUneImageAuSeuilExactEstAttachee(t *testing.T) {
 	}
 }
 
+// --- Le garde-fou des dimensions, côté téléversement -----------------------
+
+// Le même danger par l'autre porte. Le plafond de cinq mébioctets du schéma
+// borne les octets reçus, pas la mémoire du décodage : un PNG uni de
+// 30 000 × 30 000 tient dans quelques centaines de kibioctets, et c'est
+// PocketBase qui l'ouvrira en entier à la première miniature demandée — pour
+// tous les comptes, la liste étant partagée, et à chaque visite, la vignette
+// n'ayant jamais été fabriquée.
+//
+// Les deux cas sont les sous-tests d'un seul test : ils couvrent le même
+// appel au garde-fou, sur les deux routes qui y mènent.
+func TestUnTeleversementAuxDimensionsDemesureesEstRefuse(t *testing.T) {
+	t.Run("création", func(t *testing.T) {
+		app, mux, cookie := carnetDeTest(t)
+		avecPixelsMax(t, 4)
+
+		rec := poste(t, mux, "/recettes", cookie, champsValides(),
+			fichierPoste{nom: "enorme.png", contenu: pngDeTaille(t, 3, 3)})
+		corps := rec.Body.String()
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("statut %d, attendu %d — le refus doit re-rendre le formulaire, pas partir en 500", rec.Code, http.StatusOK)
+		}
+		if n := len(recettes(t, app)); n != 0 {
+			t.Errorf("%d recettes créées malgré le téléversement refusé, 0 attendue", n)
+		}
+		exigeStockageVide(t, app)
+		if !strings.Contains(corps, "<form") {
+			t.Errorf("le formulaire n'a pas été re-rendu :\n%s", corps)
+		}
+		if !strings.Contains(strings.ToLower(corps), "image") {
+			t.Errorf("message d'erreur sans le nom du champ fautif :\n%s", corps)
+		}
+		if !strings.Contains(strings.ToLower(corps), "dimensions") {
+			t.Errorf("message d'erreur sans la cause du refus :\n%s", corps)
+		}
+	})
+
+	// L'édition passe par le même poseLImage, et elle a un piège que la
+	// création n'a pas : l'illustration déjà stockée ne doit pas disparaître
+	// parce qu'on a proposé une image inacceptable pour la remplacer.
+	t.Run("édition", func(t *testing.T) {
+		app, mux, cookie := carnetDeTest(t)
+
+		poste(t, mux, "/recettes", cookie, champsValides(),
+			fichierPoste{nom: "tarte.png", contenu: pngDeTaille(t, 2, 2)})
+		recette := laRecette(t, app)
+		avant := recette.GetString("image")
+		if avant == "" {
+			t.Fatal("aucune image enregistrée à la création")
+		}
+
+		avecPixelsMax(t, 4)
+		rec := poste(t, mux, "/recettes/"+recette.Id, cookie, champsValides(),
+			fichierPoste{nom: "enorme.png", contenu: pngDeTaille(t, 3, 3)})
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("statut %d, attendu %d", rec.Code, http.StatusOK)
+		}
+		if apres := relitLaRecette(t, app, recette.Id).GetString("image"); apres != avant {
+			t.Errorf("image %q après une édition refusée, %q attendue — l'existante ne doit pas être effacée", apres, avant)
+		}
+	})
+}
+
+// L'autre côté du seuil, côté téléversement : une image aux dimensions
+// ordinaires reste acceptée. Sans ce test, un garde-fou qui refuserait tout
+// passerait.
+func TestUneImageTeleverseeAuSeuilExactEstStockee(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	avecPixelsMax(t, 4)
+
+	rec := poste(t, mux, "/recettes", cookie, champsValides(),
+		fichierPoste{nom: "juste.png", contenu: pngDeTaille(t, 2, 2)})
+
+	if rec.Code != http.StatusSeeOther {
+		t.Errorf("statut %d, attendu %d", rec.Code, http.StatusSeeOther)
+	}
+	if laRecette(t, app).GetString("image") == "" {
+		t.Error("aucune image attachée alors que ses dimensions atteignent tout juste le seuil")
+	}
+}
+
+// L'AVIF téléversé reste accepté, et il reste non mesuré : c'est une décision,
+// pas un oubli. image.DecodeConfig ne sait pas lire son en-tête, mais la
+// bibliothèque de miniatures de PocketBase ne sait pas le décoder davantage —
+// pas de décodage, pas d'allocation, pas de déni de service. Un en-tête
+// illisible ne vaut donc pas refus ici : le schéma reste seul juge du format.
+//
+// Ce test existe pour que la décision rougisse si quelqu'un la défait sans le
+// vouloir, par exemple en refusant au téléversement ce que le téléchargement
+// refuse.
+func TestUnAvifTeleverseResteAccepte(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	avecPixelsMax(t, 4)
+
+	rec := poste(t, mux, "/recettes", cookie, champsValides(),
+		fichierPoste{nom: "photo.avif", contenu: avifDeTest()})
+
+	if rec.Code != http.StatusSeeOther {
+		t.Errorf("statut %d, attendu %d :\n%s", rec.Code, http.StatusSeeOther, rec.Body.String())
+	}
+	if laRecette(t, app).GetString("image") == "" {
+		t.Error("aucune image attachée alors que le schéma accepte l'AVIF")
+	}
+}
+
 // --- Les causes d'échec de PATA-8 ------------------------------------------
 
 // Critère 9 : chacune des causes que le récupérateur sait nommer laisse la
