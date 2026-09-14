@@ -19,12 +19,6 @@ diverger.
 
 ## À paraître
 
-- Les réponses du serveur portent `Referrer-Policy: no-referrer`. L'adresse
-  de l'instance ne part plus vers les sites tiers qu'une page contacte —
-  l'aperçu de l'image chez le site importé, le lien du pied de page. Pour une
-  installation auto-hébergée sur un domaine privé, c'est son existence qui
-  cesse d'être annoncée. En contrepartie, l'aperçu d'une image distante peut
-  ne plus s'afficher chez les sites qui refusent une requête sans `Referer`.
 - Les données ne sont plus lisibles par les autres comptes de la machine. Le
   serveur crée `pb_data`, ses bases et ses sauvegardes en `0700` et `0600` :
   `data.db` porte en clair de quoi fabriquer un jeton d'administration, et
