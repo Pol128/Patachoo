@@ -1,8 +1,16 @@
 # Journal des versions
 
-**Une section par version, la plus récente en haut.** « À paraître » recueille au
-fil de l'eau ce que chaque tâche livrée change : c'est ce qui permet de savoir ce
-qui bouge d'une version à l'autre sans parcourir l'historique git.
+**Une section par version, la plus récente en haut.**
+
+Ce qui n'est pas encore publié ne s'écrit plus ici : chaque tâche livrée dépose
+son entrée dans `changelog.d/`, un fichier par tâche, et `./journal` les
+assemble. Toutes les tâches écrivaient autrefois sur la même ligne de « À
+paraître » — deux branches ouvertes en même temps entraient donc en conflit sans
+rien avoir en commun, et la review dépensait un aller-retour de correction pour
+une ligne de journal. `changelog.d/LISEZ-MOI.md` raconte la mesure qui a mené là.
+
+    ./journal                 # ce que « À paraître » contiendra
+    ./journal publier 0.2.0   # assemble les fragments ici, et les retire
 
 Les numéros suivent [SemVer](https://semver.org/lang/fr/) et vivent dans le
 dépôt sous forme de **tag git annoté, préfixé** — `v0.1.0`. Il n'y a pas de
