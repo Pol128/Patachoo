@@ -799,6 +799,57 @@ func TestLaDeconnexionSousLaMiVieNeRenvoieQueLEffacement(t *testing.T) {
 	attributsDeSession(t, poses[0])
 }
 
+// Une page tierce peut soumettre un formulaire vers POST /deconnexion, mais
+// SameSite=Lax prive cette requête du cookie de la victime : elle arrive en
+// visiteur. Le handler d'effacement ne doit alors jamais être atteint, sans
+// quoi la réponse déconnecte quand même — le navigateur applique le
+// Set-Cookie à son jar de premier niveau, quelle que soit la page qui a
+// déclenché l'envoi.
+//
+// Le cookie présent mais invalide relève du même cas : le middleware de
+// session laisse e.Auth nil, la requête est traitée en visiteur, et le jeton
+// déjà mort expire de lui-même.
+func TestLaDeconnexionSansSessionNEffaceRien(t *testing.T) {
+	app, mux := serveurDeTest(t, sonde)
+	compte := compteParDefaut(t, app)
+
+	jeton, err := compte.NewAuthToken()
+	if err != nil {
+		t.Fatalf("émission du jeton : %v", err)
+	}
+	// Renouveler la clé du compte invalide la signature du jeton émis : c'est
+	// le cas « jeton mort » sans avoir à en forger un à la main.
+	compte.RefreshTokenKey()
+	if err := app.Save(compte); err != nil {
+		t.Fatalf("renouvellement de la clé : %v", err)
+	}
+
+	cas := []struct {
+		nom    string
+		cookie *http.Cookie
+	}{
+		{"sans cookie", nil},
+		{"cookie de session invalide", &http.Cookie{Name: nomCookieSession, Value: jeton}},
+	}
+
+	for _, c := range cas {
+		t.Run(c.nom, func(t *testing.T) {
+			rec := avecCookie(mux, http.MethodPost, "/deconnexion", c.cookie)
+
+			if rec.Code != http.StatusSeeOther {
+				t.Errorf("statut %d, attendu %d", rec.Code, http.StatusSeeOther)
+			}
+			if lieu := rec.Header().Get("Location"); lieu != "/connexion" {
+				t.Errorf("Location %q, attendue %q", lieu, "/connexion")
+			}
+			if poses := cookiesDeSession(rec); len(poses) != 0 {
+				t.Errorf("%d cookies %q dans la réponse, attendu 0 : %q",
+					len(poses), nomCookieSession, rec.Header().Values("Set-Cookie"))
+			}
+		})
+	}
+}
+
 // --- Les priorités de middleware ------------------------------------------
 
 // Nos deux priorités ne doivent heurter aucune de celles que PocketBase
