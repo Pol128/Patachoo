@@ -19,9 +19,6 @@ diverger.
 
 ## À paraître
 
-- La déconnexion ne répond plus qu'à un compte connecté. Une demande qui
-  n'accompagne aucune session ouverte est renvoyée à la page de connexion sans
-  rien effacer : seul le navigateur qui tient la session peut y mettre fin.
 - Les données ne sont plus lisibles par les autres comptes de la machine. Le
   serveur crée `pb_data`, ses bases et ses sauvegardes en `0700` et `0600` :
   `data.db` porte en clair de quoi fabriquer un jeton d'administration, et
