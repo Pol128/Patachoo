@@ -1,6 +1,5 @@
-# Essai jetable : le runner auto-hébergé prend-il un job malgré le plafond de
-# dépenses GitHub Actions ? Ce fichier ne vit que sur la branche d'essai et ne
-# se déclenche que sur elle. À supprimer une fois la réponse obtenue.
+# Essai jetable : la vraie DoD (AVEC_RACE=1 ./verifie) sur le runner
+# auto-hébergé, pour mesurer sa durée réelle. À supprimer ensuite.
 name: essai-runner
 
 on:
@@ -12,8 +11,11 @@ jobs:
     runs-on: [self-hosted, Linux, X64]
     permissions:
       contents: read
+    env:
+      AVEC_RACE: "1"
     steps:
-      - run: |
-          echo "Le runner auto-hébergé a pris le job."
-          uname -a
-          echo "cœurs : $(nproc)"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: ./verifie
