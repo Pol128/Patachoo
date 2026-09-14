@@ -98,10 +98,23 @@ ignorer — c'est-à-dire le pire des deux mondes. À reconsidérer si le code d
 manipulation de fichiers et d'URL grossit.
 
 **Le point 1 tourne tout seul.** `.github/workflows/verifie.yml` lance
-`./verifie` sur chaque poussée et sur chaque demande de fusion vers `main` : le
-seul point automatisable de cette DoD ne dépend donc plus de la discipline de
-celui qui pousse. Le workflow n'y réénumère aucun contrôle, il appelle le
-script ; un critère ajouté à `./verifie` arrive en CI sans qu'on touche au YAML.
+`./verifie` sur chaque poussée, sur chaque demande de fusion vers `main`, et une
+fois par semaine sans que personne n'ait rien poussé : le seul point
+automatisable de cette DoD ne dépend donc plus de la discipline de celui qui
+pousse. Le workflow n'y réénumère aucun contrôle, il appelle le script ; un
+critère ajouté à `./verifie` arrive en CI sans qu'on touche au YAML.
+
+**Ce que la passe hebdomadaire ajoute**, et que les deux autres déclencheurs ne
+peuvent pas donner : `govulncheck` interroge `vuln.go.dev` au moment où il
+tourne. Déclenché par une poussée, son verdict a donc la date de la dernière
+poussée, pas celle du jour — un projet posé, qui ne reçoit plus de commit
+pendant des mois, est exactement celui dont les dépendances vieillissent sans
+que rien ne le dise. Un rouge du lundi sur du code inchangé signale une faille
+atteignable publiée depuis. Et sa limite, qui est une propriété et non une
+objection : sur un dépôt public, GitHub désactive automatiquement les workflows
+planifiés après **soixante jours sans activité sur le dépôt**, après un courriel
+au propriétaire. La passe couvre l'intervalle de quelques semaines ; elle ne
+couvre pas l'abandon.
 
 **Les points 2 à 5 restent manuels**, et c'est la faiblesse connue de cette
 DoD : aucun d'eux ne se lit dans un code de retour. Le point 5 est ce qui les

@@ -15,10 +15,36 @@ on:
   push:
   pull_request:
     branches: [main]
+  # Et une fois par semaine sans que personne n'ait rien poussé : `./verifie`
+  # lance `govulncheck`, qui interroge vuln.go.dev à l'exécution. Un rouge du
+  # lundi sur du code inchangé signale donc une faille publiée depuis la
+  # dernière poussée — le seul signal que les deux déclencheurs ci-dessus ne
+  # peuvent pas donner, puisqu'ils ont la date du dernier commit et non celle
+  # du jour.
+  #
+  # Deux limites, et on les écrit plutôt que de les contourner :
+  #   - une planification ne s'exécute que sur la dernière version de ce
+  #     fichier telle qu'elle est sur la branche par défaut ; elle ne tourne
+  #     donc jamais depuis une branche de travail ;
+  #   - sur un dépôt public, GitHub désactive automatiquement les workflows
+  #     planifiés après soixante jours sans activité sur le dépôt — c'est-à-dire
+  #     exactement dans le cas du projet dormant, celui où cette passe servirait
+  #     le plus.
+  #
+  # L'heure n'est pas ronde exprès : GitHub retarde les planifications posées
+  # au haut de l'heure, où tout le monde les pose.
+  schedule:
+    - cron: "17 4 * * 1"
 
 jobs:
   verifie:
-    runs-on: ubuntu-latest
+    # Runner auto-hébergé : les minutes hébergées par GitHub sont facturées,
+    # et une boucle d'agents qui pousse toutes les dix minutes en consomme
+    # plus qu'aucun plafond raisonnable n'en couvre. Les runners qu'on héberge
+    # soi-même ne le sont pas. Le jour où ce dépôt devient public, il faudra
+    # revenir en arrière : une demande de fusion venue d'un fork exécuterait
+    # du code non fiable sur la machine.
+    runs-on: [self-hosted, Linux, X64]
 
     # Le job ne pousse rien, ne publie rien, ne commente rien. Il lit le dépôt.
     permissions:
@@ -30,6 +56,12 @@ jobs:
     # la seule définition du vert, et la règle de l'en-tête tient.
     env:
       AVEC_RACE: "1"
+      # Le répertoire de travail d'un runner auto-hébergé survit d'un job au
+      # suivant, et avec lui le cache de `go test` — que les runners jetables
+      # de GitHub laissaient toujours froid. Sans ce `-count=1`, un job rendrait
+      # un vert sorti du cache : acceptable pour un test déterministe, pas pour
+      # `-race`, qui ne trouve une course qu'en la rejouant.
+      GOFLAGS: -count=1
 
     steps:
       - uses: actions/checkout@v4
