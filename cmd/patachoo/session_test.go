@@ -1109,6 +1109,101 @@ func TestLaDeconnexionSansSessionNEffaceRien(t *testing.T) {
 	}
 }
 
+// Effacer le cookie ne retire rien à qui en a gardé une copie : le jeton vit
+// dans sa seule signature, et rien ne consulte de liste de jetons retirés. Un
+// poste partagé, une extension de navigateur, un proxy qui termine le TLS, un
+// profil sauvegardé — la copie prise avant le geste ouvrait encore le compte
+// cinq jours après. Ce test est celui qui dit que « Se déconnecter » ne ment
+// plus à celui qui le demande.
+func TestUnJetonCaptureAvantLaDeconnexionNAuthentifiePlus(t *testing.T) {
+	app, mux := serveurDeTest(t, sonde)
+	compte := compteParDefaut(t, app)
+
+	// La copie de l'attaquant : le cookie tel qu'il était avant le geste, et
+	// non celui que la réponse de déconnexion rend.
+	capture := cookieDe(t, seConnecte(t, mux, courrielDeTest, motDePasseDeTest))
+
+	// Le témoin. Sans lui, un cookie qui n'aurait jamais authentifié ferait
+	// passer ce test sans rien prouver.
+	if reconnu := avecCookie(mux, http.MethodGet, "/sonde", capture).Body.String(); reconnu != compte.Id {
+		t.Fatalf("la sonde a reconnu %q avant la déconnexion, attendu %q : ce test ne prouve rien",
+			reconnu, compte.Id)
+	}
+
+	if rec := avecCookie(mux, http.MethodPost, "/deconnexion", capture); rec.Code != http.StatusSeeOther {
+		t.Fatalf("statut %d à la déconnexion, attendu %d", rec.Code, http.StatusSeeOther)
+	}
+
+	apres := avecCookie(mux, http.MethodGet, "/sonde", capture)
+	if apres.Body.String() != "visiteur" {
+		t.Errorf("la sonde a reconnu %q après la déconnexion, attendu un visiteur : "+
+			"le jeton capté avant le geste ouvre encore le compte", apres.Body.String())
+	}
+}
+
+// Le test qui porte la décision : la déconnexion emporte toutes les sessions du
+// compte, sur tous les appareils. C'est ce que la révocation par clé de compte
+// produit, et c'est le comportement retenu — pas un effet de bord à contourner.
+func TestUnSecondJetonDuMemeCompteTombeAvecLaDeconnexion(t *testing.T) {
+	app, mux := serveurDeTest(t, sonde)
+	compte := compteParDefaut(t, app)
+
+	premier := cookieDe(t, seConnecte(t, mux, courrielDeTest, motDePasseDeTest))
+
+	// Une échéance différente, et non une seconde connexion : les
+	// revendications d'un jeton d'authentification ne varient que par son exp,
+	// à la seconde près (core/record_tokens.go, tools/security/jwt.go). Deux
+	// connexions jouées dans la même seconde rendraient deux fois la même
+	// chaîne, et ce test ne porterait plus sur deux jetons.
+	second := &http.Cookie{Name: nomCookieSession, Value: jetonRenouvelableCourt(t, app, compte, time.Hour)}
+	if second.Value == premier.Value {
+		t.Fatalf("les deux jetons sont identiques : ce test ne prouve rien")
+	}
+	if reconnu := avecCookie(mux, http.MethodGet, "/sonde", second).Body.String(); reconnu != compte.Id {
+		t.Fatalf("la sonde a reconnu %q sur la seconde session, attendu %q : ce test ne prouve rien",
+			reconnu, compte.Id)
+	}
+
+	// Déconnexion depuis la première session seulement : c'est l'autre qui est
+	// en cause.
+	if rec := avecCookie(mux, http.MethodPost, "/deconnexion", premier); rec.Code != http.StatusSeeOther {
+		t.Fatalf("statut %d à la déconnexion, attendu %d", rec.Code, http.StatusSeeOther)
+	}
+
+	apres := avecCookie(mux, http.MethodGet, "/sonde", second)
+	if apres.Body.String() != "visiteur" {
+		t.Errorf("la sonde a reconnu %q sur la seconde session après la déconnexion, "+
+			"attendu un visiteur : la révocation n'a pas porté sur le compte", apres.Body.String())
+	}
+}
+
+// L'autre sens, celui que la correction ne doit pas emporter : la révocation
+// porte sur le compte qui se déconnecte, et sur lui seul. Elle passe par la clé
+// de signature de ce compte-là ; la déloger d'un cran — la clé de la
+// collection, un réglage commun — déconnecterait tout le monde à chaque départ.
+func TestLaDeconnexionNeTouchePasAuxJetonsDesAutresComptes(t *testing.T) {
+	app, mux := serveurDeTest(t, sonde)
+	compteParDefaut(t, app)
+	voisin := creeCompte(t, app, "voisin@exemple.fr", "Voisin")
+
+	jetonDuVoisin, err := voisin.NewAuthToken()
+	if err != nil {
+		t.Fatalf("émission du jeton : %v", err)
+	}
+	cookieDuVoisin := &http.Cookie{Name: nomCookieSession, Value: jetonDuVoisin}
+
+	cookie := cookieDe(t, seConnecte(t, mux, courrielDeTest, motDePasseDeTest))
+	if rec := avecCookie(mux, http.MethodPost, "/deconnexion", cookie); rec.Code != http.StatusSeeOther {
+		t.Fatalf("statut %d à la déconnexion, attendu %d", rec.Code, http.StatusSeeOther)
+	}
+
+	apres := avecCookie(mux, http.MethodGet, "/sonde", cookieDuVoisin)
+	if apres.Body.String() != voisin.Id {
+		t.Errorf("la sonde a reconnu %q, attendu %q : la déconnexion d'un compte a emporté "+
+			"la session d'un autre", apres.Body.String(), voisin.Id)
+	}
+}
+
 // --- Les priorités de middleware ------------------------------------------
 
 // Nos deux priorités ne doivent heurter aucune de celles que PocketBase
