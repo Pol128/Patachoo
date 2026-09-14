@@ -14,11 +14,16 @@ AVEC_RACE=1 ./verifie    # la même chose avec -race — ~20 min
 Le script échoue au premier manquement. C'est le minimum, pas la DoD complète :
 les points 2 à 5 ne s'automatisent pas.
 
-**Une tâche livrée inscrit ce qu'elle change sous « À paraître » dans
-[CHANGELOG.md](CHANGELOG.md)**, dans la même demande de fusion que son code. Une
-ligne, en français, qui dit ce que l'utilisateur verra de différent — pas le
-détail de l'implémentation. Sans cette règle, le fichier naît et meurt le même
-jour.
+**Une tâche livrée dépose ce qu'elle change dans `changelog.d/<son
+identifiant>.md`**, dans la même demande de fusion que son code. Une ligne, en
+français, qui dit ce que l'utilisateur verra de différent — pas le détail de
+l'implémentation. Sans cette règle, le journal naît et meurt le même jour.
+
+Un fichier par tâche, et non une ligne commune dans
+[CHANGELOG.md](CHANGELOG.md) : deux tâches n'écrivent alors jamais au même
+endroit, et ne peuvent plus se mettre en conflit sur leur seule entrée de
+journal. `./journal` montre ce que « À paraître » contiendra ;
+`./journal publier <version>` assemble le tout le jour venu.
 
 **Deux passes, un seul script.** `./verifie` nu est la boucle courte, à lancer à
 chaque geste. `AVEC_RACE=1 ./verifie` lance les mêmes tests sous le détecteur de
@@ -98,10 +103,23 @@ ignorer — c'est-à-dire le pire des deux mondes. À reconsidérer si le code d
 manipulation de fichiers et d'URL grossit.
 
 **Le point 1 tourne tout seul.** `.github/workflows/verifie.yml` lance
-`./verifie` sur chaque poussée et sur chaque demande de fusion vers `main` : le
-seul point automatisable de cette DoD ne dépend donc plus de la discipline de
-celui qui pousse. Le workflow n'y réénumère aucun contrôle, il appelle le
-script ; un critère ajouté à `./verifie` arrive en CI sans qu'on touche au YAML.
+`./verifie` sur chaque poussée, sur chaque demande de fusion vers `main`, et une
+fois par semaine sans que personne n'ait rien poussé : le seul point
+automatisable de cette DoD ne dépend donc plus de la discipline de celui qui
+pousse. Le workflow n'y réénumère aucun contrôle, il appelle le script ; un
+critère ajouté à `./verifie` arrive en CI sans qu'on touche au YAML.
+
+**Ce que la passe hebdomadaire ajoute**, et que les deux autres déclencheurs ne
+peuvent pas donner : `govulncheck` interroge `vuln.go.dev` au moment où il
+tourne. Déclenché par une poussée, son verdict a donc la date de la dernière
+poussée, pas celle du jour — un projet posé, qui ne reçoit plus de commit
+pendant des mois, est exactement celui dont les dépendances vieillissent sans
+que rien ne le dise. Un rouge du lundi sur du code inchangé signale une faille
+atteignable publiée depuis. Et sa limite, qui est une propriété et non une
+objection : sur un dépôt public, GitHub désactive automatiquement les workflows
+planifiés après **soixante jours sans activité sur le dépôt**, après un courriel
+au propriétaire. La passe couvre l'intervalle de quelques semaines ; elle ne
+couvre pas l'abandon.
 
 **Les points 2 à 5 restent manuels**, et c'est la faiblesse connue de cette
 DoD : aucun d'eux ne se lit dans un code de retour. Le point 5 est ce qui les

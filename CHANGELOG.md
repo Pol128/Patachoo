@@ -1,8 +1,16 @@
 # Journal des versions
 
-**Une section par version, la plus récente en haut.** « À paraître » recueille au
-fil de l'eau ce que chaque tâche livrée change : c'est ce qui permet de savoir ce
-qui bouge d'une version à l'autre sans parcourir l'historique git.
+**Une section par version, la plus récente en haut.**
+
+Ce qui n'est pas encore publié ne s'écrit plus ici : chaque tâche livrée dépose
+son entrée dans `changelog.d/`, un fichier par tâche, et `./journal` les
+assemble. Toutes les tâches écrivaient autrefois sur la même ligne de « À
+paraître » — deux branches ouvertes en même temps entraient donc en conflit sans
+rien avoir en commun, et la review dépensait un aller-retour de correction pour
+une ligne de journal. `changelog.d/LISEZ-MOI.md` raconte la mesure qui a mené là.
+
+    ./journal                 # ce que « À paraître » contiendra
+    ./journal publier 0.2.0   # assemble les fragments ici, et les retire
 
 Les numéros suivent [SemVer](https://semver.org/lang/fr/) et vivent dans le
 dépôt sous forme de **tag git annoté, préfixé** — `v0.1.0`. Il n'y a pas de
@@ -11,12 +19,22 @@ diverger.
 
 ## À paraître
 
-- L'image Docker est construite et publiée par la forge, sur tag de
-  version, et porte une attestation de provenance qui la relie au commit
-  dont elle sort. Chaque version publie ses références `0.1.0` et `0.1` à
-  côté de `latest` ; INSTALL.md dit comment épingler l'image par empreinte
-  pour décider soi-même quand on monte de version, et comment vérifier
-  d'une commande que celle qu'on a tirée vient bien de ce dépôt.
+- Les données ne sont plus lisibles par les autres comptes de la machine. Le
+  serveur crée `pb_data`, ses bases et ses sauvegardes en `0700` et `0600` :
+  `data.db` porte en clair de quoi fabriquer un jeton d'administration, et
+  n'importe quel compte local pouvait le lire. Une instance déjà installée garde
+  les droits de ses fichiers existants — `INSTALL.md` donne la commande de
+  rattrapage.
+- Le lancement d'un import en lot est plafonné : cinq fournées par minute et par
+  adresse. Au-delà, la page de saisie revient avec un message et la liste collée
+  encore dans le champ, au lieu du JSON brut d'une erreur d'API. Et une minute
+  dont tous les noms de fournée sont déjà pris n'est plus une panne : elle rend
+  la même page et invite à réessayer, là où elle rendait une erreur.
+- La création de comptes est plafonnée. Une même adresse dispose de dix
+  inscriptions par heure ; au-delà, la page d'inscription revient sous un
+  « Trop de tentatives d'inscription », sans qu'aucun compte de plus soit créé.
+  Une instance qui garde son inscription fermée continue de répondre comme
+  avant. Le plafond de la page de connexion, lui, ne bouge pas.
 - La source d'une recette se saisit et se corrige. Le formulaire porte un champ
   « Source — adresse de la page d'origine », prérempli par l'import et visible à
   la création comme à l'édition : une recette tapée à la main ou importée à

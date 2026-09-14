@@ -23,6 +23,10 @@ import (
 )
 
 func main() {
+	// Au tout premier geste, avant que quoi que ce soit puisse toucher le
+	// disque : ce que le serveur écrit dans pb_data ne regarde que lui.
+	resserreLesDroits()
+
 	// La sonde du HEALTHCHECK, traitée avant tout le reste. Enregistrée sur
 	// app.RootCmd, elle serait une commande connue de PocketBase, et
 	// app.Start() amorcerait l'application entière avant de la lancer : data.db
@@ -88,16 +92,19 @@ func main() {
 // middlewares qui fait tenir la session, et un test qui rebâtirait son propre
 // montage ne vérifierait que lui-même.
 func brancheLesRoutes(routeur *router.Router[*core.RequestEvent]) {
+	routeur.Bind(poseLesEntetesDeReponse())
 	brancheLaSession(routeur)
 
 	routeur.GET("/", pageAccueil)
 	routeur.GET("/recettes", pageListeRecettes)
 	routeur.GET("/recettes/{id}", pageRecette)
 	routeur.GET("/connexion", pageConnexion)
-	routeur.POST("/connexion", connexion).Bind(rendLeDepassementEnHTML())
-	routeur.POST("/deconnexion", deconnexion)
+	routeur.POST("/connexion", connexion).
+		Bind(rendLeDepassementEnHTML("patachooDepassementConnexion", rendLeDepassementDeConnexion))
+	routeur.POST("/deconnexion", deconnexion).Bind(exigeUneSession())
 	routeur.GET("/inscription", pageInscription)
-	routeur.POST("/inscription", inscription)
+	routeur.POST("/inscription", inscription).
+		Bind(rendLeDepassementEnHTML("patachooDepassementInscription", rendLeDepassementDInscription))
 	brancheLesRecettes(routeur)
 	brancheLesTags(routeur)
 	brancheLesCommentaires(routeur)

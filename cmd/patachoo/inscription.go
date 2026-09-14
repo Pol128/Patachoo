@@ -21,6 +21,36 @@ const (
 	messageConfirmationDifferente = "Les deux mots de passe ne correspondent pas."
 )
 
+// messageDebitDInscriptionDepasse est ce que voit celui qui a dépassé le
+// plafond.
+//
+// Il ne nomme ni compte ni courriel, même règle que messageDebitDepasse : le
+// plafond se compte par adresse, donc dire quoi que ce soit du courriel soumis
+// rouvrirait par un autre canal ce que messageEchecInscription ferme.
+//
+// Il annonce l'heure, et non la minute : la fenêtre de POST /inscription est
+// longue, et promettre une minute enverrait l'inscrit se cogner dix fois de
+// plus à la même porte.
+const messageDebitDInscriptionDepasse = "Trop de tentatives d'inscription. Réessayez dans une heure."
+
+// rendLeDepassementDInscription est ce que rendLeDepassementEnHTML rend quand
+// le plafond de POST /inscription tombe.
+//
+// Le réglage est relu ici, et c'est le point subtil : le limiteur compte les
+// requêtes que l'inscription soit ouverte ou non. Rendre la page au-delà du
+// seuil sur une instance fermée afficherait le formulaire que pageInscription
+// refuse d'afficher — le plafond révélerait ce que la porte close cache. Fermée,
+// le dépassement reste donc le 404 d'aujourd'hui.
+func rendLeDepassementDInscription(e *core.RequestEvent) error {
+	if !inscriptionOuverte(e.App) {
+		return apis.NewNotFoundError("", nil)
+	}
+	return rendreAvecStatut(e, http.StatusTooManyRequests, "inscription.html", "inscription-corps.html", &donneesPage{
+		Titre:   "Créer un compte — Patachoo",
+		Message: messageDebitDInscriptionDepasse,
+	})
+}
+
 // pageInscription sert le formulaire, quand le réglage l'autorise.
 //
 // Fermée, la page n'existe pas : un 404, et non un refus poli qui dirait qu'il
@@ -49,10 +79,10 @@ func inscription(e *core.RequestEvent) error {
 	// La liste blanche, et elle seule. Recopier le formulaire en vrac dans
 	// l'enregistrement laisserait un inscrit se poser verified à vrai, ou
 	// écrire tout champ ajouté plus tard à users sans que personne y repense.
-	courriel := strings.TrimSpace(e.Request.FormValue("email"))
-	motDePasse := e.Request.FormValue("password")
-	confirmation := e.Request.FormValue("passwordConfirm")
-	nom := strings.TrimSpace(e.Request.FormValue("name"))
+	courriel := strings.TrimSpace(e.Request.PostFormValue("email"))
+	motDePasse := e.Request.PostFormValue("password")
+	confirmation := e.Request.PostFormValue("passwordConfirm")
+	nom := strings.TrimSpace(e.Request.PostFormValue("name"))
 
 	if motDePasse != confirmation {
 		return echecDInscription(e, messageConfirmationDifferente)
