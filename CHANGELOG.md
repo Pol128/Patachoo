@@ -19,12 +19,6 @@ diverger.
 
 ## À paraître
 
-- La documentation dit comment exposer Patachoo hors de chez soi : une section
-  d'`INSTALL.md` donne le proxy inverse en HTTPS, la variante du compose qui
-  l'accompagne, et la façon de fermer `/_/` de l'extérieur. Le tableau des
-  chemins et le `README` avertissent désormais que `/_/` et `/api/` répondent
-  sur le même port que le carnet et ne doivent pas être publiés sans filtre
-  devant. Le chiffrement des réglages est aussi documenté pour Docker.
 - Les données ne sont plus lisibles par les autres comptes de la machine. Le
   serveur crée `pb_data`, ses bases et ses sauvegardes en `0700` et `0600` :
   `data.db` porte en clair de quoi fabriquer un jeton d'administration, et
