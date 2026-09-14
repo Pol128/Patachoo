@@ -1,0 +1,88 @@
+#!/bin/sh
+# Le journal des versions, assemblé à partir d'un fichier par tâche.
+#
+# Chaque tâche livrée dépose `changelog.d/PATA-xx.md` au lieu d'écrire dans
+# CHANGELOG.md : deux tâches ne touchent alors jamais le même fichier, et la
+# section « À paraître » cesse d'être le point de collision de toutes les
+# branches ouvertes. Le pourquoi est dans changelog.d/LISEZ-MOI.md.
+#
+# La contrepartie est que « À paraître » ne se remplit plus au fil de l'eau.
+# `./journal` sans argument la rembourse : il montre ce qu'elle contiendrait.
+#
+# Volontairement bête, comme ./verifie : ce script doit pouvoir être lu en
+# entier avant d'être exécuté.
+set -eu
+
+REPERTOIRE=changelog.d
+JOURNAL=CHANGELOG.md
+ENTETE='## À paraître'
+
+# Les fragments, du plus grand identifiant au plus petit — « la plus récente en
+# haut », comme les sections de versions. LISEZ-MOI.md n'en est pas un.
+fragments() {
+	find "$REPERTOIRE" -maxdepth 1 -name '*.md' ! -name 'LISEZ-MOI.md' 2>/dev/null |
+		sort -t- -k2 -n -r
+}
+
+apercu() {
+	vide=1
+	for f in $(fragments); do
+		cat "$f"
+		vide=0
+	done
+	if [ "$vide" = 1 ]; then
+		echo "(aucun fragment en attente)"
+	fi
+}
+
+# La ligne où commence « À paraître ». On ne devine pas : si l'en-tête a bougé,
+# mieux vaut échouer que réécrire le fichier au mauvais endroit.
+ligne_entete() {
+	n=$(grep -n "^$ENTETE\$" "$JOURNAL" | head -1 | cut -d: -f1)
+	if [ -z "$n" ]; then
+		echo "en-tête « $ENTETE » introuvable dans $JOURNAL" >&2
+		exit 1
+	fi
+	echo "$n"
+}
+
+case "${1:-apercu}" in
+apercu)
+	echo "→ fragments en attente"
+	apercu
+	;;
+publier)
+	version=${2:-}
+	if [ -z "$version" ]; then
+		echo "usage : ./journal publier <version>   (ex. 0.2.0)" >&2
+		exit 1
+	fi
+	if [ -z "$(fragments)" ]; then
+		echo "aucun fragment à publier" >&2
+		exit 1
+	fi
+
+	# Ne jamais publier pendant qu'une tâche est en vol : sa puce arriverait
+	# après coup et se rangerait sous une version déjà close. Le script ne peut
+	# pas le savoir — il le dit, et laisse trancher.
+	echo "Rappel : ne publier que si aucune tâche n'est en cours de livraison."
+
+	n=$(ligne_entete)
+	tmp=$(mktemp)
+	{
+		sed -n "1,$((n - 1))p" "$JOURNAL"
+		printf '%s\n\n_Rien pour l'\''instant._\n\n## v%s — %s\n\n' \
+			"$ENTETE" "$version" "$(date +%F)"
+		for f in $(fragments); do cat "$f"; done
+		sed -n "$((n + 2)),\$p" "$JOURNAL"
+	} >"$tmp"
+	mv "$tmp" "$JOURNAL"
+
+	for f in $(fragments); do git rm -q "$f" 2>/dev/null || rm "$f"; done
+	echo "✓ v$version écrite dans $JOURNAL, fragments retirés"
+	;;
+*)
+	echo "usage : ./journal [apercu] | ./journal publier <version>" >&2
+	exit 1
+	;;
+esac
