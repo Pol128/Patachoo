@@ -11,6 +11,7 @@ diverger.
 
 ## À paraître
 
+- Puce ajoutée par la tete.
 - Les données ne sont plus lisibles par les autres comptes de la machine. Le
   serveur crée `pb_data`, ses bases et ses sauvegardes en `0700` et `0600` :
   `data.db` porte en clair de quoi fabriquer un jeton d'administration, et
