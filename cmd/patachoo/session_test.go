@@ -66,12 +66,28 @@ func monteLeServeur(t *testing.T, app core.App, routesEnPlus ...func(*router.Rou
 // sonde est la route témoin : elle dit qui la chaîne d'authentification a
 // reconnu. Aucune page du produit ne le dirait aussi franchement.
 func sonde(routeur *router.Router[*core.RequestEvent]) {
-	routeur.GET("/sonde", func(e *core.RequestEvent) error {
-		if e.Auth == nil {
-			return e.String(http.StatusOK, "visiteur")
-		}
-		return e.String(http.StatusOK, e.Auth.Id)
-	})
+	routeur.GET("/sonde", ditQuiEstReconnu)
+}
+
+// sondeSousLAdministration monte la même route témoin sous le préfixe /_/.
+//
+// Une route à nous, et non celle de PocketBase : apis.NewRouter n'enregistre
+// pas /_/{path...}, que PocketBase pose dans son propre OnServe
+// (apis/serve.go). Sans route sous ce préfixe, le http.ServeMux rendrait 404
+// sans exécuter un seul middleware, et un test de ce qu'y fait la session
+// passerait sans rien prouver. Ce qui est en cause est de toute façon notre
+// décision sur le chemin, pas ce que PocketBase sert derrière.
+func sondeSousLAdministration(routeur *router.Router[*core.RequestEvent]) {
+	routeur.GET("/_/sonde", ditQuiEstReconnu)
+}
+
+// ditQuiEstReconnu est le gestionnaire commun aux deux sondes : le montage
+// change, la réponse non.
+func ditQuiEstReconnu(e *core.RequestEvent) error {
+	if e.Auth == nil {
+		return e.String(http.StatusOK, "visiteur")
+	}
+	return e.String(http.StatusOK, e.Auth.Id)
 }
 
 // sondeProtegee exige une session par le middleware de PocketBase, et non par
@@ -547,6 +563,187 @@ func TestUnCookieNeFaitPasRenouvelerLaSessionDeLEnTete(t *testing.T) {
 	if pose := cookieEventuelDe(rec); pose != nil {
 		t.Errorf("la réponse repose la session du navigateur sur un jeton qui n'est pas celui du cookie : le compte %q y a gagné la session de %q",
 			porteur.Id, autre.Id)
+	}
+}
+
+// --- La recopie s'arrête aux chemins du produit ----------------------------
+
+// Le cookie est HttpOnly, mais une XSS n'a pas besoin de le lire : un
+// fetch("/api/…", {credentials:"same-origin"}) depuis une page de l'instance
+// partait authentifié, parce que c'est le serveur qui faisait la recopie. Toute
+// XSS obtenait ainsi l'API REST complète du compte, là où elle n'avait que les
+// formulaires du produit.
+//
+// 404 et non 403 : la règle de vue des recettes est « @request.auth.id != "" »,
+// et PocketBase répond à un enregistrement que la règle ne couvre pas comme à
+// un enregistrement absent (apis/record_crud.go).
+func TestLeCookieSeulNouvrePasLaLectureDUneRecetteParLAPI(t *testing.T) {
+	app, mux := serveurDeTest(t)
+	compteParDefaut(t, app)
+	recette := creeRecette(t, app, recetteVoulue{titre: "Tarte aux pommes"})
+
+	cookie := cookieDe(t, seConnecte(t, mux, courrielDeTest, motDePasseDeTest))
+	rec := avecCookie(mux, http.MethodGet, "/api/collections/recipes/records/"+recette.Id, cookie)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("statut %d, attendu %d : le cookie a authentifié la lecture de la recette par l'API",
+			rec.Code, http.StatusNotFound)
+	}
+	if strings.Contains(rec.Body.String(), "Tarte aux pommes") {
+		t.Errorf("la réponse porte l'enregistrement :\n%s", rec.Body.String())
+	}
+}
+
+// Les opérations de compte sont l'autre moitié de ce que la recopie ouvrait :
+// auth-refresh prolonge la session, et la même porte mène au changement de
+// courriel.
+func TestLeCookieSeulNouvrePasLeRenouvellementDeJetonDeLAPI(t *testing.T) {
+	app, mux := serveurDeTest(t)
+	compteParDefaut(t, app)
+
+	cookie := cookieDe(t, seConnecte(t, mux, courrielDeTest, motDePasseDeTest))
+	rec := avecCookie(mux, http.MethodPost, "/api/collections/users/auth-refresh", cookie)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("statut %d, attendu %d : le cookie a authentifié le renouvellement de jeton de l'API",
+			rec.Code, http.StatusUnauthorized)
+	}
+}
+
+// L'autre sens, celui que la correction ne doit pas emporter : l'API reste
+// ouverte à qui porte son propre jeton. Le cookie n'était qu'une commodité pour
+// le navigateur, son retrait ne retire rien à un client d'API — y compris à un
+// client qui traînerait un cookie, cas d'un outil lancé depuis un navigateur
+// connecté.
+func TestUnClientDAPIEstServiSurLAPIAvecOuSansCookie(t *testing.T) {
+	app, mux := serveurDeTest(t)
+	compte := compteParDefaut(t, app)
+	recette := creeRecette(t, app, recetteVoulue{titre: "Tarte aux pommes"})
+
+	jeton, err := compte.NewAuthToken()
+	if err != nil {
+		t.Fatalf("émission du jeton : %v", err)
+	}
+	cookie := cookieDe(t, seConnecte(t, mux, courrielDeTest, motDePasseDeTest))
+	cible := "/api/collections/recipes/records/" + recette.Id
+
+	for _, cas := range []struct {
+		nom    string
+		cookie *http.Cookie
+	}{
+		{"sans cookie", nil},
+		{"avec cookie", cookie},
+	} {
+		t.Run(cas.nom, func(t *testing.T) {
+			rec := avecEnTete(mux, http.MethodGet, cible, jeton, cas.cookie)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("statut %d, attendu %d :\n%s", rec.Code, http.StatusOK, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), "Tarte aux pommes") {
+				t.Errorf("la réponse ne porte pas l'enregistrement :\n%s", rec.Body.String())
+			}
+		})
+	}
+}
+
+// La seule adresse /api/ que le navigateur demande, donc la seule régression
+// visible possible. Elle tient parce que le champ image est un FileField sans
+// Protected (migrations/1787093600_schema_initial.go) : fileApi.download
+// n'exige un jeton que sur un champ protégé, et la vignette est servie sans
+// authentification — avec ou sans cookie.
+//
+// L'adresse est celle que le produit fabrique lui-même, et non une chaîne
+// recopiée : c'est bien celle-là que la page met dans son <img>.
+func TestLaVignetteResteServieAvecLeCookieSeul(t *testing.T) {
+	app, mux := serveurDeTest(t)
+	compteParDefaut(t, app)
+	recette := creeRecette(t, app, recetteVoulue{titre: "Tarte aux pommes", avecImage: true})
+
+	cookie := cookieDe(t, seConnecte(t, mux, courrielDeTest, motDePasseDeTest))
+	rec := avecCookie(mux, http.MethodGet, urlDeLaMiniature(recette), cookie)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("statut %d, attendu %d : la vignette d'une recette illustrée n'est plus servie\n%s",
+			rec.Code, http.StatusOK, rec.Body.String())
+	}
+}
+
+// Le marqueur compte autant que l'en-tête. Laissé posé sur une requête d'API,
+// il ferait reposer par renouvelleLaSession un cookie de session de cinq jours
+// sur une réponse de l'API REST — un navigateur qui n'a rien demandé y gagnerait
+// une session fraîche, et la réponse d'une API porterait un Set-Cookie.
+//
+// Les deux préfixes, parce que la garde les nomme tous les deux : /_/ y figure
+// alors qu'un jeton users n'y donne rien, la règle étant sur le chemin et non
+// sur ce que le chemin sert.
+func TestAucuneRequeteDePocketBaseNeReposeLeCookieDeSession(t *testing.T) {
+	app, mux := serveurDeTest(t, sonde, sondeSousLAdministration)
+	compte := compteParDefaut(t, app)
+	recette := creeRecette(t, app, recetteVoulue{titre: "Tarte aux pommes"})
+
+	// Sous la mi-vie et renouvelable : tout ce que le renouvellement demande,
+	// pour qu'il ne reste plus que le chemin en cause.
+	court := jetonRenouvelableCourt(t, app, compte, time.Minute)
+	cookie := &http.Cookie{Name: nomCookieSession, Value: court}
+
+	// Le témoin. Sans lui, ce test passerait aussi sur un jeton que le
+	// renouvellement aurait refusé de toute façon, et ne prouverait rien.
+	if pose := cookieEventuelDe(avecCookie(mux, http.MethodGet, "/sonde", cookie)); pose == nil {
+		t.Fatalf("le jeton du témoin n'est pas renouvelé sur une page du produit : ce test ne prouve rien")
+	}
+
+	for _, cas := range []struct{ nom, cible string }{
+		{"l'API REST", "/api/collections/recipes/records/" + recette.Id},
+		{"l'interface d'administration", "/_/sonde"},
+	} {
+		t.Run(cas.nom, func(t *testing.T) {
+			rec := avecCookie(mux, http.MethodGet, cas.cible, cookie)
+
+			if poses := cookiesDeSession(rec); len(poses) != 0 {
+				t.Errorf("%d cookie(s) %q dans la réponse de %s, attendu 0 : %q",
+					len(poses), nomCookieSession, cas.cible, rec.Header().Values("Set-Cookie"))
+			}
+		})
+	}
+}
+
+// La variante que le cas du cookie seul ne couvre pas, et c'est le marqueur
+// qu'elle garde. Une requête d'API peut porter les deux : son propre en-tête
+// Authorization — compte B — et, le navigateur aidant, le cookie de session du
+// compte A. L'en-tête n'est alors pas récrit, puisqu'il est déjà là, et le
+// cookie seul ne prouve donc rien : seul le marqueur dirait encore que le
+// cookie a authentifié la requête. Posé, il ferait décider le renouvellement
+// sur le jeton de A et réémettre pour B — la réponse d'un appel d'API
+// reposerait la session du navigateur, sur un compte que son cookie ne
+// désignait pas.
+//
+// Ce test est né de la passe de sabotages de la DoD : une garde qui filtrerait
+// l'en-tête sans filtrer le marqueur passait tous les autres.
+func TestUneRequeteDAPIQuiPorteSonEnTeteNeReposePasLeCookie(t *testing.T) {
+	app, mux := serveurDeTest(t)
+	porteur := compteParDefaut(t, app)
+	autre := creeCompte(t, app, "autre@exemple.fr", "Autre")
+	recette := creeRecette(t, app, recetteVoulue{titre: "Tarte aux pommes"})
+
+	// Sous la mi-vie et renouvelable : tout ce que le renouvellement demande
+	// du jeton que le marqueur porterait.
+	court := jetonRenouvelableCourt(t, app, porteur, time.Minute)
+	jetonDeLAutre, err := autre.NewAuthToken()
+	if err != nil {
+		t.Fatalf("émission du jeton : %v", err)
+	}
+
+	rec := avecEnTete(mux, http.MethodGet, "/api/collections/recipes/records/"+recette.Id,
+		jetonDeLAutre, &http.Cookie{Name: nomCookieSession, Value: court})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("statut %d, attendu %d : le client d'API doit rester servi, c'est le cookie qui est en cause\n%s",
+			rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if poses := cookiesDeSession(rec); len(poses) != 0 {
+		t.Errorf("la réponse d'un appel d'API repose la session du navigateur : le compte %q y gagnerait celle de %q — %q",
+			porteur.Id, autre.Id, rec.Header().Values("Set-Cookie"))
 	}
 }
 
