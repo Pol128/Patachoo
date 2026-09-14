@@ -76,6 +76,23 @@ func sInscrit(t *testing.T, mux http.Handler, champs url.Values) *httptest.Respo
 	return rec
 }
 
+// sInscritParLaChaineDeRequete joue ce que le produit n'émet jamais : un POST
+// au corps vide, dont les champs sont dans l'URL.
+//
+// Le Content-Type reste celui d'un formulaire, comme dans sInscrit : sans lui,
+// un corps vide serait refusé avant d'atteindre la route, et le test prouverait
+// seulement qu'on ne sait pas poster.
+func sInscritParLaChaineDeRequete(t *testing.T, mux http.Handler, champs url.Values) *httptest.ResponseRecorder {
+	t.Helper()
+
+	req := httptest.NewRequest(http.MethodPost, "/inscription?"+champs.Encode(), nil)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
 func nombreDeComptes(t *testing.T, app core.App) int {
 	t.Helper()
 
@@ -270,6 +287,27 @@ func TestUneInscriptionSurUnCourrielDejaPrisEstRefusee(t *testing.T) {
 	}
 	if cookie := cookieEventuelDe(rec); cookie != nil {
 		t.Error("un cookie de session part d'une inscription refusée")
+	}
+}
+
+// Comme la connexion : le formulaire est posté, ses champs se lisent dans le
+// corps, et un mot de passe placé dans l'URL ne crée aucun compte.
+//
+// L'inscription y a le même intérêt, et une raison de plus : le mot de passe
+// qui atterrirait dans _logs y serait celui d'un compte tout neuf, donc encore
+// valable quand l'archive de la nuit le recopie.
+func TestLInscriptionNeLitPasSesChampsDansLaChaineDeRequete(t *testing.T) {
+	app, mux := serveurDeTest(t)
+	ouvreLInscription(t, app)
+	avant := nombreDeComptes(t, app)
+
+	rec := sInscritParLaChaineDeRequete(t, mux, champsDInscription())
+
+	if apres := nombreDeComptes(t, app); apres != avant {
+		t.Errorf("%d comptes après une inscription passée dans l'URL, attendu %d", apres, avant)
+	}
+	if cookie := cookieEventuelDe(rec); cookie != nil {
+		t.Errorf("une session a été ouverte depuis des champs passés dans l'URL : %q", cookie.Value)
 	}
 }
 
