@@ -19,12 +19,6 @@ diverger.
 
 ## À paraître
 
-- Le cookie de session n'ouvre plus que les pages du produit. Il
-  n'authentifie plus les adresses `/api/` ni `/_/` : une faille d'affichage
-  dans une page n'y gagne donc plus l'API REST du compte connecté, avec ses
-  collections entières et ses opérations de compte. Rien ne change à l'usage —
-  les pages, les formulaires et les vignettes des recettes se comportent comme
-  avant — et un client d'API qui porte son propre jeton reste servi.
 - Les données ne sont plus lisibles par les autres comptes de la machine. Le
   serveur crée `pb_data`, ses bases et ses sauvegardes en `0700` et `0600` :
   `data.db` porte en clair de quoi fabriquer un jeton d'administration, et
