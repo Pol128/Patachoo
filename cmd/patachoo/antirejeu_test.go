@@ -348,6 +348,49 @@ func TestUnCookieDejaPoseNestPasRemplace(t *testing.T) {
 	}
 }
 
+// --- La portée de la pose -------------------------------------------------
+
+// La pose s'arrête aux chemins qui ne servent aucun gabarit : /statique/,
+// /api/ et /_/. Le test est dans le sens du refus, et il tient à deux titres.
+//
+// Le premier est une fuite. Ce sont exactement les chemins que
+// cheminsSansCacheControl laisse délibérément mettre en cache. Une feuille de
+// style qui emporterait le Set-Cookie du jeton passerait par un cache partagé
+// réglé pour ignorer Set-Cookie sur les assets — proxy_ignore_headers
+// Set-Cookie, recette nginx courante —, qui rejouerait la même valeur à tous
+// les visiteurs. L'attaquant n'aurait plus qu'à demander /statique/patachoo.css,
+// lire le jeton dans l'en-tête et le recopier dans son champ caché : la
+// comparaison passerait, et le constat que cette tâche ferme serait rouvert.
+//
+// Le second est une nuisance. Une sous-ressource cross-site — <img
+// src="https://…/statique/patachoo.css"> — n'emporte pas le cookie sous
+// SameSite=Lax ; là où le navigateur accepte encore les cookies tiers, la pose
+// en tirerait un neuf et écraserait celui du navigateur, faisant tomber en 403
+// les formulaires que la victime avait ouverts.
+func TestLaPoseSArreteAuxCheminsQuiNeServentAucunGabarit(t *testing.T) {
+	_, mux := serveurDeTest(t)
+
+	for _, cas := range []struct {
+		nom   string
+		cible string
+	}{
+		{"un asset", "/statique/patachoo.css"},
+		{"une collection de l'API", "/api/collections/recipes/records"},
+		{"le panneau d'administration", "/_/"},
+	} {
+		t.Run(cas.nom, func(t *testing.T) {
+			rec := avecCookie(mux, http.MethodGet, cas.cible, nil)
+			if rec.Code == http.StatusNotFound {
+				t.Fatalf("%q ne mène nulle part : le test ne prouverait rien", cas.cible)
+			}
+			if cookie := cookieAntiRejeuDe(rec); cookie != nil {
+				t.Errorf("%q pose %s=%q — aucune de ces réponses n'a de champ caché à garnir, et toutes sont mises en cache",
+					cas.cible, nomDuCookieAttendu, cookie.Value)
+			}
+		})
+	}
+}
+
 // --- Le jeton dans les gabarits -------------------------------------------
 
 // jetonDuFormulaire extrait la valeur du champ caché d'une page, ou fait
