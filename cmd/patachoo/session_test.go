@@ -33,8 +33,19 @@ const (
 // le cookie est lu avant que pbLoadAuthToken ne cherche l'en-tête.
 func serveurDeTest(t *testing.T, routesEnPlus ...func(*router.Router[*core.RequestEvent])) (core.App, http.Handler) {
 	t.Helper()
+	return monteLeServeur(t, baseNeuveAvec(t, analyseurDeTest(t)), routesEnPlus...)
+}
 
-	app := baseNeuveAvec(t, analyseurDeTest(t))
+// serveurDeTestAuCoutBcryptReel est le même serveur, sur une base qui garde le
+// facteur bcrypt de PocketBase. À ne prendre que si le temps de hachage est
+// lui-même le sujet du test — il coûte ~200 ms de plus par compte connecté.
+func serveurDeTestAuCoutBcryptReel(t *testing.T, routesEnPlus ...func(*router.Router[*core.RequestEvent])) (core.App, http.Handler) {
+	t.Helper()
+	return monteLeServeur(t, baseNeuveAuCoutBcryptReel(t, analyseurDeTest(t)), routesEnPlus...)
+}
+
+func monteLeServeur(t *testing.T, app core.App, routesEnPlus ...func(*router.Router[*core.RequestEvent])) (core.App, http.Handler) {
+	t.Helper()
 
 	routeur, err := apis.NewRouter(app)
 	if err != nil {
@@ -192,6 +203,25 @@ func seConnecteDepuis(t *testing.T, mux http.Handler, ip, courriel, motDePasse s
 
 	champs := url.Values{"courriel": {courriel}, "mot-de-passe": {motDePasse}}
 	req := httptest.NewRequest(http.MethodPost, "/connexion", strings.NewReader(champs.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.RemoteAddr = net.JoinHostPort(ip, "1234")
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+// seConnecteParLaChaineDeRequete joue ce que le produit n'émet jamais : un POST
+// au corps vide, dont les identifiants sont dans l'URL.
+//
+// Le Content-Type reste celui d'un formulaire : sans lui, un corps vide serait
+// refusé avant d'atteindre la route, et le test prouverait seulement qu'on ne
+// sait pas poster.
+func seConnecteParLaChaineDeRequete(t *testing.T, mux http.Handler, ip, courriel, motDePasse string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	champs := url.Values{"courriel": {courriel}, "mot-de-passe": {motDePasse}}
+	req := httptest.NewRequest(http.MethodPost, "/connexion?"+champs.Encode(), nil)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.RemoteAddr = net.JoinHostPort(ip, "1234")
 
@@ -591,7 +621,11 @@ func TestUnEchecDeConnexionNeDitPasQuelsCourrielsExistent(t *testing.T) {
 func TestUnEchecDeConnexionNeDitPasParLeTempsQuelsCourrielsExistent(t *testing.T) {
 	const mesures = 9
 
-	app, mux := serveurDeTest(t)
+	// Au coût réel, et c'est tout le sujet : la fixture brade le facteur bcrypt
+	// pour les 443 autres tests du paquet, or c'est justement le temps de ce
+	// hachage que ce test-ci compare. Sous un facteur bradé, son garde-fou des
+	// 5 ms ci-dessous refuserait de conclure — ce qu'il doit faire.
+	app, mux := serveurDeTestAuCoutBcryptReel(t)
 	compteParDefaut(t, app)
 
 	connu := plusCourtEchecDeConnexion(t, mux, courrielDeTest, mesures)
@@ -632,6 +666,36 @@ func TestUneConnexionEstRefuseeParLaRegleDAuthentification(t *testing.T) {
 
 	if cookie := cookieEventuelDe(rec); cookie != nil {
 		t.Fatalf("une session a été ouverte pour un compte que la règle refuse : %q", cookie.Value)
+	}
+	if !strings.Contains(rec.Body.String(), messageEchecConnexion) {
+		t.Errorf("le refus n'annonce pas l'échec :\n%s", rec.Body.String())
+	}
+}
+
+// Le formulaire est posté : ses champs se lisent dans le corps, et nulle part
+// ailleurs. Un mot de passe placé dans la chaîne de requête n'ouvre donc pas de
+// session.
+//
+// La distinction n'est pas de style. FormValue appelle ParseForm, qui fusionne
+// la chaîne de requête avec le corps ; PostFormValue s'en tient au corps. Tant
+// que la route accepte la première, l'URL entière — mot de passe compris — part
+// dans _logs, que la rotation garde cinq jours et que chaque sauvegarde
+// automatique de ces cinq nuits recopie, puis dans l'historique du navigateur,
+// dans le Referer de la page qui suit la redirection, et dans le journal du
+// proxy inverse. Un secret devenu enregistrement ne se rattrape pas après coup.
+//
+// Aucun gabarit n'émet ce formulaire en GET : personne dans le produit ne
+// fabrique une telle URL. Mais une route qui l'accepte finit par en recevoir —
+// du premier essai au curl, du premier script de supervision, du premier « lien
+// de connexion rapide » collé dans une conversation.
+func TestLaConnexionNeLitPasLesIdentifiantsDansLaChaineDeRequete(t *testing.T) {
+	app, mux := serveurDeTest(t)
+	compteParDefaut(t, app)
+
+	rec := seConnecteParLaChaineDeRequete(t, mux, "203.0.113.40", courrielDeTest, motDePasseDeTest)
+
+	if cookie := cookieEventuelDe(rec); cookie != nil {
+		t.Fatalf("une session a été ouverte depuis des identifiants passés dans l'URL : %q", cookie.Value)
 	}
 	if !strings.Contains(rec.Body.String(), messageEchecConnexion) {
 		t.Errorf("le refus n'annonce pas l'échec :\n%s", rec.Body.String())
@@ -733,6 +797,57 @@ func TestLaDeconnexionSousLaMiVieNeRenvoieQueLEffacement(t *testing.T) {
 		t.Errorf("Max-Age %d, attendu négatif", poses[0].MaxAge)
 	}
 	attributsDeSession(t, poses[0])
+}
+
+// Une page tierce peut soumettre un formulaire vers POST /deconnexion, mais
+// SameSite=Lax prive cette requête du cookie de la victime : elle arrive en
+// visiteur. Le handler d'effacement ne doit alors jamais être atteint, sans
+// quoi la réponse déconnecte quand même — le navigateur applique le
+// Set-Cookie à son jar de premier niveau, quelle que soit la page qui a
+// déclenché l'envoi.
+//
+// Le cookie présent mais invalide relève du même cas : le middleware de
+// session laisse e.Auth nil, la requête est traitée en visiteur, et le jeton
+// déjà mort expire de lui-même.
+func TestLaDeconnexionSansSessionNEffaceRien(t *testing.T) {
+	app, mux := serveurDeTest(t, sonde)
+	compte := compteParDefaut(t, app)
+
+	jeton, err := compte.NewAuthToken()
+	if err != nil {
+		t.Fatalf("émission du jeton : %v", err)
+	}
+	// Renouveler la clé du compte invalide la signature du jeton émis : c'est
+	// le cas « jeton mort » sans avoir à en forger un à la main.
+	compte.RefreshTokenKey()
+	if err := app.Save(compte); err != nil {
+		t.Fatalf("renouvellement de la clé : %v", err)
+	}
+
+	cas := []struct {
+		nom    string
+		cookie *http.Cookie
+	}{
+		{"sans cookie", nil},
+		{"cookie de session invalide", &http.Cookie{Name: nomCookieSession, Value: jeton}},
+	}
+
+	for _, c := range cas {
+		t.Run(c.nom, func(t *testing.T) {
+			rec := avecCookie(mux, http.MethodPost, "/deconnexion", c.cookie)
+
+			if rec.Code != http.StatusSeeOther {
+				t.Errorf("statut %d, attendu %d", rec.Code, http.StatusSeeOther)
+			}
+			if lieu := rec.Header().Get("Location"); lieu != "/connexion" {
+				t.Errorf("Location %q, attendue %q", lieu, "/connexion")
+			}
+			if poses := cookiesDeSession(rec); len(poses) != 0 {
+				t.Errorf("%d cookies %q dans la réponse, attendu 0 : %q",
+					len(poses), nomCookieSession, rec.Header().Values("Set-Cookie"))
+			}
+		})
+	}
 }
 
 // --- Les priorités de middleware ------------------------------------------
