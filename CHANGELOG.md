@@ -19,10 +19,6 @@ diverger.
 
 ## À paraître
 
-- Une note reste signée du compte qui l'a écrite, et rattachée à la recette sous
-  laquelle elle a été écrite. L'API acceptait qu'un compte retourne sa propre
-  note au nom d'un autre, ou la déplace sous une autre recette : les deux champs
-  sont désormais figés à la modification. Le carnet et ses pages ne changent pas.
 - Les données ne sont plus lisibles par les autres comptes de la machine. Le
   serveur crée `pb_data`, ses bases et ses sauvegardes en `0700` et `0600` :
   `data.db` porte en clair de quoi fabriquer un jeton d'administration, et
