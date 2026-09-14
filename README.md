@@ -15,6 +15,14 @@ go run ./cmd/patachoo serve         # http://127.0.0.1:8090
 go run ./cmd/patachoo superuser upsert vous@exemple.fr 'motdepasse'
 ```
 
+Ce mot de passe est un argument de ligne de commande : `ps` le montre à tout
+utilisateur de la machine le temps de la commande, et il reste ensuite en clair
+dans l'historique du shell. Au premier démarrage, les logs affichent une URL qui
+crée ce compte depuis le navigateur, sans rien écrire sur la ligne de commande —
+voir [« Créer le premier
+superutilisateur »](INSTALL.md#créer-le-premier-superutilisateur) dans
+`INSTALL.md`, qui donne aussi les remèdes quand la commande reste nécessaire.
+
 L'interface d'administration répond sur `/_/`, l'API REST sur `/api/` — sur le
 **même port que le site**, donc sur les mêmes interfaces que lui. Ni l'une ni
 l'autre ne doit être joignable depuis l'Internet sans filtre devant : voir
