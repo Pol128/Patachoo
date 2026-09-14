@@ -9,10 +9,18 @@
 name: verifie
 
 on:
-  # Toutes les branches : « sur chaque poussée » pris au mot. Une branche qui
-  # porte une demande de fusion déclenche donc deux fois ; c'est accepté, le
-  # dépôt est petit.
+  # `main` seulement, et non plus toutes les branches. Le double déclenchement
+  # était assumé tant que les runners étaient ceux de GitHub, lancés en
+  # parallèle et sans file : une branche portant une demande de fusion payait
+  # deux jobs, et personne n'attendait. Depuis la bascule sur un runner
+  # auto-hébergé, les jobs se suivent au lieu de se croiser, et ce doublon coûte
+  # la moitié de la capacité de la machine — 38 minutes par job, mesurées.
+  #
+  # Ce qu'on perd : une branche poussée sans demande de fusion n'est plus
+  # vérifiée. En pratique la boucle d'agents en ouvre une systématiquement, et
+  # `pull_request` couvre alors le même commit.
   push:
+    branches: [main]
   pull_request:
     branches: [main]
   # Et une fois par semaine sans que personne n'ait rien poussé : `./verifie`
