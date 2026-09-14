@@ -1,0 +1,19 @@
+# Essai jetable : le runner auto-hébergé prend-il un job malgré le plafond de
+# dépenses GitHub Actions ? Ce fichier ne vit que sur la branche d'essai et ne
+# se déclenche que sur elle. À supprimer une fois la réponse obtenue.
+name: essai-runner
+
+on:
+  push:
+    branches: [essai/runner-autoheberge]
+
+jobs:
+  essai:
+    runs-on: [self-hosted, Linux, X64]
+    permissions:
+      contents: read
+    steps:
+      - run: |
+          echo "Le runner auto-hébergé a pris le job."
+          uname -a
+          echo "cœurs : $(nproc)"
