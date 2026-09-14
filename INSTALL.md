@@ -138,8 +138,8 @@ services:
       - "--https=0.0.0.0:8443"
       - "--dir=/pb_data"
     healthcheck:
-      # Voir plus bas : la sonde de l'image ne sait pas interroger une instance
-      # qui sert en HTTPS.
+      # Voir plus bas : la sonde de l'image interroge 127.0.0.1:8090, que ce
+      # déploiement-ci ne sert pas.
       disable: true
     volumes:
       - pb_data:/pb_data
@@ -166,12 +166,24 @@ ancien, sysctl durci). Écouter au-dessus de 1024 dans le conteneur marche
 partout.
 
 **La sonde de santé de l'image est désactivée**, et c'est une perte assumée.
-Quand `--https` est actif, l'écoute en clair ne sert plus l'application : elle ne
-répond qu'aux validations ACME et redirige tout le reste. `patachoo healthcheck`
-fait un `GET` en clair sur `/api/health` ; il reçoit la redirection, la suit vers
-le port 443 du conteneur où rien n'écoute, et échoue. Laissée en place, la sonde
-marquerait `unhealthy` un conteneur qui sert parfaitement. La surveillance se
-fait alors depuis l'extérieur, sur `https://patachoo.exemple.fr/api/health`.
+Le `HEALTHCHECK` de l'image lance `/patachoo healthcheck` **sans argument**, et
+cette sous-commande interroge alors son adresse par défaut, `127.0.0.1:8090`
+(`adresseSanteDefaut`, `cmd/patachoo/sante.go`). Or ce `docker-compose.yml`
+déplace les écoutes du conteneur sur 8080 et 8443 : plus rien ne sert 8090, et
+la sonde échoue sur un refus de connexion — sans jamais rien recevoir de
+l'application.
+
+La repointer sur l'écoute en clair — `healthcheck --http=127.0.0.1:8080` — ne
+réglerait rien non plus. Quand `--https` est actif, cette écoute-là ne sert plus
+l'application : elle répond aux validations ACME et redirige tout le reste. La
+sonde n'y récolterait qu'un `302` vers `https://127.0.0.1:443` — le gestionnaire
+ACME réécrit le port à 443 plutôt que de le retirer —, qu'elle suivrait pour
+échouer sur un second refus de connexion, le TLS du conteneur étant sur 8443.
+Vérifié en rejouant la sonde contre ce gestionnaire.
+
+Laissée en place, la sonde marquerait donc `unhealthy` un conteneur qui sert
+parfaitement. La surveillance se fait alors depuis l'extérieur, sur
+`https://patachoo.exemple.fr/api/health`.
 
 #### 3. Sans nom de domaine : `http://localhost`, tunnel SSH compris
 
@@ -304,8 +316,9 @@ interroge `/api/health`. C'est ce que le `FROM scratch` impose : sans shell, il
 n'y a ni `curl` ni `wget` à appeler.
 
 Une seule exception : le déploiement où **Patachoo termine le TLS lui-même**. La
-sonde interroge l'application en clair, et cette écoute-là ne sert plus que les
-redirections — elle ne peut donc plus répondre. Le `docker-compose.yml` de
+sonde vise `127.0.0.1:8090` par défaut, et ce déploiement-là déplace les écoutes
+du conteneur sur 8080 et 8443 — plus rien ne répond sur 8090. Le
+`docker-compose.yml` de
 « Hors de la machine locale : il faut du TLS » la désactive pour cette raison,
 et dit par quoi la remplacer.
 
