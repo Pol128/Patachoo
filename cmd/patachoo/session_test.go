@@ -33,8 +33,19 @@ const (
 // le cookie est lu avant que pbLoadAuthToken ne cherche l'en-tête.
 func serveurDeTest(t *testing.T, routesEnPlus ...func(*router.Router[*core.RequestEvent])) (core.App, http.Handler) {
 	t.Helper()
+	return monteLeServeur(t, baseNeuveAvec(t, analyseurDeTest(t)), routesEnPlus...)
+}
 
-	app := baseNeuveAvec(t, analyseurDeTest(t))
+// serveurDeTestAuCoutBcryptReel est le même serveur, sur une base qui garde le
+// facteur bcrypt de PocketBase. À ne prendre que si le temps de hachage est
+// lui-même le sujet du test — il coûte ~200 ms de plus par compte connecté.
+func serveurDeTestAuCoutBcryptReel(t *testing.T, routesEnPlus ...func(*router.Router[*core.RequestEvent])) (core.App, http.Handler) {
+	t.Helper()
+	return monteLeServeur(t, baseNeuveAuCoutBcryptReel(t, analyseurDeTest(t)), routesEnPlus...)
+}
+
+func monteLeServeur(t *testing.T, app core.App, routesEnPlus ...func(*router.Router[*core.RequestEvent])) (core.App, http.Handler) {
+	t.Helper()
 
 	routeur, err := apis.NewRouter(app)
 	if err != nil {
@@ -591,7 +602,11 @@ func TestUnEchecDeConnexionNeDitPasQuelsCourrielsExistent(t *testing.T) {
 func TestUnEchecDeConnexionNeDitPasParLeTempsQuelsCourrielsExistent(t *testing.T) {
 	const mesures = 9
 
-	app, mux := serveurDeTest(t)
+	// Au coût réel, et c'est tout le sujet : la fixture brade le facteur bcrypt
+	// pour les 443 autres tests du paquet, or c'est justement le temps de ce
+	// hachage que ce test-ci compare. Sous un facteur bradé, son garde-fou des
+	// 5 ms ci-dessous refuserait de conclure — ce qu'il doit faire.
+	app, mux := serveurDeTestAuCoutBcryptReel(t)
 	compteParDefaut(t, app)
 
 	connu := plusCourtEchecDeConnexion(t, mux, courrielDeTest, mesures)

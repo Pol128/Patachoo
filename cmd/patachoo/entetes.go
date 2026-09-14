@@ -8,7 +8,7 @@ import (
 )
 
 // Les en-têtes de réponse que Patachoo pose lui-même, en plus de ceux que
-// PocketBase pose déjà (apis/middlewares.go, securityHeaders).
+// PocketBase pose déjà (apis/middlewares.go, pbSecurityHeaders).
 
 // cacheControlDesPages interdit à tout cache — partagé comme privé — de
 // conserver une réponse rendue pour un compte.
@@ -53,17 +53,40 @@ func porteLeCacheControl(chemin string) bool {
 	return true
 }
 
-// poseLesEntetesDeReponse écrit nos en-têtes avant que le gestionnaire n'écrive
-// la réponse.
+// poseLesEntetesDeReponse ajoute nos en-têtes de sécurité à toute réponse.
 //
-// La priorité par défaut suffit : les middlewares de PocketBase portent des
-// priorités négatives (apis/middlewares.go) et s'exécutent donc avant, et un
-// middleware s'exécute de toute façon avant le gestionnaire qui écrit le corps
-// — une redirection comprise, qui n'en écrit aucun.
+// Lié par routeur.Bind, il atteint toute réponse sans qu'aucune route ait à
+// être énumérée. La priorité par défaut suffit : les middlewares de PocketBase
+// portent toutes des priorités négatives (apis/middlewares.go), celui-ci passe
+// donc après eux — et un middleware s'exécute de toute façon avant le
+// gestionnaire qui écrit le corps, une redirection comprise, qui n'en écrit
+// aucun.
+//
+// Il s'ajoute à pbSecurityHeaders, il ne le remplace pas : les trois en-têtes
+// que PocketBase pose restent sur la réponse.
+//
+// Les deux en-têtes n'ont pas la même portée, et c'est voulu :
+//
+// Referrer-Policy: no-referrer — sur tout, y compris l'API et le panneau /_/.
+// Rien ici ne lit le Referer, ni le serveur ni les pages : le plus strict ne
+// coûte rien. Ce qu'il retient est l'adresse de l'instance, que le navigateur
+// présenterait autrement au site dont il va chercher l'aperçu de l'image
+// importée. Pour une installation auto-hébergée sur un domaine privé, c'est la
+// révélation de son existence.
+//
+// Deux effets assumés : le champ referer du journal d'activité de PocketBase
+// devient vide — c'est un champ de diagnostic, l'URL demandée y est déjà —, et
+// l'aperçu d'une image distante cesse de s'afficher chez les sites qui
+// refusent une requête sans Referer. C'est le prix de la mesure.
+//
+// Cache-Control: private, no-store — sur nos pages et nos fragments
+// seulement, cf. cheminsSansCacheControl : ce qui est public et immuable gagne
+// au contraire à rester mis en cache.
 func poseLesEntetesDeReponse() *hook.Handler[*core.RequestEvent] {
 	return &hook.Handler[*core.RequestEvent]{
 		Id: "patachooEntetesDeReponse",
 		Func: func(e *core.RequestEvent) error {
+			e.Response.Header().Set("Referrer-Policy", "no-referrer")
 			if porteLeCacheControl(e.Request.URL.Path) {
 				e.Response.Header().Set("Cache-Control", cacheControlDesPages)
 			}

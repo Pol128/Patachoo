@@ -2,8 +2,64 @@ package main
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"testing"
 )
+
+// --- Referrer-Policy ------------------------------------------------------
+
+// Une page de Patachoo fait partir des requêtes vers des sites tiers — l'aperçu
+// de l'image chez le site importé, le lien du pied vers les versions publiées.
+// Sans en-tête, l'adresse de l'instance part avec elles, au bon vouloir du
+// défaut du navigateur. Le défaut d'un navigateur n'est pas une propriété du
+// produit : c'est la réponse qui doit le dire.
+//
+// Le montage complet de serveurDeTest, et non un RequestEvent nu : ce qui est
+// en jeu est qu'un middleware lié au routeur atteigne bien la réponse.
+func TestLesReponsesPortentUneReferrerPolicyNoReferrer(t *testing.T) {
+	app, mux, cookie := serveurConnecte(t)
+	recette := recetteEnBase(t, app, nil)
+
+	for _, cas := range reponsesDeTest(mux, cookie, recette.Id) {
+		if valeur := cas.rec.Header().Get("Referrer-Policy"); valeur != "no-referrer" {
+			t.Errorf("%s : Referrer-Policy vaut %q, attendu %q", cas.nom, valeur, "no-referrer")
+		}
+	}
+}
+
+// Le middleware s'ajoute à celui de PocketBase, il ne le remplace pas : les
+// trois en-têtes que pbSecurityHeaders pose restent sur la réponse. Leurs
+// valeurs appartiennent à PocketBase et peuvent changer d'une version à
+// l'autre ; leur présence, elle, nous concerne.
+func TestLesReponsesGardentLesEntetesDeSecuriteDePocketBase(t *testing.T) {
+	app, mux, cookie := serveurConnecte(t)
+	recette := recetteEnBase(t, app, nil)
+
+	for _, cas := range reponsesDeTest(mux, cookie, recette.Id) {
+		for _, entete := range []string{"X-Content-Type-Options", "X-Frame-Options", "X-XSS-Protection"} {
+			if cas.rec.Header().Get(entete) == "" {
+				t.Errorf("%s : %s absent des en-têtes de la réponse", cas.nom, entete)
+			}
+		}
+	}
+}
+
+// reponsesDeTest joue les deux pages témoins : celle qu'un visiteur obtient
+// sans compte, et celle d'où part l'aperçu de l'image distante.
+func reponsesDeTest(mux http.Handler, cookie *http.Cookie, idRecette string) []struct {
+	nom string
+	rec *httptest.ResponseRecorder
+} {
+	return []struct {
+		nom string
+		rec *httptest.ResponseRecorder
+	}{
+		{"GET /connexion", avecCookie(mux, http.MethodGet, "/connexion", nil)},
+		{"GET /recettes/{id}", fiche(mux, cookie, idRecette)},
+	}
+}
+
+// --- Cache-Control --------------------------------------------------------
 
 // TestEntetesDeCache monte le serveur complet — le même que les tests de
 // session — et lit le Cache-Control de chaque famille de route.
@@ -89,21 +145,6 @@ func TestEntetesDeCache(t *testing.T) {
 		}
 		if pose := rec.Header().Get("Cache-Control"); pose != "" {
 			t.Errorf("Cache-Control %q, attendu aucun", pose)
-		}
-	})
-
-	// Le nouveau middleware s'ajoute à securityHeaders() de PocketBase, il ne
-	// le remplace pas.
-	t.Run("les en-têtes de sécurité de PocketBase sont toujours là", func(t *testing.T) {
-		rec := demande(mux, "/recettes/"+recette.Id, cookie, nil)
-		for entete, attendu := range map[string]string{
-			"X-Content-Type-Options": "nosniff",
-			"X-Frame-Options":        "SAMEORIGIN",
-			"X-Xss-Protection":       "1; mode=block",
-		} {
-			if pose := rec.Header().Get(entete); pose != attendu {
-				t.Errorf("%s %q, attendu %q", entete, pose, attendu)
-			}
 		}
 	})
 }
