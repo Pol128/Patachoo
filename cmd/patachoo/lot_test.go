@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -54,11 +56,25 @@ func (p transportPiege) RoundTrip(r *http.Request) (*http.Response, error) {
 	return nil, errors.New("piège")
 }
 
-// soumetLeLot poste la saisie sur la route de lancement.
+// soumetLeLot poste la saisie sur la route de lancement, depuis l'adresse que
+// httptest donne par défaut.
 func soumetLeLot(mux http.Handler, cookie *http.Cookie, saisie string) *httptest.ResponseRecorder {
+	return soumetLeLotDepuis(mux, "", cookie, saisie)
+}
+
+// soumetLeLotDepuis poste la même chose en fixant l'adresse du client.
+//
+// Le plafond de débit se compte par adresse (checkRateLimit fait
+// key := e.RealIP()), et httptest.NewRequest en pose une seule pour tout le
+// monde : sans ce paramètre, deux tests ne peuvent pas se distinguer et un seul
+// ne peut pas jouer deux clients.
+func soumetLeLotDepuis(mux http.Handler, ip string, cookie *http.Cookie, saisie string) *httptest.ResponseRecorder {
 	champs := url.Values{"urls": {saisie}}
 	req := httptest.NewRequest(http.MethodPost, cheminDuLot, strings.NewReader(champs.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if ip != "" {
+		req.RemoteAddr = net.JoinHostPort(ip, "1234")
+	}
 	if cookie != nil {
 		req.AddCookie(cookie)
 	}
@@ -574,5 +590,333 @@ func occupeLesNomsDeLaMinute(t *testing.T, app core.App, base string, jusqua int
 		if err := app.Save(tag); err != nil {
 			t.Fatalf("création du tag %q : %v", nom, err)
 		}
+	}
+}
+
+// --- Le plafond de débit ---------------------------------------------------
+
+// seuilDuLot est le nombre de POST /recettes/importer/lot qu'une même adresse
+// a le droit de jouer dans la fenêtre.
+//
+// Écrit en clair, et non relu depuis la migration : un test qui compare une
+// constante à elle-même ne vérifie que lui-même. C'est ce chiffre-là que
+// DOD.md §3 demande de garder sous test — « une valeur codée sans test finit
+// augmentée temporairement ».
+const seuilDuLot = 5
+
+// Le lancement d'un lot écrit jusqu'à 500 lignes import_urls et un tag visible
+// par tous les comptes, et rien ne bornait le nombre de fournées : la sixième
+// de la minute est refusée, la cinquième ne l'est pas.
+func TestLeSixiemeLotDUneMinuteEstRefuse(t *testing.T) {
+	app, mux, cookie := atelierDeLot(t)
+
+	const ip = "203.0.113.20"
+
+	for fournee := 1; fournee <= seuilDuLot; fournee++ {
+		rec := soumetLeLotDepuis(mux, ip, cookie, strings.Join(urlsDeTest(2), "\n"))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("fournée %d : statut %d, attendu %d — le plafond tombe avant le seuil",
+				fournee, rec.Code, http.StatusOK)
+		}
+	}
+
+	lotsAvant := compte(t, app, "imports")
+	lignesAvant := compte(t, app, "import_urls")
+	tagsAvant := compte(t, app, "tags")
+
+	rec := soumetLeLotDepuis(mux, ip, cookie, strings.Join(urlsDeTest(2), "\n"))
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("fournée %d : statut %d, attendu %d — le lancement d'un lot n'a pas de plafond",
+			seuilDuLot+1, rec.Code, http.StatusTooManyRequests)
+	}
+
+	// Le refus vaut par ce qu'il n'écrit pas : un 429 rendu après la
+	// transaction ne protégerait ni le disque, ni la liste des tags.
+	if n := compte(t, app, "imports"); n != lotsAvant {
+		t.Errorf("%d enregistrements imports après le refus, attendu %d", n, lotsAvant)
+	}
+	if n := compte(t, app, "import_urls"); n != lignesAvant {
+		t.Errorf("%d lignes import_urls après le refus, attendu %d", n, lignesAvant)
+	}
+	if n := compte(t, app, "tags"); n != tagsAvant {
+		t.Errorf("%d tags après le refus, attendu %d", n, tagsAvant)
+	}
+}
+
+// Le dépassement de PocketBase sort en JSON, écrit par router.ErrorHandler.
+// Or la route du lot rend des pages : celui qui a collé une liste verrait du
+// JSON brut à la place de la sienne — et sa liste serait perdue avec.
+func TestLeDepassementDuLotRendLaPageDeSaisieEnHTML(t *testing.T) {
+	_, mux, cookie := atelierDeLot(t)
+
+	lignes := urlsDeTest(3)
+	rec := epuiseLePlafondDuLot(t, mux, cookie, "203.0.113.21", strings.Join(lignes, "\n"))
+
+	if typeDeContenu := rec.Header().Get("Content-Type"); !strings.Contains(typeDeContenu, "text/html") {
+		t.Errorf("Content-Type %q, attendu du text/html : le dépassement est rendu en JSON", typeDeContenu)
+	}
+	exigeContient(t, rec.Body.String(), `name="urls"`, `role="alert"`)
+
+	if message := entreBalises(rec.Body.String(), `<p class="erreur" role="alert">`, "</p>"); strings.TrimSpace(message) == "" {
+		t.Errorf("aucun message dans la page de dépassement :\n%s", rec.Body.String())
+	}
+
+	// « Un lot refusé ne doit pas se retaper » vaut aussi quand c'est le
+	// plafond qui refuse.
+	champ := entreBalises(rec.Body.String(), `name="urls"`, "</textarea>")
+	for _, ligne := range lignes {
+		if !strings.Contains(champ, html.EscapeString(ligne)) {
+			t.Errorf("la ligne %q n'est pas reproposée dans le champ de saisie %q", ligne, champ)
+		}
+	}
+}
+
+// L'étiquette de la règle porte la méthode, et pas seulement le chemin : la
+// page de saisie n'écrit rien, et la plafonner mettrait le formulaire hors de
+// portée de celui qui vient de dépasser le quota — précisément la page qu'il
+// doit voir.
+func TestLaPageDeSaisieDuLotNEstPasPlafonnee(t *testing.T) {
+	_, mux, cookie := atelierDeLot(t)
+
+	const ip = "203.0.113.22"
+
+	for appel := 1; appel <= 10; appel++ {
+		rec := demandeDepuis(mux, ip, cheminDuLot, cookie)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("appel %d de la page de saisie : statut %d, attendu %d", appel, rec.Code, http.StatusOK)
+		}
+	}
+}
+
+// Le compteur est l'adresse du client, quelle que soit l'audience de la règle.
+// Un plafond qui enfermerait tout le monde dès qu'une adresse le dépasse
+// remplacerait l'engorgement par un déni de service, ce que le constat
+// reproche déjà au plafond accidentel des noms de tag.
+func TestLePlafondDuLotNEnfermePasLesAutresAdresses(t *testing.T) {
+	app, mux, cookie := atelierDeLot(t)
+
+	epuiseLePlafondDuLot(t, mux, cookie, "203.0.113.23", strings.Join(urlsDeTest(2), "\n"))
+
+	lotsAvant := compte(t, app, "imports")
+	rec := soumetLeLotDepuis(mux, "203.0.113.24", cookie, strings.Join(urlsDeTest(2), "\n"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("statut %d pour une seconde adresse, attendu %d : le plafond d'une adresse ferme la porte aux autres",
+			rec.Code, http.StatusOK)
+	}
+	if n := compte(t, app, "imports"); n != lotsAvant+1 {
+		t.Errorf("%d enregistrements imports après le lot de la seconde adresse, attendu %d", n, lotsAvant+1)
+	}
+}
+
+// epuiseLePlafondDuLot joue une fournée de trop depuis la même adresse et rend
+// la réponse au dépassement.
+func epuiseLePlafondDuLot(t *testing.T, mux http.Handler, cookie *http.Cookie, ip, saisie string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	var rec *httptest.ResponseRecorder
+	for fournee := 1; fournee <= seuilDuLot+1; fournee++ {
+		rec = soumetLeLotDepuis(mux, ip, cookie, saisie)
+	}
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("statut %d après %d fournées depuis %s, attendu %d",
+			rec.Code, seuilDuLot+1, ip, http.StatusTooManyRequests)
+	}
+	return rec
+}
+
+// demandeDepuis joue un GET portant le cookie de session depuis une adresse
+// donnée — demande() laisse celle que httptest pose pour tout le monde.
+func demandeDepuis(mux http.Handler, ip, cible string, cookie *http.Cookie) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet, cible, nil)
+	req.RemoteAddr = net.JoinHostPort(ip, "1234")
+	if cookie != nil {
+		req.AddCookie(cookie)
+	}
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+// borneDuCorpsAuDepassement est la taille maximale du corps que le rattrapage
+// accepte de lire pour reprendre la saisie.
+//
+// Écrite en clair ici, et non relue depuis debit.go : une borne comparée à
+// elle-même ne vérifie qu'elle-même, et « une valeur codée sans test finit
+// augmentée temporairement » (DOD.md §3).
+const borneDuCorpsAuDepassement = 1 << 20
+
+// Le rattrapage enveloppe le limiteur, donc aussi le garde-fou de taille de
+// PocketBase : apis.BodyLimit est branché à DefaultRateLimitMiddlewarePriority
+// + 10, à l'intérieur du limiteur, quand prioriteRattrapageDuDebit est un cran
+// à l'extérieur. Le plafond tombé, le limiteur rend son erreur sans appeler
+// e.Next() : le middleware de taille n'a jamais tourné, et le corps que le
+// rattrapage lit pour reprendre la saisie n'est plus borné par personne.
+//
+// Ce que ça donnerait : un multipart en chunked — Content-Length à -1, donc
+// hors de portée du contrôle optimiste lui aussi — se déverse dans un fichier
+// temporaire au fil de la lecture. Celui qui a dépassé son quota obtiendrait,
+// sur la route même que le plafond ferme, un chemin moins borné que celui qui
+// reste sous le quota, et le dommage visé par le constat : le disque.
+func TestLeDepassementDuLotNeLitPasUnCorpsSansBorne(t *testing.T) {
+	_, mux, cookie := atelierDeLot(t)
+
+	const ip = "203.0.113.25"
+	for fournee := 1; fournee <= seuilDuLot; fournee++ {
+		if rec := soumetLeLotDepuis(mux, ip, cookie, strings.Join(urlsDeTest(2), "\n")); rec.Code != http.StatusOK {
+			t.Fatalf("fournée %d : statut %d, attendu %d", fournee, rec.Code, http.StatusOK)
+		}
+	}
+
+	// Quatre fois la borne : assez au-dessus pour qu'une lecture complète ne
+	// puisse pas passer pour une lecture bornée.
+	const bourrage = 4 * borneDuCorpsAuDepassement
+	corps := &corpsCompte{Reader: strings.NewReader(multipartDUrls(strings.Repeat("a", bourrage)))}
+
+	req := httptest.NewRequest(http.MethodPost, cheminDuLot, corps)
+	req.Header.Set("Content-Type", "multipart/form-data; boundary="+frontiereDeTest)
+	req.RemoteAddr = net.JoinHostPort(ip, "1234")
+	req.AddCookie(cookie)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	// Le refus reste lisible : borner le corps ne doit pas ramener le JSON que
+	// le rattrapage existe pour éviter.
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("statut %d, attendu %d", rec.Code, http.StatusTooManyRequests)
+	}
+	if typeDeContenu := rec.Header().Get("Content-Type"); !strings.Contains(typeDeContenu, "text/html") {
+		t.Errorf("Content-Type %q, attendu du text/html", typeDeContenu)
+	}
+	exigeContient(t, rec.Body.String(), `name="urls"`, `role="alert"`)
+
+	// La marge couvre la lecture en cours quand la borne est franchie : ce
+	// qu'on refuse, c'est de lire le corps entier, pas de dépasser d'un tampon.
+	const marge = 64 << 10
+	if corps.lus > borneDuCorpsAuDepassement+marge {
+		t.Errorf("%d octets lus du corps refusé, attendu au plus %d : le rattrapage lit un corps sans borne",
+			corps.lus, borneDuCorpsAuDepassement+marge)
+	}
+
+	// Et rien de ce bourrage ne ressort dans la page : au-delà de la borne, la
+	// reprise de la saisie est abandonnée — c'est un confort, il ne vaut pas un
+	// disque.
+	if champ := entreBalises(rec.Body.String(), `name="urls"`, "</textarea>"); strings.Contains(champ, "aaaa") {
+		t.Errorf("le corps refusé est repris dans le champ de saisie")
+	}
+}
+
+// frontiereDeTest sépare les parties du corps multipart construit à la main.
+const frontiereDeTest = "frontiereDePatachoo"
+
+// multipartDUrls emballe un contenu dans une partie « urls » portant un nom de
+// fichier — c'est ce nom qui fait déverser la partie dans un fichier temporaire
+// plutôt que de la garder en mémoire, et donc le disque qui est en jeu.
+func multipartDUrls(contenu string) string {
+	return "--" + frontiereDeTest + "\r\n" +
+		"Content-Disposition: form-data; name=\"urls\"; filename=\"liste.txt\"\r\n" +
+		"Content-Type: text/plain\r\n\r\n" +
+		contenu + "\r\n" +
+		"--" + frontiereDeTest + "--\r\n"
+}
+
+// corpsCompte compte ce que le serveur lit réellement du corps.
+//
+// Il n'est ni *bytes.Buffer, ni *bytes.Reader, ni *strings.Reader :
+// httptest.NewRequest pose donc un Content-Length à -1, exactement comme un
+// envoi en chunked. C'est la moitié du piège — le contrôle optimiste de
+// applyBodyLimit ne compare que ce Content-Length.
+type corpsCompte struct {
+	io.Reader
+	lus int64
+}
+
+func (c *corpsCompte) Read(b []byte) (int, error) {
+	n, err := c.Reader.Read(b)
+	c.lus += int64(n)
+	return n, err
+}
+
+// --- Les noms de fournée épuisés -------------------------------------------
+
+// Les noms de la minute tous pris, le lancement rendait l'erreur telle quelle
+// et router.ErrorHandler en faisait une 500 — alors que le message était écrit
+// pour l'utilisateur. C'est un refus de saisie comme les autres : la page, un
+// message, et rien d'écrit.
+func TestUnLotLanceQuandLesNomsDeLaMinuteSontPrisRendLaPage(t *testing.T) {
+	app, mux, cookie := atelierDeLot(t)
+
+	// La minute courante et la suivante : lanceLeLot lit l'horloge, et un
+	// lancement joué à cheval sur un changement de minute trouverait sinon un
+	// nom libre. Un test qui ne rougit qu'une fois sur soixante ne teste rien.
+	maintenant := time.Now()
+	occupeLesNomsDeLaMinute(t, app, nomDeFournee(maintenant), fourneesMaxParMinute)
+	occupeLesNomsDeLaMinute(t, app, nomDeFournee(maintenant.Add(time.Minute)), fourneesMaxParMinute)
+
+	tagsAvant := compte(t, app, "tags")
+	rec := soumetLeLot(mux, cookie, strings.Join(urlsDeTest(2), "\n"))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("statut %d alors que les %d noms de la minute sont pris, attendu %d",
+			rec.Code, fourneesMaxParMinute, http.StatusOK)
+	}
+	exigeContient(t, rec.Body.String(), `name="urls"`, `role="alert"`)
+	if message := entreBalises(rec.Body.String(), `<p class="erreur" role="alert">`, "</p>"); strings.TrimSpace(message) == "" {
+		t.Errorf("aucun message dans la page :\n%s", rec.Body.String())
+	}
+	if n := compte(t, app, "imports"); n != 0 {
+		t.Errorf("%d enregistrements imports alors que le lot a été refusé, attendu 0", n)
+	}
+	if n := compte(t, app, "tags"); n != tagsAvant {
+		t.Errorf("%d tags après le refus, attendu %d", n, tagsAvant)
+	}
+}
+
+// Le refus des noms épuisés est le seul que le lancement traduise en page :
+// les autres erreurs d'écriture continuent de remonter telles quelles. Un
+// message de la couche SQL n'a rien à faire dans du HTML — il dit la forme des
+// tables à qui le lit.
+func TestUneErreurDEcritureDuLotNeSAfficheDansAucunePage(t *testing.T) {
+	app, mux, cookie := atelierDeLot(t)
+
+	const motif = "table import_urls indisponible pour le test"
+	app.OnRecordCreate("import_urls").BindFunc(func(e *core.RecordEvent) error {
+		return errors.New(motif)
+	})
+
+	rec := soumetLeLot(mux, cookie, strings.Join(urlsDeTest(2), "\n"))
+
+	// Errorf, et non Fatalf : c'est le corps qui porte le critère, et un test
+	// qui s'arrête sur le statut ne le vérifierait jamais dans le seul cas où
+	// il aurait quelque chose à dire.
+	if rec.Code == http.StatusOK {
+		t.Errorf("statut %d pour une erreur d'écriture, attendu une erreur", rec.Code)
+	}
+	exigeSansAucun(t, rec.Body.String(), motif)
+}
+
+// nomDeFournee rebâtit le nom du tag que le lot cherchera à cette minute-là.
+func nomDeFournee(instant time.Time) string {
+	return "Import du " + instant.Format("02/01/2006") + " à " + instant.Format("15h04")
+}
+
+// La page de dépassement rend une saisie que le gestionnaire n'a jamais lue :
+// elle sort du corps de la requête refusée pour retourner dans le formulaire.
+// C'est du contenu étranger dans une page, et DOD.md §3 lui demande son test
+// d'échappement — le rattrapage ne passe pas par les mêmes mains que le refus
+// ordinaire, et rien ne garantit de l'extérieur qu'il emprunte le même gabarit.
+func TestLaSaisieRepriseAuDepassementEstEchappee(t *testing.T) {
+	_, mux, cookie := atelierDeLot(t)
+
+	corps := epuiseLePlafondDuLot(t, mux, cookie, "203.0.113.25",
+		"<script>alert(1)</script>\nhttps://exemple.fr/recette").Body.String()
+
+	if strings.Contains(corps, "<script>alert(1)</script>") {
+		t.Errorf("la saisie reprise ressort telle quelle :\n%s", corps)
+	}
+	if !strings.Contains(corps, "&lt;script&gt;alert(1)&lt;/script&gt;") {
+		t.Errorf("la saisie reprise n'apparaît pas échappée :\n%s", corps)
 	}
 }

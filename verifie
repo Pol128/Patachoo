@@ -14,6 +14,30 @@ if [ -n "$mal_formates" ]; then
 	exit 1
 fi
 
+# Les entrées de journal en attente : un fichier par tâche sous changelog.d/
+# (DOD.md §1). Qu'une tâche ait bien déposé la sienne ne se vérifie pas par une
+# commande — ça se lit à la review. Ce qui se vérifie, c'est que ce qui est
+# déposé sera utilisable le jour de la publication. Placé tôt : il coûte une
+# milliseconde, il doit rougir avant les deux minutes de tests.
+echo "→ journal"
+for fragment in changelog.d/*.md; do
+	case "$fragment" in
+	changelog.d/LISEZ-MOI.md) continue ;;
+	changelog.d/\*.md) continue ;;  # répertoire vide : le glob n'a rien trouvé
+	esac
+	if [ ! -s "$fragment" ]; then
+		echo "fragment vide : $fragment" >&2
+		exit 1
+	fi
+	# Le fichier est recopié tel quel dans le journal : il doit donc commencer
+	# par une puce, sans quoi la section publiée serait mal formée.
+	if ! head -1 "$fragment" | grep -q '^- '; then
+		echo "fragment qui ne commence pas par une puce « - » : $fragment" >&2
+		echo "  son contenu est recopié tel quel dans CHANGELOG.md" >&2
+		exit 1
+	fi
+done
+
 echo "→ go vet"
 go vet ./...
 
