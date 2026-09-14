@@ -33,8 +33,19 @@ const (
 // le cookie est lu avant que pbLoadAuthToken ne cherche l'en-tête.
 func serveurDeTest(t *testing.T, routesEnPlus ...func(*router.Router[*core.RequestEvent])) (core.App, http.Handler) {
 	t.Helper()
+	return monteLeServeur(t, baseNeuveAvec(t, analyseurDeTest(t)), routesEnPlus...)
+}
 
-	app := baseNeuveAvec(t, analyseurDeTest(t))
+// serveurDeTestAuCoutBcryptReel est le même serveur, sur une base qui garde le
+// facteur bcrypt de PocketBase. À ne prendre que si le temps de hachage est
+// lui-même le sujet du test — il coûte ~200 ms de plus par compte connecté.
+func serveurDeTestAuCoutBcryptReel(t *testing.T, routesEnPlus ...func(*router.Router[*core.RequestEvent])) (core.App, http.Handler) {
+	t.Helper()
+	return monteLeServeur(t, baseNeuveAuCoutBcryptReel(t, analyseurDeTest(t)), routesEnPlus...)
+}
+
+func monteLeServeur(t *testing.T, app core.App, routesEnPlus ...func(*router.Router[*core.RequestEvent])) (core.App, http.Handler) {
+	t.Helper()
 
 	routeur, err := apis.NewRouter(app)
 	if err != nil {
@@ -194,6 +205,25 @@ func seConnecteDepuis(t *testing.T, mux http.Handler, ip, courriel, motDePasse s
 	req := httptest.NewRequest(http.MethodPost, "/connexion", strings.NewReader(champs.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.AddCookie(cookieDuJetonDeTest())
+	req.RemoteAddr = net.JoinHostPort(ip, "1234")
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+// seConnecteParLaChaineDeRequete joue ce que le produit n'émet jamais : un POST
+// au corps vide, dont les identifiants sont dans l'URL.
+//
+// Le Content-Type reste celui d'un formulaire : sans lui, un corps vide serait
+// refusé avant d'atteindre la route, et le test prouverait seulement qu'on ne
+// sait pas poster.
+func seConnecteParLaChaineDeRequete(t *testing.T, mux http.Handler, ip, courriel, motDePasse string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	champs := url.Values{"courriel": {courriel}, "mot-de-passe": {motDePasse}}
+	req := httptest.NewRequest(http.MethodPost, "/connexion?"+champs.Encode(), nil)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.RemoteAddr = net.JoinHostPort(ip, "1234")
 
 	rec := httptest.NewRecorder()
@@ -603,7 +633,11 @@ func TestUnEchecDeConnexionNeDitPasQuelsCourrielsExistent(t *testing.T) {
 func TestUnEchecDeConnexionNeDitPasParLeTempsQuelsCourrielsExistent(t *testing.T) {
 	const mesures = 9
 
-	app, mux := serveurDeTest(t)
+	// Au coût réel, et c'est tout le sujet : la fixture brade le facteur bcrypt
+	// pour les 443 autres tests du paquet, or c'est justement le temps de ce
+	// hachage que ce test-ci compare. Sous un facteur bradé, son garde-fou des
+	// 5 ms ci-dessous refuserait de conclure — ce qu'il doit faire.
+	app, mux := serveurDeTestAuCoutBcryptReel(t)
 	compteParDefaut(t, app)
 
 	connu := plusCourtEchecDeConnexion(t, mux, courrielDeTest, mesures)
@@ -644,6 +678,36 @@ func TestUneConnexionEstRefuseeParLaRegleDAuthentification(t *testing.T) {
 
 	if cookie := cookieEventuelDe(rec); cookie != nil {
 		t.Fatalf("une session a été ouverte pour un compte que la règle refuse : %q", cookie.Value)
+	}
+	if !strings.Contains(rec.Body.String(), messageEchecConnexion) {
+		t.Errorf("le refus n'annonce pas l'échec :\n%s", rec.Body.String())
+	}
+}
+
+// Le formulaire est posté : ses champs se lisent dans le corps, et nulle part
+// ailleurs. Un mot de passe placé dans la chaîne de requête n'ouvre donc pas de
+// session.
+//
+// La distinction n'est pas de style. FormValue appelle ParseForm, qui fusionne
+// la chaîne de requête avec le corps ; PostFormValue s'en tient au corps. Tant
+// que la route accepte la première, l'URL entière — mot de passe compris — part
+// dans _logs, que la rotation garde cinq jours et que chaque sauvegarde
+// automatique de ces cinq nuits recopie, puis dans l'historique du navigateur,
+// dans le Referer de la page qui suit la redirection, et dans le journal du
+// proxy inverse. Un secret devenu enregistrement ne se rattrape pas après coup.
+//
+// Aucun gabarit n'émet ce formulaire en GET : personne dans le produit ne
+// fabrique une telle URL. Mais une route qui l'accepte finit par en recevoir —
+// du premier essai au curl, du premier script de supervision, du premier « lien
+// de connexion rapide » collé dans une conversation.
+func TestLaConnexionNeLitPasLesIdentifiantsDansLaChaineDeRequete(t *testing.T) {
+	app, mux := serveurDeTest(t)
+	compteParDefaut(t, app)
+
+	rec := seConnecteParLaChaineDeRequete(t, mux, "203.0.113.40", courrielDeTest, motDePasseDeTest)
+
+	if cookie := cookieEventuelDe(rec); cookie != nil {
+		t.Fatalf("une session a été ouverte depuis des identifiants passés dans l'URL : %q", cookie.Value)
 	}
 	if !strings.Contains(rec.Body.String(), messageEchecConnexion) {
 		t.Errorf("le refus n'annonce pas l'échec :\n%s", rec.Body.String())
