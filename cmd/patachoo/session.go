@@ -16,7 +16,18 @@ import (
 // PocketBase. Celui-ci porte un objet JSON — jeton et enregistrement — quand
 // nous n'y mettons que le jeton nu ; réutiliser son nom promettrait une
 // compatibilité que ce cookie n'a pas.
-const nomCookieSession = "patachoo_session"
+//
+// Le préfixe __Host- n'est pas décoratif : le navigateur refuse d'enregistrer
+// un cookie ainsi nommé s'il ne vient pas d'une origine sûre, s'il porte un
+// Domain, ou si son Path n'est pas « / ». Sans lui, un voisin qui partage
+// notre domaine enregistrable — blog.exemple.fr à côté de patachoo.exemple.fr
+// — pose ce même nom avec son propre jeton et Domain=exemple.fr, et le
+// navigateur envoie deux cookies dont rien ici ne peut distinguer l'origine :
+// la victime se retrouve connectée au compte de l'attaquant. Le préfixe ferme
+// cette porte du côté du navigateur, à condition que cookieDeSession continue
+// de poser Secure et Path=/ sans jamais poser de Domain — les trois attributs
+// dont il dépend, et que attributsDeSession garde dans les tests.
+const nomCookieSession = "__Host-patachoo_session"
 
 // cleSessionPorteeParLeCookie marque, dans le magasin de la requête, que c'est
 // notre cookie qui a fourni le jeton d'authentification — et non un en-tête que
@@ -53,17 +64,55 @@ func brancheLaSession(routeur *router.Router[*core.RequestEvent]) {
 	routeur.Bind(renouvelleLaSession())
 }
 
+// prefixesDePocketBase : les deux racines que PocketBase enregistre pour
+// lui-même, et les seules — /api/… (apis/base.go, Group("/api")) et /_/…
+// (apis/serve.go, GET /_/{path...} ; apis/extensions.go, Group("/_")).
+//
+// La barre finale est portée par le préfixe, et non déduite : sans elle,
+// /apiculture serait tenu pour une route de l'API.
+var prefixesDePocketBase = []string{"/api/", "/_/"}
+
 // recopieLeCookieDansLEnTete rend la session lisible par PocketBase.
 //
 // Un en-tête Authorization déjà présent l'emporte : un client d'API qui porte
 // son propre jeton n'a pas à être supplanté par un cookie que le navigateur
 // aurait joint à la requête.
+//
+// La recopie s'arrête aux chemins du produit. Elle est posée sur le routeur
+// entier, donc en amont des routes que PocketBase branche derrière notre
+// se.Next() : sans cette garde, elle écrivait aussi le jeton du cookie sur
+// /api/ et /_/, où getAuthTokenFromRequest (apis/middlewares.go) le lit tel
+// quel — PocketBase n'exige pas le préfixe Bearer. Un fetch("/api/…",
+// {credentials:"same-origin"}) depuis n'importe quelle page partait alors
+// authentifié comme le compte connecté, sans que le navigateur ait eu à lire
+// le cookie : HttpOnly n'y change rien, c'est le serveur qui faisait la
+// recopie. Toute XSS dans une page obtenait ainsi l'API REST complète du
+// compte — la lecture de collections entières que nos pages ne montrent
+// jamais, les opérations de compte, /api/files/ — là où elle n'avait que les
+// formulaires du produit.
+//
+// /_/ y figure alors qu'un jeton users n'y donne rien : l'interface
+// d'administration exige un jeton de la collection _superusers, et /connexion
+// n'émet que des jetons users. Ce que la garde refuse là n'est donc pas un
+// accès, c'est de faire reposer une session de navigateur sur une requête
+// d'administration — la règle porte sur le chemin, pas sur ce que le chemin
+// sert, et elle vaudra encore le jour où /_/ servira autre chose.
+//
+// Le marqueur compte autant que l'en-tête : laissé posé, il ferait redéposer
+// par renouvelleLaSession un cookie de session de cinq jours sur la réponse
+// d'une requête d'API, que le navigateur n'a pas demandée.
+//
+// Un simple préfixe sur URL.Path suffit, sans normalisation à écrire : les
+// middlewares du routeur ne s'exécutent qu'après l'appariement par le
+// http.ServeMux (tools/router/router.go, loadMux), sur un chemin déjà nettoyé
+// — //api/… et /api/../… partent en redirection avant d'atteindre le
+// gestionnaire — et déjà déséchappé, URL.Path portant la forme décodée.
 func recopieLeCookieDansLEnTete() *hook.Handler[*core.RequestEvent] {
 	return &hook.Handler[*core.RequestEvent]{
 		Id:       "patachooSessionDepuisCookie",
 		Priority: prioriteRecopieDuCookie,
 		Func: func(e *core.RequestEvent) error {
-			if e.Request.Header.Get("Authorization") == "" {
+			if !estUnCheminDePocketBase(e.Request.URL.Path) && e.Request.Header.Get("Authorization") == "" {
 				if cookie, err := e.Request.Cookie(nomCookieSession); err == nil && cookie.Value != "" {
 					e.Request.Header.Set("Authorization", cookie.Value)
 					e.Set(cleSessionPorteeParLeCookie, cookie.Value)
@@ -72,6 +121,17 @@ func recopieLeCookieDansLEnTete() *hook.Handler[*core.RequestEvent] {
 			return e.Next()
 		},
 	}
+}
+
+// estUnCheminDePocketBase dit si le chemin appartient à l'API REST ou à
+// l'interface d'administration, plutôt qu'aux pages du produit.
+func estUnCheminDePocketBase(chemin string) bool {
+	for _, prefixe := range prefixesDePocketBase {
+		if strings.HasPrefix(chemin, prefixe) {
+			return true
+		}
+	}
+	return false
 }
 
 // renouvelleLaSession redépose un cookie quand le jeton a passé la mi-vie.

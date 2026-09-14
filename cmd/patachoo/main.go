@@ -103,7 +103,7 @@ func brancheLesRoutes(routeur *router.Router[*core.RequestEvent]) {
 	routeur.POST("/connexion", connexion).
 		Bind(exigeLeJetonAntiRejeu(),
 			rendLeDepassementEnHTML("patachooDepassementConnexion", rendLeDepassementDeConnexion))
-	routeur.POST("/deconnexion", deconnexion).Bind(exigeLeJetonAntiRejeu())
+	routeur.POST("/deconnexion", deconnexion).Bind(exigeLeJetonAntiRejeu(), exigeUneSession())
 	routeur.GET("/inscription", pageInscription)
 	routeur.POST("/inscription", inscription).
 		Bind(exigeLeJetonAntiRejeu(),
