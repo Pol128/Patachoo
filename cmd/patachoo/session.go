@@ -16,7 +16,18 @@ import (
 // PocketBase. Celui-ci porte un objet JSON — jeton et enregistrement — quand
 // nous n'y mettons que le jeton nu ; réutiliser son nom promettrait une
 // compatibilité que ce cookie n'a pas.
-const nomCookieSession = "patachoo_session"
+//
+// Le préfixe __Host- n'est pas décoratif : le navigateur refuse d'enregistrer
+// un cookie ainsi nommé s'il ne vient pas d'une origine sûre, s'il porte un
+// Domain, ou si son Path n'est pas « / ». Sans lui, un voisin qui partage
+// notre domaine enregistrable — blog.exemple.fr à côté de patachoo.exemple.fr
+// — pose ce même nom avec son propre jeton et Domain=exemple.fr, et le
+// navigateur envoie deux cookies dont rien ici ne peut distinguer l'origine :
+// la victime se retrouve connectée au compte de l'attaquant. Le préfixe ferme
+// cette porte du côté du navigateur, à condition que cookieDeSession continue
+// de poser Secure et Path=/ sans jamais poser de Domain — les trois attributs
+// dont il dépend, et que attributsDeSession garde dans les tests.
+const nomCookieSession = "__Host-patachoo_session"
 
 // cleSessionPorteeParLeCookie marque, dans le magasin de la requête, que c'est
 // notre cookie qui a fourni le jeton d'authentification — et non un en-tête que
