@@ -19,13 +19,6 @@ diverger.
 
 ## À paraître
 
-- L'installation ne conseille plus d'écrire le mot de passe d'administration sur
-  la ligne de commande. `INSTALL.md` met en premier l'URL affichée dans les logs
-  au premier démarrage, qui crée le compte depuis le navigateur ; les commandes
-  `superuser upsert` qui restent, là et dans le `README`, disent ce qu'un
-  argument laisse voir dans `ps` et dans l'historique du shell, et comment s'en
-  prémunir ; les blocs `curl` de sauvegarde, de restauration et de répétition
-  lisent désormais le mot de passe au clavier.
 - Les données ne sont plus lisibles par les autres comptes de la machine. Le
   serveur crée `pb_data`, ses bases et ses sauvegardes en `0700` et `0600` :
   `data.db` porte en clair de quoi fabriquer un jeton d'administration, et
