@@ -276,8 +276,11 @@ plus atteignable directement.
 ```caddyfile
 recettes.exemple.fr {
 	# L'administration et le point d'authentification qui lui sert de porte :
-	# joignables depuis le réseau local seulement.
-	@administration path /_/* /api/collections/_superusers/*
+	# joignables depuis le réseau local seulement. Les deux chemins
+	# `/api/collections/…` désignent la même collection : PocketBase accepte
+	# indifféremment son nom et son identifiant, et n'en oublier qu'un suffit
+	# à rouvrir la porte.
+	@administration path /_/* /api/collections/_superusers/* /api/collections/pbc_3142635823/*
 	handle @administration {
 		@interne remote_ip 192.168.0.0/16 10.0.0.0/8 172.16.0.0/12
 		handle @interne {
@@ -294,9 +297,26 @@ recettes.exemple.fr {
 dit rien. Ajuster les plages à celle du réseau — celles-ci couvrent les adresses
 privées usuelles.
 
-`/api/` reste ouvert : c'est par lui que le carnet fonctionne. Ce que la règle
-retire, c'est l'interface d'administration et la connexion superutilisateur qui
-la déverrouille.
+> **Les deux chemins `/api/collections/…` ne sont pas un doublon : ne pas en
+> retirer un.** PocketBase désigne une collection *par son nom ou par son
+> identifiant*, et sert la même route dans les deux cas. Or l'identifiant n'est
+> pas tiré au sort à l'installation : il est calculé à partir du type et du nom
+> de la collection, si bien que `_superusers` porte `pbc_3142635823` sur
+> **toutes** les instances. Un filtre qui ne connaît que le nom se contourne
+> donc en remplaçant `_superusers` par `pbc_3142635823` dans l'URL, et rend un
+> jeton de superutilisateur à qui le demande depuis l'Internet.
+
+Le filtre porte sur le **préfixe entier** de la collection, et pas sur la seule
+route de connexion : `auth-with-password`, `request-password-reset` et
+`auth-with-otp` s'y contournent toutes de la même façon.
+
+`/api/` reste ouvert par ailleurs : c'est par lui que le carnet fonctionne. Ce
+que la règle retire, c'est l'interface d'administration et **toutes les routes
+par lesquelles un jeton de superutilisateur s'obtient**. Elle ne ferme pas les
+adresses qu'un tel jeton déverrouille ensuite — `/api/settings`,
+`/api/collections`, `POST /api/backups` répondent toujours —, mais PocketBase
+les refuse à qui ne présente pas ce jeton, et il n'y a plus moyen d'en obtenir
+un depuis l'extérieur.
 
 ## Sauvegarde et restauration
 
