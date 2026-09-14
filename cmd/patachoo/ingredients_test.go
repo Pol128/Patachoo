@@ -8,6 +8,7 @@ import (
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/template"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // analyseurDeTest rend un analyseur chargé du pack français.
@@ -27,7 +28,41 @@ func analyseurDeTest(t *testing.T) *analyseur {
 
 // baseNeuveAvec monte une base vide, y branche nos hooks avec l'analyseur
 // donné, puis applique les migrations — dans l'ordre où main() le fait.
+// Le coût bcrypt des comptes de test.
+//
+// Un test qui ouvre une session paie deux bcrypt complets : hacher le mot de
+// passe à la création du compte, puis le vérifier à la connexion. Mesuré sur
+// cette machine, 101 ms et 96 ms — plus de la moitié du coût d'un test, devant
+// les migrations (93 ms) et l'amorçage (49 ms). Multiplié par les 444 tests du
+// paquet, c'est la moitié de la passe.
+//
+// Le facteur est un réglage du champ, et la vérification lit le sien dans le
+// hash : l'abaisser dans la fixture rend les deux opérations quasi gratuites.
+// Le mot de passe reste haché et vérifié pour de vrai — c'est le nombre de
+// tours qui baisse, pas le mécanisme —, et la production ne bouge pas : elle
+// garde le défaut de PocketBase, que ce fichier ne touche jamais.
+//
+// Un test qui a besoin du coût réel prend `baseNeuveAuCoutBcryptReel`, ou
+// `serveurDeTestAuCoutBcryptReel`. Le seul du paquet est celui qui mesure un
+// écart de temps, et son garde-fou refuse de conclure sur un bcrypt bradé.
+const coutBcryptDesTests = bcrypt.MinCost
+
 func baseNeuveAvec(t *testing.T, a *analyseur) core.App {
+	t.Helper()
+	return baseNeuveAuCout(t, a, coutBcryptDesTests)
+}
+
+// baseNeuveAuCoutBcryptReel laisse à PocketBase son facteur par défaut, au prix
+// d'environ 200 ms par compte créé puis connecté.
+func baseNeuveAuCoutBcryptReel(t *testing.T, a *analyseur) core.App {
+	t.Helper()
+	return baseNeuveAuCout(t, a, 0)
+}
+
+// baseNeuveAuCout monte la base. `cout` à zéro laisse le facteur bcrypt de
+// PocketBase. Le nom dit « au coût » parce que `baseNeuve` est déjà pris
+// (tags_test.go) et désigne autre chose.
+func baseNeuveAuCout(t *testing.T, a *analyseur, cout int) core.App {
 	t.Helper()
 
 	app := core.NewBaseApp(core.BaseAppConfig{DataDir: t.TempDir()})
@@ -50,7 +85,33 @@ func baseNeuveAvec(t *testing.T, a *analyseur) core.App {
 	if err := app.RunAllMigrations(); err != nil {
 		t.Fatalf("migrations : %v", err)
 	}
+	if cout > 0 {
+		abaisseLeCoutBcrypt(t, app, cout)
+	}
 	return app
+}
+
+// abaisseLeCoutBcrypt repose le facteur du champ mot de passe des deux
+// collections d'authentification. Après les migrations : ce sont elles qui
+// créent les collections.
+func abaisseLeCoutBcrypt(t *testing.T, app core.App, cout int) {
+	t.Helper()
+
+	for _, nom := range []string{"users", core.CollectionNameSuperusers} {
+		collection, err := app.FindCollectionByNameOrId(nom)
+		if err != nil {
+			t.Fatalf("collection %s : %v", nom, err)
+		}
+		champ, ok := collection.Fields.GetByName(core.FieldNamePassword).(*core.PasswordField)
+		if !ok {
+			t.Fatalf("collection %s : champ %q absent ou d'un autre type",
+				nom, core.FieldNamePassword)
+		}
+		champ.Cost = cout
+		if err := app.Save(collection); err != nil {
+			t.Fatalf("collection %s : %v", nom, err)
+		}
+	}
 }
 
 // recetteNeuve pose la recette à laquelle rattacher les lignes : ingredients

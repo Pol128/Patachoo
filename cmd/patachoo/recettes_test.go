@@ -2580,7 +2580,13 @@ func TestInstructionsRestentDuTexteBrut(t *testing.T) {
 
 // L'échappement d'un gabarit se contourne par un seul appel. Les deux portes
 // se ferment ici, en une assertion qu'aucune relecture ne peut oublier : ni
-// template.HTML dans le code, ni la fonction raw dans un gabarit.
+// rendu brut dans le code, ni la fonction raw dans un gabarit.
+//
+// « Rendu brut » veut dire les sept types chaîne de html/template, pas le seul
+// template.HTML : chacun éteint l'échappement de son contexte. Le cas le plus
+// plausible n'est d'ailleurs pas template.HTML mais template.URL, enveloppé
+// autour d'une adresse que html/template a neutralisée en #ZgotmplZ — ce qui
+// ressemble à un bug quand on ne connaît pas le filtre de schéma.
 func TestAucunGabaritNeContourneLEchappement(t *testing.T) {
 	fichiers, err := vues.ReadDir("vues")
 	if err != nil {
@@ -2598,13 +2604,39 @@ func TestAucunGabaritNeContourneLEchappement(t *testing.T) {
 		}
 	}
 
-	if sources := chercheDansLesSources(t, "template.HTML"); len(sources) > 0 {
-		t.Errorf("template.HTML employé dans %v", sources)
+	// Les sept types chaîne de html/template, tels que go doc les liste.
+	// Le message nomme le type trouvé : « rendu brut employé » laisserait le
+	// lecteur chercher lequel des sept.
+	for _, interdit := range []string{
+		"template.HTML",
+		"template.URL",
+		"template.JS",
+		"template.JSStr",
+		"template.CSS",
+		"template.HTMLAttr",
+		"template.Srcset",
+	} {
+		if sources := chercheDansLesSources(t, interdit); len(sources) > 0 {
+			t.Errorf("%s employé dans %v", interdit, sources)
+		}
 	}
 }
 
 // chercheDansLesSources rend les fichiers .go du paquet qui contiennent le
 // motif donné.
+//
+// Deux limites assumées, et ce sont des limites de ce garde-fou, pas des
+// oublis :
+//
+//   - La recherche ne lit que le répertoire courant, donc le seul paquet
+//     cmd/patachoo. C'est le seul qui rende du HTML — jsonld/, recuperation/
+//     et internal/texte/ n'en rendent aucun —, mais un rendu brut introduit
+//     ailleurs lui échapperait.
+//   - La recherche est textuelle. Un import renommé (tpl "html/template")
+//     passe sous le radar, et ce n'est pas une hypothèse d'école : le code de
+//     production lie déjà l'identifiant template au registre de PocketBase
+//     (pages.go), donc qui voudrait un rendu brut ici devrait justement
+//     aliaser son import.
 func chercheDansLesSources(t *testing.T, motif string) []string {
 	t.Helper()
 
