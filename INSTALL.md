@@ -312,10 +312,20 @@ Dans `/_/` → **Settings** → **Backup and restore** → **Initialize new back
 Le champ **Backup name** peut rester vide : PocketBase nomme alors l'archive
 tout seul.
 
-Par l'API, avec un jeton de superutilisateur :
+Par l'API, avec un jeton de superutilisateur. Le mot de passe se tape, il ne
+s'écrit pas dans la commande. Lancez cette ligne **seule** et répondez à
+l'invite : `read` lit sur le terminal, donc collée au milieu du bloc suivant
+elle prendrait pour mot de passe la ligne d'après au lieu de vous interroger.
 
 ```sh
-read -rs MDP   # bash ou zsh : la frappe ne s'affiche pas et ne va pas dans l'historique
+printf 'Mot de passe superutilisateur : '; read -rs MDP; echo
+```
+
+La frappe ne s'affiche pas et ne va pas dans l'historique. Le mot de passe une
+fois tapé, le reste se colle d'un seul tenant :
+
+```sh
+: "${MDP:?mot de passe absent : tapez-le avec le bloc ci-dessus}"
 
 JETON=$(curl -s -X POST http://127.0.0.1:8090/api/collections/_superusers/auth-with-password \
   -H 'Content-Type: application/json' \
@@ -349,10 +359,17 @@ confirmation demande de **recopier le nom de l'archive** : c'est volontaire, et
 c'est le dernier moment où l'on peut se raviser. La page se reconnecte d'elle-même
 une fois le serveur revenu.
 
-**Par l'API.**
+**Par l'API.** Le mot de passe se tape à part, pour la raison dite plus haut —
+cette ligne **seule**, d'abord :
 
 ```sh
-read -rs MDP   # bash ou zsh : la frappe ne s'affiche pas et ne va pas dans l'historique
+printf 'Mot de passe superutilisateur : '; read -rs MDP; echo
+```
+
+Puis :
+
+```sh
+: "${MDP:?mot de passe absent : tapez-le avec le bloc ci-dessus}"
 
 JETON=$(curl -s -X POST http://127.0.0.1:8090/api/collections/_superusers/auth-with-password \
   -H 'Content-Type: application/json' \
@@ -388,10 +405,19 @@ restauration est destructive, et se tromper de terminal arrive.
 Le scénario complet : une recette avec image, une sauvegarde, la recette
 supprimée, la restauration, la recette de retour — image comprise.
 
+Le mot de passe de cette instance est jetable, mais c'est le geste qui
+s'apprend : il se tape à part, lui aussi. Cette ligne **seule**, d'abord :
+
 ```sh
+printf "Mot de passe de l'instance jetable : "; read -rs MDP; echo
+```
+
+Puis :
+
+```sh
+: "${MDP:?mot de passe absent : tapez-le avec le bloc ci-dessus}"
 ESSAI=$(mktemp -d)
 echo "$ESSAI"   # recopiez ce chemin : le second terminal en aura besoin
-read -rs MDP    # jetable, mais c'est le geste qui s'apprend
 go build -o "$ESSAI/patachoo" ./cmd/patachoo
 "$ESSAI/patachoo" superuser upsert essai@exemple.fr "$MDP" --dir "$ESSAI/pb_data"
 "$ESSAI/patachoo" serve --dir "$ESSAI/pb_data" --http 127.0.0.1:8137
@@ -404,12 +430,21 @@ d'autre.
 
 Dans un second terminal, en replaçant `ESSAI` et en redonnant le même mot de
 passe — ce sont des variables de shell, elles ne franchissent pas la fenêtre, et
-sans la première les commandes qui suivent viseraient `/pb_data` :
+sans la première les commandes qui suivent viseraient `/pb_data`.
+
+Le mot de passe d'abord — le même que dans le premier terminal, et cette ligne
+**seule** :
 
 ```sh
+printf "Mot de passe de l'instance jetable : "; read -rs MDP; echo
+```
+
+Puis, en replaçant `ESSAI` :
+
+```sh
+: "${MDP:?mot de passe absent : tapez-le avec le bloc ci-dessus}"
 ESSAI=<le chemin affiché par le echo ci-dessus>
 BASE=http://127.0.0.1:8137
-read -rs MDP   # le même que dans le premier terminal
 
 JETON=$(curl -s -X POST "$BASE/api/collections/_superusers/auth-with-password" \
   -H 'Content-Type: application/json' \
