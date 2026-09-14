@@ -11,12 +11,6 @@ diverger.
 
 ## À paraître
 
-- Le cookie de session change de nom et **ce déploiement déconnecte tout le
-  monde une fois** : l'ancien cookie n'est plus lu, il faut se reconnecter. Le
-  nouveau nom porte le préfixe `__Host-`, qui fait refuser par le navigateur
-  tout cookie de session qu'un sous-domaine voisin — un `blog.exemple.fr` à
-  côté d'un `patachoo.exemple.fr` — tenterait de poser à sa place. Rien à
-  changer à l'installation.
 - Les données ne sont plus lisibles par les autres comptes de la machine. Le
   serveur crée `pb_data`, ses bases et ses sauvegardes en `0700` et `0600` :
   `data.db` porte en clair de quoi fabriquer un jeton d'administration, et
