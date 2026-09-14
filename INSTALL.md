@@ -70,6 +70,23 @@ si 8090 est déjà pris sur la machine, c'est le **port de gauche** de
 
 Rien n'est créé à l'avance : il faut un premier compte d'administration.
 
+**Par le navigateur — le chemin conseillé.** Au premier démarrage, tant
+qu'aucun superutilisateur n'existe, les logs affichent une URL qui mène au
+formulaire de création :
+
+```sh
+docker compose logs patachoo
+```
+
+La ligne à suivre ressemble à
+`http://0.0.0.0:8090/_/#/pbinstall/<un-long-jeton>` ; remplacez l'hôte et le
+port par ceux d'où vous ouvrez le navigateur. Le jeton vaut **trente minutes** —
+passé ce délai, redémarrer le conteneur en affiche un neuf tant que le compte
+n'existe pas. Le mot de passe se tape alors dans un formulaire : il ne passe ni
+par la table des processus, ni par l'historique du shell.
+
+**En repli, par la ligne de commande.**
+
 ```sh
 docker compose run --rm patachoo superuser upsert vous@exemple.fr 'un-mot-de-passe-solide'
 ```
@@ -80,8 +97,20 @@ Sur un conteneur déjà lancé, sans `compose` :
 docker exec patachoo /patachoo superuser upsert vous@exemple.fr 'un-mot-de-passe-solide'
 ```
 
-Au premier démarrage, les logs affichent aussi une URL à usage unique qui mène
-au même résultat depuis le navigateur : `docker compose logs patachoo`.
+> **Ces deux commandes portent le mot de passe en argument, et un argument se
+> lit deux fois.** Le temps de la commande, `ps aux` montre la ligne complète à
+> **tout utilisateur de la machine** — sur un NAS, le compte de sauvegarde ou
+> celui du média. Et la commande reste **en clair dans l'historique du shell**
+> (`~/.bash_history`, `~/.zsh_history`), un fichier que rien ne protège, qui
+> part dans la sauvegarde du poste et suit les dotfiles qu'on synchronise : des
+> mois plus tard, le mot de passe du compte qui peut tout y est encore lisible.
+>
+> Deux remèdes, à défaut de mieux : préfixer la commande d'**une espace** quand
+> `HISTCONTROL` contient `ignorespace`, ou effacer la ligne juste après avec
+> `history -d <numéro>`, le numéro venant de `history`. La variante
+> `docker exec` laisse en plus la commande dans l'enregistrement de l'exec, que
+> `docker inspect` rend — le `--rm` de `docker compose run` efface le sien,
+> celui-là reste.
 
 Ce compte donne accès à `/_/`. Il administre l'instance ; ce n'est pas le compte
 avec lequel on range ses recettes au quotidien.
@@ -283,12 +312,24 @@ Dans `/_/` → **Settings** → **Backup and restore** → **Initialize new back
 Le champ **Backup name** peut rester vide : PocketBase nomme alors l'archive
 tout seul.
 
-Par l'API, avec un jeton de superutilisateur :
+Par l'API, avec un jeton de superutilisateur. Le mot de passe se tape, il ne
+s'écrit pas dans la commande. Lancez cette ligne **seule** et répondez à
+l'invite : `read` lit sur le terminal, donc collée au milieu du bloc suivant
+elle prendrait pour mot de passe la ligne d'après au lieu de vous interroger.
 
 ```sh
+printf 'Mot de passe superutilisateur : '; read -rs MDP; echo
+```
+
+La frappe ne s'affiche pas et ne va pas dans l'historique. Le mot de passe une
+fois tapé, le reste se colle d'un seul tenant :
+
+```sh
+: "${MDP:?mot de passe absent : tapez-le avec le bloc ci-dessus}"
+
 JETON=$(curl -s -X POST http://127.0.0.1:8090/api/collections/_superusers/auth-with-password \
   -H 'Content-Type: application/json' \
-  -d '{"identity":"vous@exemple.fr","password":"votre-mot-de-passe"}' | jq -r .token)
+  -d "$(jq -nc --arg mdp "$MDP" '{identity:"vous@exemple.fr",password:$mdp}')" | jq -r .token)
 
 curl -s -X POST http://127.0.0.1:8090/api/backups \
   -H "Authorization: $JETON" -H 'Content-Type: application/json' \
@@ -318,12 +359,21 @@ confirmation demande de **recopier le nom de l'archive** : c'est volontaire, et
 c'est le dernier moment où l'on peut se raviser. La page se reconnecte d'elle-même
 une fois le serveur revenu.
 
-**Par l'API.**
+**Par l'API.** Le mot de passe se tape à part, pour la raison dite plus haut —
+cette ligne **seule**, d'abord :
 
 ```sh
+printf 'Mot de passe superutilisateur : '; read -rs MDP; echo
+```
+
+Puis :
+
+```sh
+: "${MDP:?mot de passe absent : tapez-le avec le bloc ci-dessus}"
+
 JETON=$(curl -s -X POST http://127.0.0.1:8090/api/collections/_superusers/auth-with-password \
   -H 'Content-Type: application/json' \
-  -d '{"identity":"vous@exemple.fr","password":"votre-mot-de-passe"}' | jq -r .token)
+  -d "$(jq -nc --arg mdp "$MDP" '{identity:"vous@exemple.fr",password:$mdp}')" | jq -r .token)
 
 curl -s -X POST http://127.0.0.1:8090/api/backups/avant-mise-a-jour.zip/restore \
   -H "Authorization: $JETON"
@@ -355,24 +405,50 @@ restauration est destructive, et se tromper de terminal arrive.
 Le scénario complet : une recette avec image, une sauvegarde, la recette
 supprimée, la restauration, la recette de retour — image comprise.
 
+Le mot de passe de cette instance est jetable, mais c'est le geste qui
+s'apprend : il se tape à part, lui aussi. Cette ligne **seule**, d'abord :
+
 ```sh
+printf "Mot de passe de l'instance jetable : "; read -rs MDP; echo
+```
+
+Puis :
+
+```sh
+: "${MDP:?mot de passe absent : tapez-le avec le bloc ci-dessus}"
 ESSAI=$(mktemp -d)
 echo "$ESSAI"   # recopiez ce chemin : le second terminal en aura besoin
 go build -o "$ESSAI/patachoo" ./cmd/patachoo
-"$ESSAI/patachoo" superuser upsert essai@exemple.fr 'mot-de-passe-jetable-32' --dir "$ESSAI/pb_data"
+"$ESSAI/patachoo" superuser upsert essai@exemple.fr "$MDP" --dir "$ESSAI/pb_data"
 "$ESSAI/patachoo" serve --dir "$ESSAI/pb_data" --http 127.0.0.1:8137
 ```
 
-Dans un second terminal, en replaçant `ESSAI` — c'est une variable de
-shell, elle ne franchit pas la fenêtre, et sans elle les commandes qui suivent
-viseraient `/pb_data` :
+Le `read` sort le mot de passe de l'historique du shell, pas de `ps` : la
+variable est développée avant l'exécution, et `superuser upsert` la reçoit en
+argument comme avant — la sous-commande vient de PocketBase et n'en prend pas
+d'autre.
+
+Dans un second terminal, en replaçant `ESSAI` et en redonnant le même mot de
+passe — ce sont des variables de shell, elles ne franchissent pas la fenêtre, et
+sans la première les commandes qui suivent viseraient `/pb_data`.
+
+Le mot de passe d'abord — le même que dans le premier terminal, et cette ligne
+**seule** :
 
 ```sh
+printf "Mot de passe de l'instance jetable : "; read -rs MDP; echo
+```
+
+Puis, en replaçant `ESSAI` :
+
+```sh
+: "${MDP:?mot de passe absent : tapez-le avec le bloc ci-dessus}"
 ESSAI=<le chemin affiché par le echo ci-dessus>
 BASE=http://127.0.0.1:8137
+
 JETON=$(curl -s -X POST "$BASE/api/collections/_superusers/auth-with-password" \
   -H 'Content-Type: application/json' \
-  -d '{"identity":"essai@exemple.fr","password":"mot-de-passe-jetable-32"}' | jq -r .token)
+  -d "$(jq -nc --arg mdp "$MDP" '{identity:"essai@exemple.fr",password:$mdp}')" | jq -r .token)
 
 # une recette avec son image
 python3 -c "import base64,sys; sys.stdout.buffer.write(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='))" > "$ESSAI/tarte.png"
@@ -398,7 +474,7 @@ sleep 10
 # la preuve : la recette est revenue, et son image se télécharge
 JETON=$(curl -s -X POST "$BASE/api/collections/_superusers/auth-with-password" \
   -H 'Content-Type: application/json' \
-  -d '{"identity":"essai@exemple.fr","password":"mot-de-passe-jetable-32"}' | jq -r .token)
+  -d "$(jq -nc --arg mdp "$MDP" '{identity:"essai@exemple.fr",password:$mdp}')" | jq -r .token)
 curl -s "$BASE/api/collections/recipes/records" -H "Authorization: $JETON" | jq -r '.totalItems, .items[0].title, .items[0].image'
 IMAGE=$(curl -s "$BASE/api/collections/recipes/records" -H "Authorization: $JETON" | jq -r '.items[0].image')
 curl -s -o /dev/null -w '%{http_code}\n' "$BASE/api/files/recipes/$RECETTE/$IMAGE"   # 200
