@@ -13,6 +13,9 @@ jobs:
       contents: read
     env:
       AVEC_RACE: "1"
+      # Le cache de go test survit d'un job à l'autre sur un runner
+      # persistant : sans cela, -race ne rejouerait pas ses dés.
+      GOFLAGS: -count=1
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
