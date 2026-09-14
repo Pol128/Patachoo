@@ -213,17 +213,26 @@ func seConnecteDepuis(t *testing.T, mux http.Handler, ip, courriel, motDePasse s
 }
 
 // seConnecteParLaChaineDeRequete joue ce que le produit n'émet jamais : un POST
-// au corps vide, dont les identifiants sont dans l'URL.
+// dont les identifiants sont dans l'URL, et dont le corps n'en porte aucun.
 //
-// Le Content-Type reste celui d'un formulaire : sans lui, un corps vide serait
+// Le Content-Type reste celui d'un formulaire : sans lui, le corps serait
 // refusé avant d'atteindre la route, et le test prouverait seulement qu'on ne
 // sait pas poster.
+//
+// Le corps porte le seul jeton anti-rejeu, et les identifiants restent seuls
+// dans la chaîne de requête : le contrôle le lit par valeursSoumises, qui rend
+// PostForm et ignore donc l'URL. Sans lui, la requête serait refusée en 403
+// avant la route, et ce test ne dirait plus rien de ce qu'elle lit — seulement
+// qu'un POST sans jeton ne passe pas, ce que TestLesOnzeRoutesPostRefusentUnePostSansJeton
+// couvre déjà.
 func seConnecteParLaChaineDeRequete(t *testing.T, mux http.Handler, ip, courriel, motDePasse string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	champs := url.Values{"courriel": {courriel}, "mot-de-passe": {motDePasse}}
-	req := httptest.NewRequest(http.MethodPost, "/connexion?"+champs.Encode(), nil)
+	corps := leJetonEstPose(url.Values{})
+	req := httptest.NewRequest(http.MethodPost, "/connexion?"+champs.Encode(), strings.NewReader(corps.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookieDuJetonDeTest())
 	req.RemoteAddr = net.JoinHostPort(ip, "1234")
 
 	rec := httptest.NewRecorder()
