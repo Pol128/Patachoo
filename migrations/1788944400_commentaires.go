@@ -72,9 +72,15 @@ func init() {
 		// lit. Écrire, c'est écrire en son nom ; corriger ou retirer reste à
 		// qui a écrit.
 		//
-		// Une règle plutôt qu'un hook : PATA-35 protège recipes.created_by par
-		// un hook parce que le champ y est facultatif et rempli après coup. Ici
-		// la règle de création suffit à rendre author infalsifiable par l'API.
+		// La règle de création rend author infalsifiable à la création, et à
+		// elle seule : PocketBase n'évalue UpdateRule qu'en allant chercher la
+		// ligne, donc sur son état d'avant modification. Un compte retournait
+		// ainsi sa propre note au nom d'un autre — la règle voyait une note qui
+		// était bien la sienne, le changement d'author venait après (PATA-63).
+		// author et recipe sont donc figés à la modification par un hook, fige()
+		// dans cmd/patachoo/acces.go, comme recipes.created_by depuis PATA-35.
+		// Les règles ci-dessous restent en place : le hook couvre ce qu'elles
+		// laissent passer, il ne les remplace pas.
 		//
 		// « author = @request.auth.id » n'a pas besoin du premier terme que
 		// porte la règle de suppression des recettes : author est obligatoire,
