@@ -134,7 +134,14 @@ func TestLesRedirectionsSontComptees(t *testing.T) {
 // boucle locale, qu'une exception autorise, et non sur ce que la politique
 // laisse sortir.
 func TestUneAdressePubliqueEstAcceptee(t *testing.T) {
-	for _, brute := range []string{"93.184.216.34", "2606:2800:220:1:248:1893:25c8:1946"} {
+	// Les deux dernières enferment 93.184.216.34, qui est publique : la
+	// réduction interdit ce que l'adresse porte, pas le préfixe qui la porte.
+	for _, brute := range []string{
+		"93.184.216.34",
+		"2606:2800:220:1:248:1893:25c8:1946",
+		"64:ff9b::5db8:d822",
+		"2002:5db8:d822::",
+	} {
 		if adresseInterdite(netip.MustParseAddr(brute)) {
 			t.Errorf("%s refusée : la politique n'a plus rien à autoriser", brute)
 		}
@@ -146,11 +153,27 @@ func TestUneAdressePubliqueEstAcceptee(t *testing.T) {
 // parce que le composeur ramène la plupart de ces formes à leur écriture v4
 // avant même que la politique les voie : le test passerait alors sans rien
 // prouver.
+//
+// Quatre écritures enferment une IPv4 dans une IPv6, et Unmap n'en connaît
+// qu'une. Les trois autres mènent quelque part dès qu'une passerelle les
+// traduit : sur une installation IPv6 seule derrière du NAT64,
+// [64:ff9b::a9fe:a9fe] est le service de métadonnées de l'hébergeur.
 func TestLesFormesMappeesSontRamenees(t *testing.T) {
-	for _, brute := range []string{"::ffff:127.0.0.1", "::ffff:10.0.0.1", "::ffff:0.0.0.0", "::ffff:169.254.169.254"} {
-		if !adresseInterdite(netip.MustParseAddr(brute)) {
-			t.Errorf("%s acceptée : la forme mappée doit être ramenée avant l'examen", brute)
-		}
+	cas := map[string][]string{
+		"mappée ::ffff:0:0/96": {"::ffff:127.0.0.1", "::ffff:10.0.0.1", "::ffff:0.0.0.0", "::ffff:169.254.169.254"},
+		"NAT64 64:ff9b::/96":   {"64:ff9b::a9fe:a9fe", "64:ff9b::7f00:1", "64:ff9b::a00:1"},
+		"6to4 2002::/16":       {"2002:0a00:0001::", "2002:7f00:0001::"},
+		"compatible v4 ::/96":  {"::127.0.0.1"},
+	}
+
+	for famille, brutes := range cas {
+		t.Run(famille, func(t *testing.T) {
+			for _, brute := range brutes {
+				if !adresseInterdite(netip.MustParseAddr(brute)) {
+					t.Errorf("%s acceptée : la forme %s doit être ramenée avant l'examen", brute, famille)
+				}
+			}
+		})
 	}
 }
 

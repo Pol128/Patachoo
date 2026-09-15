@@ -714,14 +714,14 @@ func (f formulaireRecette) lignesDIngredients() []string {
 // de la recette, avant la lecture du formulaire.
 func brancheLesRecettes(routeur *router.Router[*core.RequestEvent]) {
 	routeur.GET("/recettes/nouvelle", pageNouvelleRecette).Bind(exigeUneSession())
-	routeur.POST("/recettes", creeLaRecette).Bind(exigeUneSession())
+	routeur.POST("/recettes", creeLaRecette).Bind(exigeLeJetonAntiRejeu(), exigeUneSession())
 	routeur.GET("/recettes/{id}/modifier", pageModifierRecette).Bind(exigeUneSession())
-	routeur.POST("/recettes/{id}", metAJourLaRecette).Bind(exigeUneSession())
+	routeur.POST("/recettes/{id}", metAJourLaRecette).Bind(exigeLeJetonAntiRejeu(), exigeUneSession())
 
 	// La suppression (suppression.go) : la confirmation, puis le geste.
 	supprimer := "/recettes/{id}/supprimer"
 	routeur.GET(supprimer, laRouteDUneSuppression(pageSupprimerRecette)).Bind(exigeUneSession())
-	routeur.POST(supprimer, laRouteDUneSuppression(supprimeLaRecette)).Bind(exigeUneSession())
+	routeur.POST(supprimer, laRouteDUneSuppression(supprimeLaRecette)).Bind(exigeLeJetonAntiRejeu(), exigeUneSession())
 }
 
 // exigeUneSession renvoie un visiteur à la page de connexion.
@@ -835,7 +835,14 @@ func enregistre(e *core.RequestEvent, recette *core.Record, saisie formulaireRec
 	// distante peut prendre dix secondes, et une transaction d'écriture tenue
 	// aussi longtemps bloquerait toutes les autres. Rien n'est écrit pour
 	// autant — le fichier ne part en stockage qu'au Save, avec la recette.
+	// Le refus d'une image est trié ici : poseLImage est appelée hors
+	// transaction, et le tri qui suit la transaction ne la verrait pas passer.
+	// Sans ça, une image refusée sortirait en 500 alors que l'utilisateur peut
+	// en choisir une autre.
 	if err := poseLImage(e, recette); err != nil {
+		if message := messageDeSaisie(recette.Collection(), err); message != "" {
+			return rendLeFormulaire(e, saisie, message)
+		}
 		return err
 	}
 
@@ -936,6 +943,24 @@ func poseLImage(e *core.RequestEvent, recette *core.Record) error {
 	fichier, entete, err := e.Request.FormFile("image")
 	if err == nil {
 		defer fichier.Close()
+
+		// Les dimensions se mesurent avant le stockage, par le même garde-fou
+		// que l'image téléchargée : le plafond d'octets du schéma borne ce qui
+		// transite, pas la mémoire que PocketBase allouera en fabriquant la
+		// miniature.
+		//
+		// Un en-tête que nous ne savons pas lire n'est pas un refus : le
+		// schéma reste seul juge du format, et il accepte l'AVIF, que la
+		// bibliothèque de miniatures ne décodera pas davantage.
+		//
+		// Rien n'est à rembobiner : NewFileFromMultipart rouvre le fichier
+		// depuis le *multipart.FileHeader, elle ne reprend pas ce descripteur.
+		if _, err := jugeLEntete(fichier); errors.Is(err, errTropDePixels) {
+			return erreurDeSaisie{message: fmt.Sprintf(
+				"Le champ « %s » n'a pas été accepté : ses dimensions dépassent le plafond de %d pixels.",
+				libelleDuChamp["image"], pixelsMax,
+			)}
+		}
 
 		televerse, err := filesystem.NewFileFromMultipart(entete)
 		if err != nil {

@@ -66,8 +66,8 @@ func pageConnexion(e *core.RequestEvent) error {
 // Une redirection, et non un fragment : une réponse HTMX ne rend pas la mise
 // en page, et l'en-tête resterait donc sur son état de visiteur.
 func connexion(e *core.RequestEvent) error {
-	courriel := strings.TrimSpace(e.Request.FormValue("courriel"))
-	motDePasse := e.Request.FormValue("mot-de-passe")
+	courriel := strings.TrimSpace(e.Request.PostFormValue("courriel"))
+	motDePasse := e.Request.PostFormValue("mot-de-passe")
 
 	compte, err := e.App.FindAuthRecordByEmail("users", courriel)
 	if err != nil || !compte.ValidatePassword(motDePasse) {
@@ -182,8 +182,38 @@ func echecDeConnexion(e *core.RequestEvent) error {
 	})
 }
 
-// deconnexion efface le cookie et renvoie à l'accueil.
+// deconnexion révoque les jetons du compte, efface le cookie et renvoie à
+// l'accueil.
+//
+// La révocation d'abord, parce qu'effacer le cookie ne referme que le
+// navigateur : la validité d'un jeton se lit dans sa seule signature
+// (core/record_tokens.go), et rien ne consulte de liste de jetons retirés. Une
+// copie prise avant le geste — extension, proxy qui termine le TLS, profil
+// sauvegardé — continuait donc d'ouvrir le compte jusqu'à l'échéance du jeton,
+// et toute l'API REST avec. La déconnexion mentait à celui qui la demandait.
+//
+// Par compte, et non par session : la clé de signature est commune à tous les
+// jetons du compte, et PocketBase n'offre rien de plus fin — une révocation par
+// session demanderait une liste de jetons retirés que ni le produit ni
+// PocketBase n'ont. Se déconnecter ici ferme donc les sessions du compte sur
+// tous ses appareils. C'est assumé : mieux vaut un geste qui emporte trop qu'un
+// geste qui ne referme rien.
+//
+// L'échec de la sauvegarde ne remonte pas au visiteur. Une page d'erreur le
+// laisserait devant sa session encore ouverte dans le navigateur, soit
+// l'inverse de ce qu'il demandait : le cookie est effacé et la redirection
+// rendue quand même, et c'est le journal qui porte l'incident.
+//
+// Le garde sur e.Auth tient même si la route exige aujourd'hui une session : le
+// jour où elle serait rebranchée sans, le handler ne doit pas déréférencer nil.
 func deconnexion(e *core.RequestEvent) error {
+	if e.Auth != nil {
+		e.Auth.RefreshTokenKey()
+		if err := e.App.Save(e.Auth); err != nil {
+			e.App.Logger().Error("révocation des jetons à la déconnexion impossible", "erreur", err)
+		}
+	}
+
 	poseLeCookieDeSession(e, cookieDeSessionEfface())
 	return e.Redirect(http.StatusSeeOther, "/")
 }

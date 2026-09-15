@@ -92,18 +92,22 @@ func main() {
 // middlewares qui fait tenir la session, et un test qui rebâtirait son propre
 // montage ne vérifierait que lui-même.
 func brancheLesRoutes(routeur *router.Router[*core.RequestEvent]) {
+	routeur.Bind(poseLesEntetesDeReponse())
 	brancheLaSession(routeur)
+	brancheLAntiRejeu(routeur)
 
 	routeur.GET("/", pageAccueil)
 	routeur.GET("/recettes", pageListeRecettes)
 	routeur.GET("/recettes/{id}", pageRecette)
 	routeur.GET("/connexion", pageConnexion)
 	routeur.POST("/connexion", connexion).
-		Bind(rendLeDepassementEnHTML("patachooDepassementConnexion", rendLeDepassementDeConnexion))
-	routeur.POST("/deconnexion", deconnexion)
+		Bind(exigeLeJetonAntiRejeu(),
+			rendLeDepassementEnHTML("patachooDepassementConnexion", rendLeDepassementDeConnexion))
+	routeur.POST("/deconnexion", deconnexion).Bind(exigeLeJetonAntiRejeu(), exigeUneSession())
 	routeur.GET("/inscription", pageInscription)
 	routeur.POST("/inscription", inscription).
-		Bind(rendLeDepassementEnHTML("patachooDepassementInscription", rendLeDepassementDInscription))
+		Bind(exigeLeJetonAntiRejeu(),
+			rendLeDepassementEnHTML("patachooDepassementInscription", rendLeDepassementDInscription))
 	brancheLesRecettes(routeur)
 	brancheLesTags(routeur)
 	brancheLesCommentaires(routeur)

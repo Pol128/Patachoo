@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{.Titre}}</title>
 <link rel="stylesheet" href="/statique/patachoo.css">
+<meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false}'>
 <script src="/statique/htmx.min.js" defer></script>
 </head>
 <body>
@@ -19,7 +20,7 @@
 {{with .Utilisateur}}
 <div class="compte">
 <span>Connecté en tant que {{.Nom}}</span>
-<form method="post" action="/deconnexion"><button type="submit">Déconnexion</button></form>
+<form method="post" action="/deconnexion"><input type="hidden" name="_antirejeu" value="{{$.JetonAntiRejeu}}"><button type="submit">Déconnexion</button></form>
 </div>
 {{else}}
 <div class="compte"><a href="/connexion">Connexion</a></div>

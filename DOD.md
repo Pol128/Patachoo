@@ -14,11 +14,16 @@ AVEC_RACE=1 ./verifie    # la même chose avec -race — ~20 min
 Le script échoue au premier manquement. C'est le minimum, pas la DoD complète :
 les points 2 à 5 ne s'automatisent pas.
 
-**Une tâche livrée inscrit ce qu'elle change sous « À paraître » dans
-[CHANGELOG.md](CHANGELOG.md)**, dans la même demande de fusion que son code. Une
-ligne, en français, qui dit ce que l'utilisateur verra de différent — pas le
-détail de l'implémentation. Sans cette règle, le fichier naît et meurt le même
-jour.
+**Une tâche livrée dépose ce qu'elle change dans `changelog.d/<son
+identifiant>.md`**, dans la même demande de fusion que son code. Une ligne, en
+français, qui dit ce que l'utilisateur verra de différent — pas le détail de
+l'implémentation. Sans cette règle, le journal naît et meurt le même jour.
+
+Un fichier par tâche, et non une ligne commune dans
+[CHANGELOG.md](CHANGELOG.md) : deux tâches n'écrivent alors jamais au même
+endroit, et ne peuvent plus se mettre en conflit sur leur seule entrée de
+journal. `./journal` montre ce que « À paraître » contiendra ;
+`./journal publier <version>` assemble le tout le jour venu.
 
 **Deux passes, un seul script.** `./verifie` nu est la boucle courte, à lancer à
 chaque geste. `AVEC_RACE=1 ./verifie` lance les mêmes tests sous le détecteur de

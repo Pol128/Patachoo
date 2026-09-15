@@ -41,6 +41,13 @@ type donneesPage struct {
 	// Utilisateur.
 	Version string
 
+	// JetonAntiRejeu est la moitié de la paire que chaque formulaire en POST
+	// recopie dans un champ caché. Posée par rendre, comme les deux
+	// précédentes, et jamais par les pages : une page qui oublierait de la
+	// recopier verrait sa propre soumission refusée en 403, et le formulaire
+	// serait mort sans que rien ne le dise à sa route.
+	JetonAntiRejeu string
+
 	// Recette n'est rempli que par la fiche, et nil partout ailleurs : le
 	// gabarit de la fiche s'ouvre sur un {{with}}, donc une page qui l'oublie
 	// ne rend rien plutôt que d'échouer à mi-parcours.
@@ -70,12 +77,19 @@ func (d *donneesPage) poseVersion(v string) {
 	d.Version = v
 }
 
+// poseJetonAntiRejeu, de même : le jeton est une donnée de la requête, pas de
+// la page.
+func (d *donneesPage) poseJetonAntiRejeu(jeton string) {
+	d.JetonAntiRejeu = jeton
+}
+
 // donneesDePage est ce que rendre sait remplir : n'importe quelle structure de
 // page, pourvu qu'elle embarque donneesPage. Un pointeur, toujours — une copie
 // recevrait l'utilisateur et le gabarit lirait l'original.
 type donneesDePage interface {
 	poseUtilisateur(*utilisateur)
 	poseVersion(string)
+	poseJetonAntiRejeu(string)
 }
 
 // pageAccueil renvoie à la liste des recettes.
@@ -123,6 +137,7 @@ func rendre(e *core.RequestEvent, page, fragment string, donnees donneesDePage, 
 func rendreAvecStatut(e *core.RequestEvent, statut int, page, fragment string, donnees donneesDePage, enPlus ...string) error {
 	donnees.poseUtilisateur(utilisateurCourant(e))
 	donnees.poseVersion(versionAffichee)
+	donnees.poseJetonAntiRejeu(jetonAntiRejeuCourant(e))
 
 	motifs := []string{"vues/" + fragment}
 	if !estHTMX(e) {

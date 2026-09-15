@@ -223,6 +223,13 @@ func Recupere(ctx context.Context, adresse string, choix ...Option) (Page, error
 
 	r := &recuperateur{o: o, restant: o.delaiMax}
 	r.client = &http.Client{Transport: r.pile(), CheckRedirect: r.verifieRedirection}
+	// Le transport est propre à l'appel et rien ne le partage : passé ce
+	// retour, plus personne ne peut réutiliser ses connexions inactives, mais
+	// elles vivraient encore quatre-vingt-dix secondes. Les deux requêtes de
+	// l'appel — robots.txt puis la page — sont faites à ce moment-là, et
+	// page() a déjà lu le corps en entier dans Page.Corps : fermer ici ne
+	// coupe aucune lecture en cours et ne coûte aucune réutilisation réelle.
+	defer r.client.CloseIdleConnections()
 
 	if refus := r.robotsInterdit(ctx, cible); refus != nil {
 		return Page{}, refus
@@ -357,14 +364,52 @@ func (r *recuperateur) controle(_, adresse string, _ syscall.RawConn) error {
 	return nil
 }
 
+// Les trois préfixes qui enferment une IPv4 dans une IPv6 et que netip.Addr.Unmap
+// ne connaît pas — il ne réduit que la forme mappée ::ffff:0:0/96.
+var (
+	// prefixeNAT64 (RFC 6052) est ce par quoi un hôte IPv6 seul joint
+	// l'Internet v4, à travers une passerelle NAT64/DNS64.
+	prefixeNAT64 = netip.MustParsePrefix("64:ff9b::/96")
+	// prefixe6to4 porte l'IPv4 du relais dans les bits 16 à 47.
+	prefixe6to4 = netip.MustParsePrefix("2002::/16")
+	// prefixeCompatibleV4 est la forme dépréciée par le RFC 4291 : le noyau
+	// refuse de l'atteindre. Elle est réduite par cohérence.
+	prefixeCompatibleV4 = netip.MustParsePrefix("::/96")
+)
+
+// reduite ramène une adresse à l'IPv4 qu'elle enferme, comme Unmap le fait pour
+// la forme mappée. Elle rend l'adresse telle quelle si celle-ci n'enferme rien.
+func reduite(a netip.Addr) netip.Addr {
+	a = a.Unmap()
+	o := a.As16()
+	switch {
+	case prefixeNAT64.Contains(a), prefixeCompatibleV4.Contains(a):
+		return netip.AddrFrom4([4]byte(o[12:16]))
+	case prefixe6to4.Contains(a):
+		return netip.AddrFrom4([4]byte(o[2:6]))
+	}
+	return a
+}
+
 // adresseInterdite dit les adresses que nous n'allons pas chercher : la boucle
 // locale, les plages privées, le lien-local — dont 169.254.169.254, qui sert les
 // métadonnées des hébergeurs — le multicast et l'adresse non spécifiée.
 //
-// La forme mappée ::ffff:127.0.0.1 est ramenée à sa forme v4 avant l'examen :
-// sans quoi elle passerait pour une adresse v6 quelconque.
+// Quatre écritures enferment une IPv4 dans une IPv6, et chacune est ramenée à ce
+// qu'elle porte avant l'examen : sans quoi elle passerait pour une adresse v6
+// quelconque, qu'une passerelle traduirait ensuite vers ce que nous refusons. La
+// forme mappée ::ffff:127.0.0.1, le préfixe NAT64 64:ff9b::/96, 6to4 2002::/16
+// et la forme compatible v4 ::/96.
+//
+// L'examen porte sur les deux formes, parce que réduire en ouvrirait une autre :
+// ::1 appartient à ::/96 et se réduit en 0.0.0.1, qui n'est ni la boucle locale
+// ni l'adresse non spécifiée. Une adresse est donc interdite si l'une ou l'autre
+// de ses deux formes l'est.
 func adresseInterdite(a netip.Addr) bool {
-	a = a.Unmap()
+	return interdite(a.Unmap()) || interdite(reduite(a))
+}
+
+func interdite(a netip.Addr) bool {
 	return !a.IsValid() ||
 		a.IsUnspecified() ||
 		a.IsLoopback() ||

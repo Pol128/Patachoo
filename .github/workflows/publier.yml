@@ -1,0 +1,109 @@
+# La publication de l'image, faite par la CI et par elle seule.
+#
+# Ce que ce fichier achète, et qui manquait tant que l'image était construite à
+# la main : la construction ne dépend plus d'un poste de développement — donc
+# plus de ses jetons ni de ce qui traîne dessus —, et chaque image publiée porte
+# une attestation de provenance qui la relie au commit et au workflow qui l'ont
+# produite. `ghcr.io/pol128/patachoo:latest` cesse d'être une promesse
+# invérifiable ; INSTALL.md dit à l'hébergeant comment la vérifier.
+#
+# Il ne rejoue pas `./verifie`. Le tag se pose sur un commit de `main` que
+# verifie.yml a déjà passé, et la passe `-race` coûte vingt minutes (DOD.md §1).
+# La contrepartie est assumée, et elle s'écrit : un tag posé sur un commit non
+# vérifié publierait du non vérifié.
+
+name: publier
+
+# Un tag, et rien d'autre. Pas de `branches:`, pas de `pull_request:`, pas de
+# `workflow_dispatch:` — un déclencheur manuel rendrait publiable n'importe
+# quelle ref, et c'est précisément ce que ce fichier ferme.
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  publier:
+    runs-on: ubuntu-latest
+
+    # Les droits qu'il faut, et pas un de plus. Le bloc va sur le job, comme
+    # dans verifie.yml : ce qui est écrit ici ne vaut que pour lui.
+    #
+    #   contents: read      — lire le dépôt à construire
+    #   packages: write     — pousser l'image sur ghcr.io
+    #   id-token: write     — le jeton OIDC dont l'attestation tire sa signature
+    #   attestations: write — enregistrer l'attestation produite
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # La clé du registre est celle du job : éphémère, limitée à ce dépôt, et
+      # jamais recopiée nulle part. Un jeton personnel déposé en secret de dépôt
+      # ferait vivre cette clé ailleurs que dans la CI — c'est exactement ce que
+      # ce workflow cherche à faire disparaître.
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # buildx, et pas QEMU. L'étape Go du Dockerfile tourne en
+      # `--platform=$BUILDPLATFORM` et compile en croisé (`CGO_ENABLED=0`) ;
+      # l'image finale est `FROM scratch`. Rien ne s'exécute à l'architecture
+      # cible, l'émulation coûterait dix fois le temps de construction pour
+      # rien — c'est écrit dans le Dockerfile lui-même.
+      - uses: docker/setup-buildx-action@v4
+
+      # La version que le binaire annoncera : le nom du tag privé de son « v »
+      # initial (v0.1.0 → 0.1.0). Sans elle, le binaire dirait « dev »
+      # (cmd/patachoo/version.go) et l'étiquette OCI
+      # org.opencontainers.image.version avec lui (Dockerfile).
+      - name: Version
+        id: version
+        run: echo "numero=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      # Les références à pousser. `type=semver` rend 0.1.0 et 0.1 pour un
+      # v0.1.0 ; `latest=auto` n'ajoute `latest` que si le tag n'est pas une
+      # pré-version — v0.2.0-rc.1 publie donc 0.2.0-rc.1 seul, et ne déplace pas
+      # le tag que le docker-compose par défaut suit.
+      #
+      # Seuls les tags sont repris d'ici, pas les étiquettes : le Dockerfile
+      # écrit déjà les siennes, et celles de cette action les remplaceraient par
+      # les métadonnées GitHub du dépôt.
+      - name: Références
+        id: references
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/pol128/patachoo
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+          flavor: latest=auto
+
+      - name: Construire et pousser
+        id: pousser
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          # Les trois architectures qu'INSTALL.md promet sous un même manifeste.
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          push: true
+          tags: ${{ steps.references.outputs.tags }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.numero }}
+
+      # Sur l'empreinte rendue par la poussée, jamais sur un tag : un tag bouge,
+      # une empreinte non. `push-to-registry` dépose l'attestation à côté de
+      # l'image dans le registre, ce qui la rend vérifiable sans passer par
+      # l'API GitHub — la commande est dans INSTALL.md.
+      - name: Attester la provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ghcr.io/pol128/patachoo
+          subject-digest: ${{ steps.pousser.outputs.digest }}
+          push-to-registry: true
