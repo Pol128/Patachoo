@@ -193,6 +193,11 @@ func analyseRobots(texte string) robots {
 	// Des User-agent consécutifs partagent le même bloc de règles : la
 	// première règle rencontrée les referme tous.
 	suiteDAgents := false
+	// Les règles retenues, tous groupes confondus : c'est ce que l'hôte nous
+	// fait garder en mémoire pour la durée de la fournée, et c'est donc là que
+	// la borne se compte — un fichier qui répartit ses règles sur mille
+	// groupes en retient autant qu'un qui les met toutes dans un seul.
+	retenues := 0
 
 	for _, brute := range strings.Split(texte, "\n") {
 		ligne := strings.TrimSpace(brute)
@@ -233,8 +238,17 @@ func analyseRobots(texte string) robots {
 			if valeur == "" && champ == "disallow" {
 				continue
 			}
+			if retenues >= reglesMaxParRobots {
+				// Au-delà de la borne, la règle est ignorée comme l'est la
+				// queue du fichier au-delà du plafond de taille : on applique
+				// ce qu'on a retenu, on ne refuse pas le site. La lecture
+				// continue pour les Crawl-delay des groupes qui suivent, dont
+				// le nombre est déjà borné par la taille du fichier.
+				continue
+			}
 			dernier := &r.groupes[len(r.groupes)-1]
 			dernier.regles = append(dernier.regles, nouvelleRegle(valeur, champ == "allow"))
+			retenues++
 		default:
 			suiteDAgents = false
 		}
