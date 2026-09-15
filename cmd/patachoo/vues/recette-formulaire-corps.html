@@ -2,6 +2,7 @@
 {{if .Message}}<p class="erreur" role="alert">{{.Message}}</p>{{end}}
 {{with .Formulaire}}
 <form class="formulaire-recette" method="post" action="{{.Action}}" enctype="multipart/form-data">
+<input type="hidden" name="_antirejeu" value="{{$.JetonAntiRejeu}}">
 <label for="titre">Titre</label>
 <input type="text" id="titre" name="titre" value="{{.Titre}}" required>
 

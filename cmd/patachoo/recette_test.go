@@ -560,7 +560,11 @@ func TestUneRecetteDepouilleeNeRendAucunLibelle(t *testing.T) {
 	app, mux, cookie := serveurConnecte(t)
 	recette := recetteEnBase(t, app, map[string]any{"title": "Pain perdu"})
 
-	corps := fiche(mux, cookie, recette.Id).Body.String()
+	// Le contenu seul, et non le document entier : la mise en page porte le
+	// réglage htmx de la politique de sécurité du contenu, dont la clé
+	// allowScriptTags contient le libellé « Tags ». Un libellé orphelin est
+	// de toute façon une affaire de fiche, pas d'en-tête ni de pied de page.
+	corps := entreLesBalises(t, fiche(mux, cookie, recette.Id).Body.String(), "<main>", "</main>")
 
 	for _, libelle := range []string{
 		"Portions",

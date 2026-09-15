@@ -137,9 +137,9 @@ func TestLePlafondCompteAussiUneSessionOuverte(t *testing.T) {
 // parle JSON à ses clients : lui rendre une page de connexion serait remplacer
 // une erreur lisible par du HTML qu'aucun client ne sait lire.
 //
-// Le dépassement s'obtient ici sur la règle `*:auth` livrée par PocketBase
-// (2 requêtes par 3 s), que l'activation des réglages allume du même coup —
-// c'est la conséquence assumée du choix de passer par eux.
+// Le dépassement s'obtient ici sur la règle `users:auth`, qui aligne la route de
+// l'API sur le plafond de /connexion : c'est donc le sixième appel qui est le
+// premier refusé, là où `*:auth` refusait le troisième.
 func TestUnDepassementSurLAPIResteEnJSON(t *testing.T) {
 	app, mux := serveurDeTest(t)
 	compteParDefaut(t, app)
@@ -147,18 +147,81 @@ func TestUnDepassementSurLAPIResteEnJSON(t *testing.T) {
 	const ip = "203.0.113.18"
 
 	var rec *httptest.ResponseRecorder
-	for tentative := 1; tentative <= 3; tentative++ {
+	for tentative := 1; tentative <= seuilDAuthentificationParLAPI+1; tentative++ {
 		rec = authentifieParLAPI(t, mux, ip)
 	}
 
 	if rec.Code != http.StatusTooManyRequests {
-		t.Fatalf("statut %d à la troisième authentification par l'API, attendu %d : la règle *:auth ne s'applique pas",
-			rec.Code, http.StatusTooManyRequests)
+		t.Fatalf("statut %d à l'authentification %d par l'API, attendu %d : aucune règle de débit ne s'applique",
+			rec.Code, seuilDAuthentificationParLAPI+1, http.StatusTooManyRequests)
 	}
 	if typeDeContenu := rec.Header().Get("Content-Type"); !strings.Contains(typeDeContenu, "application/json") {
 		t.Errorf("Content-Type %q sur l'API, attendu de l'application/json", typeDeContenu)
 	}
 	exigeSansAucun(t, rec.Body.String(), "<form")
+}
+
+// seuilDAuthentificationParLAPI est le nombre de
+// POST /api/collections/users/auth-with-password qu'une même adresse a le droit
+// de jouer dans la fenêtre.
+//
+// Écrit en clair, et non relu depuis la migration, pour la même raison que
+// seuilDeConnexion. Le même chiffre que la porte d'à côté : la route de l'API
+// accepte exactement les mêmes identifiants que le formulaire, et un plafond
+// qu'on croit à 5 et qui vaut 40 est un plafond dont on ne peut plus rien
+// déduire.
+const seuilDAuthentificationParLAPI = 5
+
+// Les compteurs des deux portes restent séparés — la clé du limiteur est
+// collection.Id + Request.Pattern + étiquettes (checkRateLimit) —, donc une même
+// adresse dispose de 5 essais par minute ici et de 5 sur /connexion. C'est
+// assumé : les réglages de PocketBase ne savent pas partager un compteur.
+func TestLaSixiemeAuthentificationParLAPIEstRefusee(t *testing.T) {
+	app, mux := serveurDeTest(t)
+	compteParDefaut(t, app)
+
+	const ip = "203.0.113.19"
+
+	for tentative := 1; tentative <= seuilDAuthentificationParLAPI; tentative++ {
+		rec := authentifieParLAPI(t, mux, ip)
+		if rec.Code == http.StatusTooManyRequests {
+			t.Fatalf("authentification %d refusée alors que le seuil est de %d",
+				tentative, seuilDAuthentificationParLAPI)
+		}
+	}
+
+	rec := authentifieParLAPI(t, mux, ip)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("authentification %d : statut %d, attendu %d — la route de l'API n'est pas plafonnée comme /connexion",
+			seuilDAuthentificationParLAPI+1, rec.Code, http.StatusTooManyRequests)
+	}
+}
+
+// L'étiquette posée est users:auth, et non *:auth : la seconde couvre aussi
+// POST /api/collections/_superusers/auth-with-password, et la relever à 5 par
+// minute relèverait du même coup le plafond de l'authentification
+// d'administration — huit fois plus d'essais sur le compte qui peut tout.
+//
+// L'authentification superuser reste donc sur la règle livrée par PocketBase,
+// 2 requêtes par 3 s : c'est la troisième tentative qui est refusée. C'est ce
+// test qui rougit si quelqu'un écrit *:auth à la place.
+func TestLAuthentificationSuperuserResteSurLaRegleLivree(t *testing.T) {
+	_, mux := serveurDeTest(t)
+
+	const ip = "203.0.113.26"
+
+	for tentative := 1; tentative <= 2; tentative++ {
+		rec := authentifieDansLaCollectionParLAPI(t, mux, "_superusers", ip)
+		if rec.Code == http.StatusTooManyRequests {
+			t.Fatalf("tentative superuser %d refusée alors que *:auth en autorise 2", tentative)
+		}
+	}
+
+	rec := authentifieDansLaCollectionParLAPI(t, mux, "_superusers", ip)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("tentative superuser 3 : statut %d, attendu %d — l'authentification d'administration ne tombe plus sur *:auth",
+			rec.Code, http.StatusTooManyRequests)
+	}
 }
 
 // epuiseLePlafond joue une tentative de trop depuis la même adresse et rend la
@@ -183,22 +246,37 @@ func tenteAvecCookie(t *testing.T, mux http.Handler, ip string, cookie *http.Coo
 	t.Helper()
 
 	req := httptest.NewRequest(http.MethodPost, "/connexion",
-		strings.NewReader("courriel="+courrielDeTest+"&mot-de-passe=pas-le-bon-mot-de-passe"))
+		strings.NewReader("courriel="+courrielDeTest+"&mot-de-passe=pas-le-bon-mot-de-passe"+
+			"&"+nomDuChampAttendu+"="+jetonDeTest))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.RemoteAddr = net.JoinHostPort(ip, "1234")
 	req.AddCookie(cookie)
+	req.AddCookie(cookieDuJetonDeTest())
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	return rec
 }
 
-// authentifieParLAPI joue la route d'authentification de PocketBase, celle que
-// nos pages n'empruntent pas.
+// authentifieParLAPI joue la route d'authentification de PocketBase sur la
+// collection users, celle que nos pages n'empruntent pas.
 func authentifieParLAPI(t *testing.T, mux http.Handler, ip string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/collections/users/auth-with-password",
+	return authentifieDansLaCollectionParLAPI(t, mux, "users", ip)
+}
+
+// authentifieDansLaCollectionParLAPI joue la même route sur la collection
+// nommée. Les étiquettes de débit sont construites à partir de son nom
+// (checkCollectionRateLimit), donc c'est lui qui décide de la règle appliquée.
+//
+// Jamais authentifié en superuser : skipRateLimit exempte du limiteur celui qui
+// l'est déjà (apis/middlewares_rate_limit.go), et le test ne mesurerait plus
+// rien.
+func authentifieDansLaCollectionParLAPI(t *testing.T, mux http.Handler, collection, ip string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/collections/"+collection+"/auth-with-password",
 		strings.NewReader(`{"identity":"`+courrielDeTest+`","password":"pas-le-bon-mot-de-passe"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.RemoteAddr = net.JoinHostPort(ip, "1234")
@@ -363,8 +441,9 @@ func sInscritDepuis(t *testing.T, mux http.Handler, ip, courriel string) *httpte
 		"passwordConfirm": {motDePasseDeTest},
 		"name":            {nomDeTest},
 	}
-	req := httptest.NewRequest(http.MethodPost, "/inscription", strings.NewReader(champs.Encode()))
+	req := httptest.NewRequest(http.MethodPost, "/inscription", strings.NewReader(leJetonEstPose(champs).Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookieDuJetonDeTest())
 	req.RemoteAddr = net.JoinHostPort(ip, "1234")
 
 	rec := httptest.NewRecorder()

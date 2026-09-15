@@ -39,8 +39,13 @@ func carnetDeTest(t *testing.T) (core.App, http.Handler, *http.Cookie) {
 
 // demande joue une requête GET portant le cookie de session et les en-têtes
 // donnés — c'est par là que passent tous les tests de cette page.
+//
+// Le cookie anti-rejeu est du voyage, comme celui d'un navigateur qui a déjà
+// visité le site : sans lui, chaque page tirerait un jeton neuf, et deux
+// demandes de la même liste ne rendraient plus le même document.
 func demande(mux http.Handler, cible string, cookie *http.Cookie, entetes map[string]string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodGet, cible, nil)
+	req.AddCookie(cookieDuJetonDeTest())
 	if cookie != nil {
 		req.AddCookie(cookie)
 	}
@@ -1511,7 +1516,7 @@ func poste(t *testing.T, mux http.Handler, cible string, cookie *http.Cookie, ch
 
 	corps := &bytes.Buffer{}
 	ecrivain := multipart.NewWriter(corps)
-	for nom, valeurs := range champs {
+	for nom, valeurs := range leJetonEstPose(champs) {
 		for _, valeur := range valeurs {
 			if err := ecrivain.WriteField(nom, valeur); err != nil {
 				t.Fatalf("champ %q : %v", nom, err)
@@ -1533,6 +1538,7 @@ func poste(t *testing.T, mux http.Handler, cible string, cookie *http.Cookie, ch
 
 	req := httptest.NewRequest(http.MethodPost, cible, corps)
 	req.Header.Set("Content-Type", ecrivain.FormDataContentType())
+	req.AddCookie(cookieDuJetonDeTest())
 	if cookie != nil {
 		req.AddCookie(cookie)
 	}

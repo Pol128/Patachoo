@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"image"
+	"io"
 	"net/url"
 	"slices"
 	"strings"
@@ -54,13 +56,15 @@ import (
 // décision.
 var formatsAcceptes = []string{"jpeg", "png", "webp"}
 
-// pixelsMax borne les dimensions d'une image téléchargée : quarante mégapixels,
-// soit environ 8000 × 5000, très au-dessus de toute photo de recette.
+// pixelsMax borne les dimensions d'une image attachée — téléchargée comme
+// téléversée : quarante mégapixels, soit environ 8000 × 5000, très au-dessus de
+// toute photo de recette.
 //
-// Le plafond de cinq mébioctets du récupérateur borne les octets transférés, pas
-// la mémoire nécessaire au décodage. Un PNG uni compresse énormément, et c'est
-// PocketBase qui le décodera plus tard, à la première miniature demandée : le
-// garde-fou se pose donc ici, où l'en-tête est lu, et pas là-bas.
+// Le plafond de cinq mébioctets, celui du récupérateur comme celui du schéma,
+// borne les octets transférés, pas la mémoire nécessaire au décodage. Un PNG uni
+// compresse énormément, et c'est PocketBase qui le décodera plus tard, à la
+// première miniature demandée : le garde-fou se pose donc là où l'en-tête est
+// lu, et pas là-bas.
 //
 // Une variable et non une constante, pour que les tests puissent l'abaisser :
 // fabriquer une image de quarante mégapixels coûterait plus cher que ce qu'elle
@@ -166,15 +170,36 @@ func imageDistante(ctx context.Context, adresse string, choix ...recuperation.Op
 // imageAttachable juge les octets rendus : le format et les dimensions se lisent
 // tous deux dans l'en-tête de l'image, en une seule passe.
 func imageAttachable(corps []byte) (*filesystem.File, error) {
-	entete, format, err := image.DecodeConfig(bytes.NewReader(corps))
+	format, err := jugeLEntete(bytes.NewReader(corps))
 	if err != nil {
-		return nil, fmt.Errorf("en-tête d'image illisible : %w", err)
+		return nil, err
 	}
 	if !slices.Contains(formatsAcceptes, format) {
 		return nil, fmt.Errorf("format %q hors des trois acceptés", format)
 	}
-	if pixels := int64(entete.Width) * int64(entete.Height); pixels > pixelsMax {
-		return nil, fmt.Errorf("image de %d pixels, au-delà du garde-fou de %d", pixels, pixelsMax)
-	}
 	return filesystem.NewFileFromBytes(corps, nomDeLImageTelechargee)
+}
+
+// errTropDePixels marque le refus des dimensions, et lui seul.
+//
+// C'est à lui que le téléversement s'accroche pour distinguer l'image
+// démesurée de l'en-tête que nous ne savons pas lire : les deux chemins
+// n'acceptent pas les mêmes formats, mais ils partagent le même garde-fou.
+var errTropDePixels = errors.New("dimensions au-delà du garde-fou")
+
+// jugeLEntete lit l'en-tête de l'image et applique pixelsMax. Il rend le
+// format que l'en-tête annonce, que l'appelant confronte ou non à ce qu'il
+// accepte.
+//
+// Une seule fonction pour les deux chemins — téléchargement et téléversement :
+// deux copies du même seuil divergeraient au premier ajustement.
+func jugeLEntete(source io.Reader) (string, error) {
+	entete, format, err := image.DecodeConfig(source)
+	if err != nil {
+		return "", fmt.Errorf("en-tête d'image illisible : %w", err)
+	}
+	if pixels := int64(entete.Width) * int64(entete.Height); pixels > pixelsMax {
+		return format, fmt.Errorf("%w : image de %d pixels, au-delà de %d", errTropDePixels, pixels, pixelsMax)
+	}
+	return format, nil
 }

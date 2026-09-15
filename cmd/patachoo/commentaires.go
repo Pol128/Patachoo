@@ -91,10 +91,10 @@ type noteAffichee struct {
 // fonctionner sans JavaScript.
 func brancheLesCommentaires(routeur *router.Router[*core.RequestEvent]) {
 	notes := "/recettes/{id}/commentaires"
-	routeur.POST(notes, laRouteDUneNote(ajouteUneNote)).Bind(exigeUneSession())
+	routeur.POST(notes, laRouteDUneNote(ajouteUneNote)).Bind(exigeLeJetonAntiRejeu(), exigeUneSession())
 	routeur.GET(notes+"/{idc}/modifier", laRouteDUneNote(pageModifierUneNote)).Bind(exigeUneSession())
-	routeur.POST(notes+"/{idc}", laRouteDUneNote(metAJourUneNote)).Bind(exigeUneSession())
-	routeur.POST(notes+"/{idc}/supprimer", laRouteDUneNote(supprimeUneNote)).Bind(exigeUneSession())
+	routeur.POST(notes+"/{idc}", laRouteDUneNote(metAJourUneNote)).Bind(exigeLeJetonAntiRejeu(), exigeUneSession())
+	routeur.POST(notes+"/{idc}/supprimer", laRouteDUneNote(supprimeUneNote)).Bind(exigeLeJetonAntiRejeu(), exigeUneSession())
 }
 
 // laRouteDUneNote traduit erreurIntrouvable en la 404 de la fiche.

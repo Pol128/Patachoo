@@ -68,8 +68,9 @@ func champsDInscription() url.Values {
 func sInscrit(t *testing.T, mux http.Handler, champs url.Values) *httptest.ResponseRecorder {
 	t.Helper()
 
-	req := httptest.NewRequest(http.MethodPost, "/inscription", strings.NewReader(champs.Encode()))
+	req := httptest.NewRequest(http.MethodPost, "/inscription", strings.NewReader(leJetonEstPose(champs).Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookieDuJetonDeTest())
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)

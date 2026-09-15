@@ -217,9 +217,10 @@ func seConnecte(t *testing.T, mux http.Handler, courriel, motDePasse string) *ht
 func seConnecteDepuis(t *testing.T, mux http.Handler, ip, courriel, motDePasse string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	champs := url.Values{"courriel": {courriel}, "mot-de-passe": {motDePasse}}
+	champs := leJetonEstPose(url.Values{"courriel": {courriel}, "mot-de-passe": {motDePasse}})
 	req := httptest.NewRequest(http.MethodPost, "/connexion", strings.NewReader(champs.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookieDuJetonDeTest())
 	req.RemoteAddr = net.JoinHostPort(ip, "1234")
 
 	rec := httptest.NewRecorder()
@@ -228,17 +229,26 @@ func seConnecteDepuis(t *testing.T, mux http.Handler, ip, courriel, motDePasse s
 }
 
 // seConnecteParLaChaineDeRequete joue ce que le produit n'émet jamais : un POST
-// au corps vide, dont les identifiants sont dans l'URL.
+// dont les identifiants sont dans l'URL, et dont le corps n'en porte aucun.
 //
-// Le Content-Type reste celui d'un formulaire : sans lui, un corps vide serait
+// Le Content-Type reste celui d'un formulaire : sans lui, le corps serait
 // refusé avant d'atteindre la route, et le test prouverait seulement qu'on ne
 // sait pas poster.
+//
+// Le corps porte le seul jeton anti-rejeu, et les identifiants restent seuls
+// dans la chaîne de requête : le contrôle le lit par valeursSoumises, qui rend
+// PostForm et ignore donc l'URL. Sans lui, la requête serait refusée en 403
+// avant la route, et ce test ne dirait plus rien de ce qu'elle lit — seulement
+// qu'un POST sans jeton ne passe pas, ce que TestLesOnzeRoutesPostRefusentUnePostSansJeton
+// couvre déjà.
 func seConnecteParLaChaineDeRequete(t *testing.T, mux http.Handler, ip, courriel, motDePasse string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	champs := url.Values{"courriel": {courriel}, "mot-de-passe": {motDePasse}}
-	req := httptest.NewRequest(http.MethodPost, "/connexion?"+champs.Encode(), nil)
+	corps := leJetonEstPose(url.Values{})
+	req := httptest.NewRequest(http.MethodPost, "/connexion?"+champs.Encode(), strings.NewReader(corps.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookieDuJetonDeTest())
 	req.RemoteAddr = net.JoinHostPort(ip, "1234")
 
 	rec := httptest.NewRecorder()
@@ -282,8 +292,19 @@ func plusCourtEchecDeConnexion(t *testing.T, mux http.Handler, courriel string, 
 
 // avecCookie joue une requête portant ce seul cookie, sans en-tête
 // Authorization : c'est ce que fait un navigateur qui demande une page.
+//
+// Un POST y part muni de la paire anti-rejeu, et un GET sans : le jeton est ce
+// qu'un formulaire rendu par le serveur porte, et une page demandée par un
+// navigateur neuf n'en a encore aucun à joindre.
 func avecCookie(mux http.Handler, methode, cible string, cookie *http.Cookie) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(methode, cible, nil)
+	var req *http.Request
+	if methode == http.MethodPost {
+		req = httptest.NewRequest(methode, cible, strings.NewReader(leJetonEstPose(nil).Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.AddCookie(cookieDuJetonDeTest())
+	} else {
+		req = httptest.NewRequest(methode, cible, nil)
+	}
 	if cookie != nil {
 		req.AddCookie(cookie)
 	}
@@ -343,8 +364,13 @@ func avecEnTete(mux http.Handler, methode, cible, jeton string, cookie *http.Coo
 	return rec
 }
 
-// attributsDeSession vérifie les quatre attributs qui ne changent jamais,
-// que le cookie soit déposé, renouvelé ou effacé.
+// attributsDeSession vérifie les attributs qui ne changent jamais, que le
+// cookie soit déposé, renouvelé ou effacé.
+//
+// Trois d'entre eux — Secure, Path=/ et l'absence de Domain — sont ce que le
+// préfixe __Host- du nom exige : le navigateur rejette le cookie si l'un
+// manque, et la protection contre le sous-domaine voisin tombe avec lui. Les
+// vérifier ici les fait porter d'un coup sur les quatre chemins de pose.
 func attributsDeSession(t *testing.T, cookie *http.Cookie) {
 	t.Helper()
 
@@ -359,6 +385,10 @@ func attributsDeSession(t *testing.T, cookie *http.Cookie) {
 	}
 	if cookie.Path != "/" {
 		t.Errorf("Path %q, attendu %q", cookie.Path, "/")
+	}
+	if cookie.Domain != "" {
+		t.Errorf("Domain %q, attendu aucun : un Domain fait rejeter le cookie __Host- "+
+			"et le rendrait visible des sous-domaines voisins", cookie.Domain)
 	}
 }
 
@@ -430,6 +460,59 @@ func TestUneConnexionReussieDeposeUnCookieDeSession(t *testing.T) {
 	duree := int(compte.Collection().AuthToken.Duration)
 	if cookie.MaxAge != duree {
 		t.Errorf("Max-Age %d, attendu %d — la durée de vie du jeton", cookie.MaxAge, duree)
+	}
+}
+
+// Le nom est écrit ici en toutes lettres, et non relu dans nomCookieSession :
+// un test qui reprendrait la constante suivrait n'importe quel renommage sans
+// rien dire, alors que c'est le préfixe __Host- qui fait tout le travail. Il
+// interdit au navigateur d'accepter sous ce nom un cookie venu d'un
+// sous-domaine voisin, ou porteur d'un Domain — c'est-à-dire de laisser le
+// voisin remplacer la session de la victime par la sienne.
+//
+// Les quatre chemins de pose passent aujourd'hui par cookieDeSession, mais
+// c'est le nom rendu au navigateur qui compte, pas la fonction qui l'écrit :
+// chacun est donc joué pour lui-même.
+func TestLeCookieDeSessionPorteLePrefixeHost(t *testing.T) {
+	const attendu = "__Host-patachoo_session"
+
+	cas := []struct {
+		chemin string
+		pose   func(t *testing.T) *http.Cookie
+	}{
+		{"connexion", func(t *testing.T) *http.Cookie {
+			app, mux := serveurDeTest(t)
+			compteParDefaut(t, app)
+			return cookieDe(t, seConnecte(t, mux, courrielDeTest, motDePasseDeTest))
+		}},
+		{"inscription", func(t *testing.T) *http.Cookie {
+			app, mux := serveurDeTest(t)
+			ouvreLInscription(t, app)
+			return cookieDe(t, sInscrit(t, mux, champsDInscription()))
+		}},
+		{"renouvellement à mi-vie", func(t *testing.T) *http.Cookie {
+			app, mux := serveurDeTest(t, sonde)
+			compte := compteParDefaut(t, app)
+			court := jetonRenouvelableCourt(t, app, compte, time.Minute)
+			return cookieDe(t, avecCookie(mux, http.MethodGet, "/sonde",
+				&http.Cookie{Name: nomCookieSession, Value: court}))
+		}},
+		{"effacement à la déconnexion", func(t *testing.T) *http.Cookie {
+			app, mux := serveurDeTest(t)
+			compteParDefaut(t, app)
+			cookie := cookieDe(t, seConnecte(t, mux, courrielDeTest, motDePasseDeTest))
+			return cookieDe(t, avecCookie(mux, http.MethodPost, "/deconnexion", cookie))
+		}},
+	}
+
+	for _, c := range cas {
+		t.Run(c.chemin, func(t *testing.T) {
+			if nom := c.pose(t).Name; nom != attendu {
+				t.Errorf("cookie nommé %q, attendu %q : sans le préfixe, un sous-domaine "+
+					"voisin peut poser le même nom avec un Domain et remplacer la session",
+					nom, attendu)
+			}
+		})
 	}
 }
 
@@ -1044,6 +1127,101 @@ func TestLaDeconnexionSansSessionNEffaceRien(t *testing.T) {
 					len(poses), nomCookieSession, rec.Header().Values("Set-Cookie"))
 			}
 		})
+	}
+}
+
+// Effacer le cookie ne retire rien à qui en a gardé une copie : le jeton vit
+// dans sa seule signature, et rien ne consulte de liste de jetons retirés. Un
+// poste partagé, une extension de navigateur, un proxy qui termine le TLS, un
+// profil sauvegardé — la copie prise avant le geste ouvrait encore le compte
+// cinq jours après. Ce test est celui qui dit que « Se déconnecter » ne ment
+// plus à celui qui le demande.
+func TestUnJetonCaptureAvantLaDeconnexionNAuthentifiePlus(t *testing.T) {
+	app, mux := serveurDeTest(t, sonde)
+	compte := compteParDefaut(t, app)
+
+	// La copie de l'attaquant : le cookie tel qu'il était avant le geste, et
+	// non celui que la réponse de déconnexion rend.
+	capture := cookieDe(t, seConnecte(t, mux, courrielDeTest, motDePasseDeTest))
+
+	// Le témoin. Sans lui, un cookie qui n'aurait jamais authentifié ferait
+	// passer ce test sans rien prouver.
+	if reconnu := avecCookie(mux, http.MethodGet, "/sonde", capture).Body.String(); reconnu != compte.Id {
+		t.Fatalf("la sonde a reconnu %q avant la déconnexion, attendu %q : ce test ne prouve rien",
+			reconnu, compte.Id)
+	}
+
+	if rec := avecCookie(mux, http.MethodPost, "/deconnexion", capture); rec.Code != http.StatusSeeOther {
+		t.Fatalf("statut %d à la déconnexion, attendu %d", rec.Code, http.StatusSeeOther)
+	}
+
+	apres := avecCookie(mux, http.MethodGet, "/sonde", capture)
+	if apres.Body.String() != "visiteur" {
+		t.Errorf("la sonde a reconnu %q après la déconnexion, attendu un visiteur : "+
+			"le jeton capté avant le geste ouvre encore le compte", apres.Body.String())
+	}
+}
+
+// Le test qui porte la décision : la déconnexion emporte toutes les sessions du
+// compte, sur tous les appareils. C'est ce que la révocation par clé de compte
+// produit, et c'est le comportement retenu — pas un effet de bord à contourner.
+func TestUnSecondJetonDuMemeCompteTombeAvecLaDeconnexion(t *testing.T) {
+	app, mux := serveurDeTest(t, sonde)
+	compte := compteParDefaut(t, app)
+
+	premier := cookieDe(t, seConnecte(t, mux, courrielDeTest, motDePasseDeTest))
+
+	// Une échéance différente, et non une seconde connexion : les
+	// revendications d'un jeton d'authentification ne varient que par son exp,
+	// à la seconde près (core/record_tokens.go, tools/security/jwt.go). Deux
+	// connexions jouées dans la même seconde rendraient deux fois la même
+	// chaîne, et ce test ne porterait plus sur deux jetons.
+	second := &http.Cookie{Name: nomCookieSession, Value: jetonRenouvelableCourt(t, app, compte, time.Hour)}
+	if second.Value == premier.Value {
+		t.Fatalf("les deux jetons sont identiques : ce test ne prouve rien")
+	}
+	if reconnu := avecCookie(mux, http.MethodGet, "/sonde", second).Body.String(); reconnu != compte.Id {
+		t.Fatalf("la sonde a reconnu %q sur la seconde session, attendu %q : ce test ne prouve rien",
+			reconnu, compte.Id)
+	}
+
+	// Déconnexion depuis la première session seulement : c'est l'autre qui est
+	// en cause.
+	if rec := avecCookie(mux, http.MethodPost, "/deconnexion", premier); rec.Code != http.StatusSeeOther {
+		t.Fatalf("statut %d à la déconnexion, attendu %d", rec.Code, http.StatusSeeOther)
+	}
+
+	apres := avecCookie(mux, http.MethodGet, "/sonde", second)
+	if apres.Body.String() != "visiteur" {
+		t.Errorf("la sonde a reconnu %q sur la seconde session après la déconnexion, "+
+			"attendu un visiteur : la révocation n'a pas porté sur le compte", apres.Body.String())
+	}
+}
+
+// L'autre sens, celui que la correction ne doit pas emporter : la révocation
+// porte sur le compte qui se déconnecte, et sur lui seul. Elle passe par la clé
+// de signature de ce compte-là ; la déloger d'un cran — la clé de la
+// collection, un réglage commun — déconnecterait tout le monde à chaque départ.
+func TestLaDeconnexionNeTouchePasAuxJetonsDesAutresComptes(t *testing.T) {
+	app, mux := serveurDeTest(t, sonde)
+	compteParDefaut(t, app)
+	voisin := creeCompte(t, app, "voisin@exemple.fr", "Voisin")
+
+	jetonDuVoisin, err := voisin.NewAuthToken()
+	if err != nil {
+		t.Fatalf("émission du jeton : %v", err)
+	}
+	cookieDuVoisin := &http.Cookie{Name: nomCookieSession, Value: jetonDuVoisin}
+
+	cookie := cookieDe(t, seConnecte(t, mux, courrielDeTest, motDePasseDeTest))
+	if rec := avecCookie(mux, http.MethodPost, "/deconnexion", cookie); rec.Code != http.StatusSeeOther {
+		t.Fatalf("statut %d à la déconnexion, attendu %d", rec.Code, http.StatusSeeOther)
+	}
+
+	apres := avecCookie(mux, http.MethodGet, "/sonde", cookieDuVoisin)
+	if apres.Body.String() != voisin.Id {
+		t.Errorf("la sonde a reconnu %q, attendu %q : la déconnexion d'un compte a emporté "+
+			"la session d'un autre", apres.Body.String(), voisin.Id)
 	}
 }
 
