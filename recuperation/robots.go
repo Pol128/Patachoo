@@ -88,6 +88,23 @@ const delaiAnnonceMax = 5 * time.Minute
 // récolteur de référence, qui ignore lui aussi ce qui dépasse.
 const tailleMaxRobots = 512 << 10
 
+// reglesMaxParRobots borne le nombre de règles qu'un hôte nous fait retenir.
+//
+// Le plafond de taille ne suffit pas : 512 Kio de lignes « Disallow: /a*b »
+// tiennent près de vingt-sept mille règles, et une règle à joker retient son
+// expression compilée — 1 125 octets mesurés, contre 24 pour son seul motif.
+// Une fournée de cinq cents hôtes garderait ainsi une quinzaine de gibioctets
+// jusqu'à sa fin, pour un lot qu'un compte ordinaire dépose en une requête.
+// Bornées à ce nombre, les mêmes cinq cents hôtes tiennent dans quelques
+// centaines de mébioctets.
+//
+// Le chiffre est très au-dessus de ce qu'un site publie : les robots.txt les
+// plus fournis du web comptent leurs règles par centaines, là où le plafond de
+// taille en laisse passer cinquante fois plus. Ce qui dépasse est ignoré, sans
+// que le site soit refusé — le REP demande d'appliquer ce qu'on a lu, et c'est
+// déjà le sort de la queue du fichier au-delà du plafond de taille.
+const reglesMaxParRobots = 500
+
 // sousLePlafond rend, des octets lus, le texte à analyser.
 //
 // Le plafond, lui, est tenu par la lecture et par elle seule : cette fonction
