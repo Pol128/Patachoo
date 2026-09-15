@@ -271,8 +271,13 @@ func cookieDeSession(jeton string, duree time.Duration) *http.Cookie {
 	}
 }
 
-// poseLeCookieDeSession écrit le cookie en retirant d'abord celui qu'une
-// étape antérieure aurait déjà posé.
+// poseLeCookieDeSession écrit le cookie de session.
+func poseLeCookieDeSession(e *core.RequestEvent, cookie *http.Cookie) {
+	poseLeCookie(e, cookie)
+}
+
+// poseLeCookie écrit un cookie en retirant d'abord celui qu'une étape
+// antérieure aurait déjà posé sous le même nom.
 //
 // http.SetCookie ajoute un en-tête au lieu de le remplacer. Sans ce ménage,
 // une déconnexion faite sous la mi-vie part avec deux Set-Cookie de même nom
@@ -280,12 +285,17 @@ func cookieDeSession(jeton string, duree time.Duration) *http.Cookie {
 // puis l'effacement. Un navigateur applique le dernier, mais la réponse qui
 // révoque une session y transporte quand même un jeton vivant, et tout ce qui
 // lit le premier reste connecté.
-func poseLeCookieDeSession(e *core.RequestEvent, cookie *http.Cookie) {
+//
+// Le nom vient du cookie donné, et n'est plus celui de la session en dur : le
+// jeton anti-rejeu se pose sur la même réponse et tombe dans le même piège,
+// et un ménage qui filtrerait sur le seul nom de la session emporterait l'un
+// en reposant l'autre.
+func poseLeCookie(e *core.RequestEvent, cookie *http.Cookie) {
 	entetes := e.Response.Header()
 
 	gardes := make([]string, 0, len(entetes.Values("Set-Cookie")))
 	for _, pose := range entetes.Values("Set-Cookie") {
-		if !strings.HasPrefix(pose, nomCookieSession+"=") {
+		if !strings.HasPrefix(pose, cookie.Name+"=") {
 			gardes = append(gardes, pose)
 		}
 	}

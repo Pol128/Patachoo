@@ -97,9 +97,10 @@ func pageAvecRecette(entete, recette string) []byte {
 
 // importeLURL poste une adresse sur la route d'import.
 func importeLURL(mux http.Handler, cookie *http.Cookie, adresse string, entetes map[string]string) *httptest.ResponseRecorder {
-	corps := url.Values{"url": {adresse}}.Encode()
+	corps := leJetonEstPose(url.Values{"url": {adresse}}).Encode()
 	req := httptest.NewRequest(http.MethodPost, "/recettes/importer", strings.NewReader(corps))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookieDuJetonDeTest())
 	for nom, valeur := range entetes {
 		req.Header.Set(nom, valeur)
 	}

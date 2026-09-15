@@ -714,14 +714,14 @@ func (f formulaireRecette) lignesDIngredients() []string {
 // de la recette, avant la lecture du formulaire.
 func brancheLesRecettes(routeur *router.Router[*core.RequestEvent]) {
 	routeur.GET("/recettes/nouvelle", pageNouvelleRecette).Bind(exigeUneSession())
-	routeur.POST("/recettes", creeLaRecette).Bind(exigeUneSession())
+	routeur.POST("/recettes", creeLaRecette).Bind(exigeLeJetonAntiRejeu(), exigeUneSession())
 	routeur.GET("/recettes/{id}/modifier", pageModifierRecette).Bind(exigeUneSession())
-	routeur.POST("/recettes/{id}", metAJourLaRecette).Bind(exigeUneSession())
+	routeur.POST("/recettes/{id}", metAJourLaRecette).Bind(exigeLeJetonAntiRejeu(), exigeUneSession())
 
 	// La suppression (suppression.go) : la confirmation, puis le geste.
 	supprimer := "/recettes/{id}/supprimer"
 	routeur.GET(supprimer, laRouteDUneSuppression(pageSupprimerRecette)).Bind(exigeUneSession())
-	routeur.POST(supprimer, laRouteDUneSuppression(supprimeLaRecette)).Bind(exigeUneSession())
+	routeur.POST(supprimer, laRouteDUneSuppression(supprimeLaRecette)).Bind(exigeLeJetonAntiRejeu(), exigeUneSession())
 }
 
 // exigeUneSession renvoie un visiteur à la page de connexion.
