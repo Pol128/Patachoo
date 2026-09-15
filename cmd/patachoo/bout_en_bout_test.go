@@ -107,7 +107,7 @@ func TestLInstallationVaJusquAuPremierCompte(t *testing.T) {
 	// Le formulaire soumis avec le jeton lu dans sa propre page, jamais
 	// fabriqué : c'est l'anti-rejeu réel que le parcours traverse.
 	cree := n.poste("/inscription", url.Values{
-		champAntiRejeu:    {jetonAntiRejeuDe(t, "/inscription", inscription.Corps)},
+		champAntiRejeu:    {jetonAntiRejeuDuFormulaire(t, "/inscription", "/inscription", inscription.Corps)},
 		"email":           {courrielDuCompte},
 		"name":            {nomDuCompte},
 		"password":        {motDePasseDuCompte},
@@ -150,7 +150,7 @@ func TestLUtilisationDuCarnetParUnCompte(t *testing.T) {
 	n.exigeLeStatut("GET /connexion en visiteur", connexion, http.StatusOK)
 	n.exigeDansLaPage("GET /connexion en visiteur", connexion, `<a href="/connexion">Connexion</a>`)
 	n.exigeLaRedirection("POST /connexion", n.poste("/connexion", url.Values{
-		champAntiRejeu: {jetonAntiRejeuDe(t, "/connexion", connexion.Corps)},
+		champAntiRejeu: {jetonAntiRejeuDuFormulaire(t, "/connexion", "/connexion", connexion.Corps)},
 		"courriel":     {courrielDuCompte},
 		"mot-de-passe": {motDePasseDuCompte},
 	}), http.StatusSeeOther, "/")
@@ -166,7 +166,7 @@ func TestLUtilisationDuCarnetParUnCompte(t *testing.T) {
 	// En multipart, comme le formulaire de recette le déclare : c'est la
 	// branche que valeursSoumises prend en vrai, jeton anti-rejeu compris.
 	depot := n.posteEnMultipart("/recettes", url.Values{
-		champAntiRejeu: {jetonAntiRejeuDe(t, "/recettes/nouvelle", formulaire.Corps)},
+		champAntiRejeu: {jetonAntiRejeuDuFormulaire(t, "/recettes/nouvelle", "/recettes", formulaire.Corps)},
 		"titre":        {titreDeLaRecette},
 		"ingredients":  {ingredientsSaisis},
 		"instructions": {instructionsSaisies},
@@ -197,7 +197,7 @@ func TestLUtilisationDuCarnetParUnCompte(t *testing.T) {
 		`action="`+fiche+`"`, `value="`+titreDeLaRecette+`"`)
 
 	n.exigeLaRedirection("POST "+fiche, n.posteEnMultipart(fiche, url.Values{
-		champAntiRejeu: {jetonAntiRejeuDe(t, fiche+"/modifier", modification.Corps)},
+		champAntiRejeu: {jetonAntiRejeuDuFormulaire(t, fiche+"/modifier", fiche, modification.Corps)},
 		"titre":        {titreCorrige},
 		"ingredients":  {ingredientsSaisisCorriges},
 		"instructions": {instructionsSaisies},
@@ -212,7 +212,7 @@ func TestLUtilisationDuCarnetParUnCompte(t *testing.T) {
 
 	// La déconnexion, et ce qu'elle doit refermer derrière elle.
 	n.exigeLaRedirection("POST /deconnexion", n.poste("/deconnexion", url.Values{
-		champAntiRejeu: {jetonAntiRejeuDe(t, fiche, corrigee.Corps)},
+		champAntiRejeu: {jetonAntiRejeuDuFormulaire(t, fiche, "/deconnexion", corrigee.Corps)},
 	}), http.StatusSeeOther, "/")
 
 	n.exigeLaRedirection("GET /recettes/nouvelle après déconnexion",
@@ -404,21 +404,27 @@ func (n *navigateur) extrait(r reponse) string {
 	return fmt.Sprintf("page reçue :\n%s\njournal du serveur :\n%s", r.Corps, n.journal())
 }
 
-// jetonAntiRejeuDe lit le champ caché que chaque formulaire en POST porte.
+// jetonAntiRejeuDuFormulaire lit le champ caché que porte le formulaire dont
+// l'action est celle donnée.
 //
 // Lu dans le HTML plutôt que fabriqué : un test qui poserait lui-même la valeur
 // du cookie vérifierait sa propre arithmétique, quand celui-ci vérifie que la
 // page et la route s'accordent — c'est-à-dire la seule chose que l'anti-rejeu
 // promet.
 //
-// Le premier champ trouvé suffit : les formulaires d'une même page recopient
-// tous la valeur rangée par poseLeJetonAntiRejeu pour cette requête-là, y
-// compris celui de la déconnexion dans l'en-tête.
+// Dans ce formulaire-là et non le premier venu de la page, et ce n'est pas une
+// précaution théorique : la mise en page porte le formulaire de déconnexion
+// dans son en-tête, avec son propre champ caché et la même valeur — celle que
+// poseLeJetonAntiRejeu a rangée pour cette requête. Un lecteur qui prendrait le
+// premier champ trouvé rendrait donc le bon jeton même sur une page dont le
+// formulaire principal a perdu le sien, et le parcours passerait au vert sur un
+// formulaire mort-né. Constaté en retirant le champ de
+// vues/recette-formulaire-corps.html : les deux scénarios restaient verts.
 //
 // golang.org/x/net/html plutôt qu'une expression régulière : c'est déjà une
 // dépendance directe — import.go et jsonld/extraction.go s'en servent —, et un
 // motif sur du HTML se trompe le jour où l'ordre des attributs change.
-func jetonAntiRejeuDe(t *testing.T, page, corps string) string {
+func jetonAntiRejeuDuFormulaire(t *testing.T, page, action, corps string) string {
 	t.Helper()
 
 	racine, err := balisage.Parse(strings.NewReader(corps))
@@ -426,38 +432,44 @@ func jetonAntiRejeuDe(t *testing.T, page, corps string) string {
 		t.Fatalf("%s : HTML illisible : %v", page, err)
 	}
 
-	var jeton string
-	var parcours func(*balisage.Node)
-	parcours = func(noeud *balisage.Node) {
-		if jeton != "" {
-			return
-		}
-		if noeud.Type == balisage.ElementNode && noeud.Data == "input" {
-			var nom, valeur string
-			for _, attribut := range noeud.Attr {
-				switch attribut.Key {
-				case "name":
-					nom = attribut.Val
-				case "value":
-					valeur = attribut.Val
-				}
-			}
-			if nom == champAntiRejeu {
-				jeton = valeur
-				return
-			}
-		}
-		for enfant := noeud.FirstChild; enfant != nil; enfant = enfant.NextSibling {
-			parcours(enfant)
-		}
+	formulaire := chercheLeNoeud(racine, func(noeud *balisage.Node) bool {
+		return noeud.Data == "form" && attribut(noeud, "action") == action
+	})
+	if formulaire == nil {
+		t.Fatalf("%s ne porte aucun formulaire d'action %q\npage reçue :\n%s", page, action, corps)
 	}
-	parcours(racine)
 
+	champ := chercheLeNoeud(formulaire, func(noeud *balisage.Node) bool {
+		return noeud.Data == "input" && attribut(noeud, "name") == champAntiRejeu
+	})
+	if champ == nil {
+		t.Fatalf("%s : le formulaire d'action %q ne porte aucun champ caché %q : il est mort-né\npage reçue :\n%s",
+			page, action, champAntiRejeu, corps)
+	}
+
+	jeton := attribut(champ, "value")
 	if jeton == "" {
-		t.Fatalf("%s ne porte aucun champ caché %q : le formulaire est mort-né\npage reçue :\n%s",
-			page, champAntiRejeu, corps)
+		t.Fatalf("%s : le champ caché %q du formulaire d'action %q est vide", page, champAntiRejeu, action)
 	}
 	return jeton
+}
+
+// chercheLeNoeud rend le premier élément de l'arbre que le critère retient, ou
+// nil. En profondeur d'abord, donc dans l'ordre du document.
+//
+// La lecture des attributs, elle, est celle d'import.go : attribut y est déjà
+// écrite, dans ce paquet, et une seconde copie divergerait le jour où l'une des
+// deux apprend quelque chose.
+func chercheLeNoeud(depuis *balisage.Node, retenu func(*balisage.Node) bool) *balisage.Node {
+	if depuis.Type == balisage.ElementNode && retenu(depuis) {
+		return depuis
+	}
+	for enfant := depuis.FirstChild; enfant != nil; enfant = enfant.NextSibling {
+		if trouve := chercheLeNoeud(enfant, retenu); trouve != nil {
+			return trouve
+		}
+	}
+	return nil
 }
 
 // lanceLaSousCommande exécute le binaire sur une autre sous-commande que serve,
