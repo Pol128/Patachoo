@@ -53,6 +53,64 @@ func porteLeCacheControl(chemin string) bool {
 	return true
 }
 
+// politiqueDeContenu est la politique de sécurité du contenu posée sur nos
+// pages. Écrite en dur, et non exposée en réglage : une politique qu'on peut
+// desserrer par variable d'environnement finit desserrée.
+//
+// Le produit importe du contenu tiers par construction — sa surface
+// d'injection est sa fonction, pas un accident. Cette politique est le cran qui
+// manque entre une erreur d'échappement et la prise du compte par l'API : un
+// script injecté dans une page ne s'exécute plus, il s'écrit dans la console.
+//
+// Deux directives méritent leur justification :
+//
+//   - img-src sort de 'self' : le formulaire d'import affiche l'aperçu de
+//     l'image proposée par le site importé, chargée depuis ce site. http: et
+//     https: sont larges, et c'est assumé — la seule alternative étroite est de
+//     faire passer l'aperçu par notre serveur, ce qui ouvre un proxy d'image.
+//   - frame-ancestors 'none' est plus strict que le X-Frame-Options: SAMEORIGIN
+//     de PocketBase, et l'emporte sur lui dans les navigateurs modernes : plus
+//     aucune page de Patachoo ne s'affiche en cadre. Rien ici n'en emploie.
+//
+// Ni 'unsafe-inline' ni 'unsafe-eval' : aucun gabarit ne porte de style ni de
+// gestionnaire en ligne, et la meta htmx-config de mise-en-page.html ferme les
+// deux chemins d'exécution de htmx. Un test balaie les gabarits pour que cela
+// reste vrai.
+const politiqueDeContenu = "default-src 'none'; " +
+	"script-src 'self'; " +
+	"style-src 'self'; " +
+	"img-src 'self' http: https:; " +
+	"connect-src 'self'; " +
+	"form-action 'self'; " +
+	"base-uri 'none'; " +
+	"frame-ancestors 'none'"
+
+// Les deux préfixes que notre politique laisse tranquilles.
+//
+// PocketBase pose les siennes « seulement si l'en-tête est absent », et un
+// middleware lié au routeur s'exécute avant elles : poser la nôtre partout ne
+// s'ajouterait pas à la leur, elle la remplacerait. Le panneau
+// d'administration recevrait default-src 'none' et ne chargerait plus rien ;
+// les fichiers servis perdraient leur politique sandbox, ce qui est un recul.
+const (
+	prefixePanneau = "/_/"
+	prefixeAPI     = "/api/"
+)
+
+// laPolitiqueSApplique dit si un chemin reçoit notre politique.
+//
+// Sortie du middleware pour être vérifiable seule : la route du panneau
+// d'administration est enregistrée dans un hook OnServe qu'un test ne déclenche
+// pas, et la règle qui la protège ne se lirait donc dans aucune réponse.
+//
+// /statique/ la reçoit comme le reste : elle n'y a aucun effet, et une
+// exception de plus serait une exception à maintenir. C'est ce qui la distingue
+// de porteLeCacheControl, qui exclut /statique/ : les deux portées se
+// ressemblent sans se confondre, et chacune a sa fonction.
+func laPolitiqueSApplique(chemin string) bool {
+	return !strings.HasPrefix(chemin, prefixePanneau) && !strings.HasPrefix(chemin, prefixeAPI)
+}
+
 // poseLesEntetesDeReponse ajoute nos en-têtes de sécurité à toute réponse.
 //
 // Lié par routeur.Bind, il atteint toute réponse sans qu'aucune route ait à
@@ -65,7 +123,7 @@ func porteLeCacheControl(chemin string) bool {
 // Il s'ajoute à pbSecurityHeaders, il ne le remplace pas : les trois en-têtes
 // que PocketBase pose restent sur la réponse.
 //
-// Les deux en-têtes n'ont pas la même portée, et c'est voulu :
+// Les trois en-têtes n'ont pas la même portée, et c'est voulu :
 //
 // Referrer-Policy: no-referrer — sur tout, y compris l'API et le panneau /_/.
 // Rien ici ne lit le Referer, ni le serveur ni les pages : le plus strict ne
@@ -82,6 +140,10 @@ func porteLeCacheControl(chemin string) bool {
 // Cache-Control: private, no-store — sur nos pages et nos fragments
 // seulement, cf. cheminsSansCacheControl : ce qui est public et immuable gagne
 // au contraire à rester mis en cache.
+//
+// Content-Security-Policy — sur nos pages seulement, cf. laPolitiqueSApplique :
+// contrairement aux deux autres, PocketBase en pose déjà pour le panneau et
+// pour les fichiers servis, et l'écraser serait un recul.
 func poseLesEntetesDeReponse() *hook.Handler[*core.RequestEvent] {
 	return &hook.Handler[*core.RequestEvent]{
 		Id: "patachooEntetesDeReponse",
@@ -89,6 +151,9 @@ func poseLesEntetesDeReponse() *hook.Handler[*core.RequestEvent] {
 			e.Response.Header().Set("Referrer-Policy", "no-referrer")
 			if porteLeCacheControl(e.Request.URL.Path) {
 				e.Response.Header().Set("Cache-Control", cacheControlDesPages)
+			}
+			if laPolitiqueSApplique(e.Request.URL.Path) {
+				e.Response.Header().Set("Content-Security-Policy", politiqueDeContenu)
 			}
 			return e.Next()
 		},

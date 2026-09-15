@@ -9,6 +9,7 @@
 </ul>
 {{end}}
 <form method="post" action="/recettes/{{.Id}}/supprimer">
+<input type="hidden" name="_antirejeu" value="{{$.JetonAntiRejeu}}">
 <button type="submit">Supprimer définitivement</button>
 </form>
 <p><a href="/recettes/{{.Id}}">Annuler</a></p>

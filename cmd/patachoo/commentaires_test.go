@@ -21,8 +21,9 @@ import (
 func posteNote(t *testing.T, mux http.Handler, cible string, cookie *http.Cookie, champs url.Values, entetes map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	req := httptest.NewRequest(http.MethodPost, cible, strings.NewReader(champs.Encode()))
+	req := httptest.NewRequest(http.MethodPost, cible, strings.NewReader(leJetonEstPose(champs).Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookieDuJetonDeTest())
 	for nom, valeur := range entetes {
 		req.Header.Set(nom, valeur)
 	}

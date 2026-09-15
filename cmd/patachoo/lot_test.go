@@ -69,9 +69,10 @@ func soumetLeLot(mux http.Handler, cookie *http.Cookie, saisie string) *httptest
 // monde : sans ce paramètre, deux tests ne peuvent pas se distinguer et un seul
 // ne peut pas jouer deux clients.
 func soumetLeLotDepuis(mux http.Handler, ip string, cookie *http.Cookie, saisie string) *httptest.ResponseRecorder {
-	champs := url.Values{"urls": {saisie}}
+	champs := leJetonEstPose(url.Values{"urls": {saisie}})
 	req := httptest.NewRequest(http.MethodPost, cheminDuLot, strings.NewReader(champs.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookieDuJetonDeTest())
 	if ip != "" {
 		req.RemoteAddr = net.JoinHostPort(ip, "1234")
 	}

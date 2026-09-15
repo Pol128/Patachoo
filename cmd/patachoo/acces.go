@@ -7,14 +7,20 @@ import "github.com/pocketbase/pocketbase/core"
 // règle de suppression s'appuie dessus.
 const champAuteur = "created_by"
 
-// brancheLAcces accroche à recipes les deux hooks qui tiennent created_by.
+// brancheLAcces accroche les hooks qui tiennent ce que l'API REST ne doit pas
+// laisser réécrire : l'auteur d'une recette, la signature et le rattachement
+// d'une note.
 //
 // Des hooks de requête, et non de modèle : un core.RecordEvent porte
 // l'application et l'enregistrement, mais ni requête ni utilisateur
 // authentifié — OnRecordCreate ne saurait donc pas de qui remplir le champ.
 func brancheLAcces(app core.App) {
 	app.OnRecordCreateRequest("recipes").BindFunc(attribueALAppelant)
-	app.OnRecordUpdateRequest("recipes").BindFunc(restaureLAuteur)
+	app.OnRecordUpdateRequest("recipes").BindFunc(fige(champAuteur))
+	// Le même patron sur comments, et non une condition ajoutée à UpdateRule :
+	// une règle ne dit rien du cas où le champ n'est pas fourni, et les deux
+	// collections gagnent à ne se protéger que d'une seule façon.
+	app.OnRecordUpdateRequest("comments").BindFunc(fige("author", "recipe"))
 }
 
 // attribueALAppelant pose l'auteur d'une recette créée par l'API.
@@ -46,21 +52,29 @@ func poseLAuteur(enregistrement *core.Record, compte *core.Record) {
 	enregistrement.Set(champAuteur, id)
 }
 
-// restaureLAuteur remet la valeur enregistrée, quoi que la requête propose.
+// fige rend un hook de modification qui remet les valeurs enregistrées, quoi
+// que la requête propose.
 //
-// Symétrique de la création, et pas un ornement : tout compte connecté a le
-// droit de modifier n'importe quelle recette. Sans ce hook, il s'attribue
-// celle d'un autre, puis la supprime — et la règle de suppression ne protège
-// plus rien.
+// Pas un ornement, et pas un doublon des règles de collection : celles-ci ne
+// sont évaluées qu'en allant chercher la ligne, donc sur son état d'avant
+// modification. Une requête qui retourne un champ du seul enregistrement
+// qu'elle a le droit de modifier passe donc le contrôle, et c'est ici qu'elle
+// est rattrapée — sur recipes, un compte s'attribuerait la recette d'un autre
+// puis la supprimerait ; sur comments, il signerait son texte du nom d'un
+// autre compte, ou déplacerait sa note sous un plat qu'il n'a pas cuisiné.
 //
 // Sans exception, superuser compris. La création en a une, par nécessité :
 // l'identifiant d'un superuser ne désigne aucun compte de users, et la
 // relation serait refusée. Ici il n'y a rien à contourner — réécrire une
 // valeur déjà enregistrée ne peut pas échouer. Une recette s'attribue à sa
 // création, et là seulement.
-func restaureLAuteur(e *core.RecordRequestEvent) error {
-	e.Record.Set(champAuteur, e.Record.Original().GetString(champAuteur))
-	return e.Next()
+func fige(champs ...string) func(*core.RecordRequestEvent) error {
+	return func(e *core.RecordRequestEvent) error {
+		for _, champ := range champs {
+			e.Record.Set(champ, e.Record.Original().GetString(champ))
+		}
+		return e.Next()
+	}
 }
 
 // sienne dit si la recette appartient au compte donné.
