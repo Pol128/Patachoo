@@ -64,6 +64,19 @@ machine locale : il faut du TLS », juste en dessous.
 | `/api/`       | l'API REST                         |
 | `/api/health` | la sonde de santé                  |
 
+> **`/_/` et `/api/` ne sont pas deux pages de plus dans ce tableau : ce sont
+> les clés de l'instance entière.** Elles répondent sur le **même port que le
+> carnet**, donc sur les mêmes interfaces que lui — rien dans l'application ne
+> les en sépare. Un mot de passe de superutilisateur accepté sur `/_/` donne la
+> lecture et la modification de toutes les recettes et de tous les comptes, et
+> le téléchargement d'une archive de tout `pb_data`.
+>
+> Elles ne doivent **jamais être joignables depuis l'Internet sans filtre
+> devant**. Ouvrir une redirection de port vers 8090 sur sa box pour consulter
+> ses recettes en déplacement, c'est publier ce formulaire de connexion
+> d'administration sur l'Internet, en clair. La façon de s'y prendre est décrite
+> plus bas, dans « Exposer Patachoo hors de chez soi ».
+
 Dans le conteneur, Patachoo écoute sur `0.0.0.0:8090`, et cela ne change pas :
 si 8090 est déjà pris sur la machine, c'est le **port de gauche** de
 `"8090:8090"` que l'on modifie, par exemple `"8091:8090"`.
@@ -458,6 +471,153 @@ du conteneur sur 8080 et 8443 — plus rien ne répond sur 8090. Le
 « Hors de la machine locale : il faut du TLS » la désactive pour cette raison,
 et dit par quoi la remplacer.
 
+## Exposer Patachoo hors de chez soi
+
+Tant que Patachoo ne sert que la maison, le `docker-compose.yml` livré convient
+tel quel et il n'y a rien à faire ici. Cette section est pour le cas d'après :
+consulter ses recettes en déplacement, ou depuis un téléphone qui n'est pas sur
+le Wi-Fi.
+
+Elle prolonge [« Hors de la machine locale : il faut du
+TLS »](#hors-de-la-machine-locale--il-faut-du-tls), qui donne les trois façons
+d'obtenir du HTTPS. Ce qui suit dit ce que l'on publie au juste en sortant de
+chez soi, et ce que le proxy doit retenir en plus de terminer le TLS.
+
+### Ce que publie `"8090:8090"`, exactement
+
+Sans préfixe d'adresse, Docker publie le port sur **toutes les interfaces de la
+machine hôte** — pas seulement sur celle du réseau local — et ouvre le passage
+dans le pare-feu par sa propre règle, sans passer par `ufw` ou `firewalld`. Sur
+un réseau domestique, c'est le comportement voulu : le carnet doit répondre au
+reste de la maison.
+
+Deux conséquences à avoir en tête avant d'aller plus loin :
+
+- **Le trafic est en HTTP en clair.** Le mot de passe tapé dans le formulaire de
+  connexion, celui du superutilisateur sur `/_/`, et le jeton qui en sort
+  traversent le réseau **lisibles** par qui partage le segment. Sur un Wi-Fi
+  familial, cela inclut le réseau invité et tout ce qui y est branché.
+- **`/_/` répond sur ce même port**, comme dit plus haut. Une simple redirection
+  de port depuis la box publie donc l'administration en même temps que le
+  carnet.
+
+Il ne faut donc **pas** rediriger le port 8090 de la box vers la machine. Ce
+qu'il faut, c'est mettre un proxy inverse devant, qui termine le TLS et filtre
+ce qui n'a rien à faire dehors.
+
+### Le proxy, et ce qu'il doit fermer au passage
+
+Le `Caddyfile` de trois lignes de « Hors de la machine locale » suffit à obtenir
+le HTTPS ; il ne suffit pas à sortir de chez soi, parce qu'il publie aussi
+l'administration. Le proxy est l'endroit où l'on décide qu'elle ne sort pas :
+elle n'a aucune raison d'être atteignable depuis l'extérieur, on ne s'y connecte
+que de chez soi. Le filtre ci-dessous la rend à qui vient d'une adresse du réseau
+local et la fait disparaître pour tout le monde d'autre — ce qui la garde joignable depuis
+la maison même après le passage à `"127.0.0.1:8090:8090"`, où le port 8090 n'est
+plus atteignable directement.
+
+C'est ce `Caddyfile`-ci, complet, qu'il faut prendre pour un déploiement exposé :
+
+```caddyfile
+recettes.exemple.fr {
+	# L'administration et le point d'authentification qui lui sert de porte :
+	# joignables depuis le réseau local seulement. Les deux chemins
+	# `/api/collections/…` désignent la même collection : PocketBase accepte
+	# indifféremment son nom et son identifiant, et n'en oublier qu'un suffit
+	# à rouvrir la porte.
+	@administration path /_/* /api/collections/_superusers/* /api/collections/pbc_3142635823/*
+	handle @administration {
+		# Les plages du réseau local, IPv4 **et** IPv6 : sans les secondes,
+		# un navigateur de la maison qui préfère l'IPv6 reçoit un 404 sur
+		# `/_/`. Une maison dont le fournisseur délègue un préfixe
+		# globalement routable doit y ajouter le sien — voir sous le bloc.
+		@interne remote_ip 192.168.0.0/16 10.0.0.0/8 172.16.0.0/12 127.0.0.1/32 ::1 fd00::/8 fe80::/10
+		handle @interne {
+			reverse_proxy 127.0.0.1:8090
+		}
+		respond 404
+	}
+
+	reverse_proxy 127.0.0.1:8090
+}
+```
+
+Le lancer, à côté de Patachoo — Caddy obtient et renouvelle son certificat Let's
+Encrypt tout seul, sans commande à lancer ni tâche planifiée à poser :
+
+```sh
+docker run -d --name caddy --restart unless-stopped --network host \
+    -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" -v caddy_data:/data \
+    caddy:2
+```
+
+L'application est alors joignable en `https://recettes.exemple.fr`, et le mot de
+passe ne circule plus en clair.
+
+`respond 404` plutôt que `403` : un 403 confirme que l'adresse existe, un 404 ne
+dit rien.
+
+**Ajuster les plages à celles du réseau.** Les trois premières couvrent les
+adresses privées **IPv4** usuelles ; les suivantes sont leurs équivalents
+**IPv6** — la boucle locale, les adresses locales uniques (`fd00::/8`, la moitié
+de `fc00::/7` qui est effectivement attribuée sur place) et le lien-local. Sans
+elles, le filtre ne répond qu'en IPv4 : dès que le nom porte un enregistrement
+AAAA, ou que le réseau local est en IPv6, le navigateur de la maison préfère
+l'IPv6 et son adresse source ne correspond alors à aucune plage.
+
+**Une maison dont le fournisseur délègue un préfixe globalement routable doit y
+ajouter le sien.** Il n'existe pas, en IPv6, d'équivalent de `192.168.0.0/16` :
+les postes du logement portent des adresses publiques, tirées du préfixe délégué
+à la box — c'est le cas courant chez un fournisseur d'accès grand public, et
+aucune liste écrite d'avance ne peut le deviner. Le relever une fois (`ip -6
+addr` sur un poste de la maison, ou l'interface de la box) et l'ajouter à
+`@interne`.
+
+> **Un 404 sur `/_/` *depuis la maison* veut dire que l'adresse source n'est pas
+> dans les plages** — pas que l'administration est cassée. Le 404 ayant été
+> choisi pour ne rien dire, il ne le dira pas. Le geste est d'ajouter sa plage à
+> `@interne` ; **jamais** de retirer le bloc `@administration`, qui rouvrirait à
+> l'Internet entier exactement ce que cette section ferme.
+
+> **Les deux chemins `/api/collections/…` ne sont pas un doublon : ne pas en
+> retirer un.** PocketBase désigne une collection *par son nom ou par son
+> identifiant*, et sert la même route dans les deux cas. Or l'identifiant n'est
+> pas tiré au sort à l'installation : il est calculé à partir du type et du nom
+> de la collection, si bien que `_superusers` porte `pbc_3142635823` sur
+> **toutes** les instances. Un filtre qui ne connaît que le nom se contourne
+> donc en remplaçant `_superusers` par `pbc_3142635823` dans l'URL, et rend un
+> jeton de superutilisateur à qui le demande depuis l'Internet.
+
+Le filtre porte sur le **préfixe entier** de la collection, et pas sur la seule
+route de connexion : `auth-with-password`, `request-password-reset` et
+`auth-with-otp` s'y contournent toutes de la même façon.
+
+`/api/` reste ouvert par ailleurs : c'est par lui que le carnet fonctionne. Ce
+que la règle retire, c'est l'interface d'administration et **toutes les routes
+par lesquelles un jeton de superutilisateur s'obtient**. Elle ne ferme pas les
+adresses qu'un tel jeton déverrouille ensuite — `/api/settings`,
+`/api/collections`, `POST /api/backups` répondent toujours —, mais PocketBase
+les refuse à qui ne présente pas ce jeton, et il n'y a plus moyen d'en obtenir
+un depuis l'extérieur.
+
+### Le compose, dans ce cas-là seulement
+
+Une fois le proxy en place, le port 8090 n'a plus à être joignable directement :
+seul le proxy doit y accéder. C'est **le seul cas** où l'on préfixe la
+publication par une adresse :
+
+```yaml
+    ports:
+      # Avec un proxy inverse devant, et dans ce cas seulement.
+      - "127.0.0.1:8090:8090"
+```
+
+Ce n'est pas le nouveau défaut, et le `docker-compose.yml` de la racine ne
+change pas : préfixé par `127.0.0.1`, il rendrait l'application injoignable
+depuis le reste du réseau local, c'est-à-dire inutilisable pour l'installation
+familiale que ce fichier vise. On ne fait ce changement qu'en même temps qu'on
+installe le proxy, sous peine de ne plus rien joindre du tout.
+
 ## Sauvegarde et restauration
 
 `pb_data/` contient **toute** la base et **toutes** les images. C'est le seul
@@ -542,6 +702,32 @@ source de vérité.
 > echo "$PATACHOO_CLE_REGLAGES"   # à conserver ailleurs qu'ici, avant de continuer
 > ./Patachoo serve --encryptionEnv=PATACHOO_CLE_REGLAGES
 > ```
+>
+> **En Docker**, qui est le mode d'installation décrit plus haut, l'option
+> s'ajoute par un `command:` — et il faut alors **redonner en entier** celui que
+> l'image porte (`serve`, `--http=0.0.0.0:8090`, `--dir=/pb_data`), car le
+> déclarer le remplace : l'omettre ferait écouter le serveur sur `127.0.0.1`, où
+> personne ne le joint depuis l'extérieur du conteneur, et écrire ses données
+> ailleurs que dans le volume.
+>
+> ```yaml
+> services:
+>   patachoo:
+>     image: ghcr.io/pol128/patachoo:latest
+>     command:
+>       - serve
+>       - --http=0.0.0.0:8090
+>       - --dir=/pb_data
+>       - --encryptionEnv=PATACHOO_CLE_REGLAGES
+>     environment:
+>       PATACHOO_CLE_REGLAGES: la-cle-de-32-caracteres-tiree-plus-haut
+> ```
+>
+> Mettre la clé dans le `docker-compose.yml` la met en clair dans un fichier
+> qu'on sauvegarde et qu'on recopie ; `environment:` accepte aussi la forme
+> `- PATACHOO_CLE_REGLAGES`, sans valeur, qui va alors la chercher dans
+> l'environnement de `docker compose` ou dans un fichier `.env` à côté — à tenir
+> hors des sauvegardes, puisque c'est précisément ce que la clé protège.
 >
 > La variable doit être présente à **chaque** démarrage, et la perdre rend les
 > réglages illisibles. À défaut, réservez au bucket de sauvegarde des

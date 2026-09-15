@@ -23,7 +23,10 @@ voir [« Créer le premier
 superutilisateur »](INSTALL.md#créer-le-premier-superutilisateur) dans
 `INSTALL.md`, qui donne aussi les remèdes quand la commande reste nécessaire.
 
-L'interface d'administration répond sur `/_/`, l'API REST sur `/api/`.
+L'interface d'administration répond sur `/_/`, l'API REST sur `/api/` — sur le
+**même port que le site**, donc sur les mêmes interfaces que lui. Ni l'une ni
+l'autre ne doit être joignable depuis l'Internet sans filtre devant : voir
+[Exposer Patachoo hors de chez soi](INSTALL.md#exposer-patachoo-hors-de-chez-soi).
 
 ```sh
 go test ./...                       # les tests, avant tout le reste
