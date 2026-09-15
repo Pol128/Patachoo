@@ -223,6 +223,13 @@ func Recupere(ctx context.Context, adresse string, choix ...Option) (Page, error
 
 	r := &recuperateur{o: o, restant: o.delaiMax}
 	r.client = &http.Client{Transport: r.pile(), CheckRedirect: r.verifieRedirection}
+	// Le transport est propre à l'appel et rien ne le partage : passé ce
+	// retour, plus personne ne peut réutiliser ses connexions inactives, mais
+	// elles vivraient encore quatre-vingt-dix secondes. Les deux requêtes de
+	// l'appel — robots.txt puis la page — sont faites à ce moment-là, et
+	// page() a déjà lu le corps en entier dans Page.Corps : fermer ici ne
+	// coupe aucune lecture en cours et ne coûte aucune réutilisation réelle.
+	defer r.client.CloseIdleConnections()
 
 	if refus := r.robotsInterdit(ctx, cible); refus != nil {
 		return Page{}, refus
