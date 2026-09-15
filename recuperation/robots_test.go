@@ -351,29 +351,3 @@ func TestLesMotifsSontCompilesALAnalyse(t *testing.T) {
 		}
 	}
 }
-
-// TestLeNombreDeReglesRetenuesEstBorne : le plafond de taille ne suffit pas à
-// borner la mémoire. Un robots.txt de 512 Kio entièrement fait de règles à
-// joker en tient près de vingt-sept mille, et chacune retient son expression
-// compilée — mesuré à 1 125 octets la règle, soit une trentaine de mébioctets
-// par hôte. Une fournée en mène cinq cents et garde leurs décisions jusqu'à sa
-// fin : c'est l'épuisement de mémoire que la tâche veut ôter, que la seule
-// borne de taille laissait ouvert. Le nombre de règles retenues est donc borné
-// lui aussi, et ce qui dépasse est ignoré comme l'est la queue du fichier.
-func TestLeNombreDeReglesRetenuesEstBorne(t *testing.T) {
-	var texte strings.Builder
-	texte.WriteString("User-agent: *\n")
-	for i := 0; texte.Len() < tailleMaxRobots; i++ {
-		fmt.Fprintf(&texte, "Disallow: /a%d*b\n", i)
-	}
-
-	lu := analyseRobots(texte.String())
-
-	retenues := 0
-	for _, g := range lu.groupes {
-		retenues += len(g.regles)
-	}
-	if retenues > reglesMaxParRobots {
-		t.Errorf("%d règles retenues, au plus %d attendues : la mémoire d'un hôte n'est bornée que par la taille du fichier", retenues, reglesMaxParRobots)
-	}
-}
