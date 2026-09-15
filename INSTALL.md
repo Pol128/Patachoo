@@ -511,8 +511,8 @@ Le `Caddyfile` de trois lignes de « Hors de la machine locale » suffit à obte
 le HTTPS ; il ne suffit pas à sortir de chez soi, parce qu'il publie aussi
 l'administration. Le proxy est l'endroit où l'on décide qu'elle ne sort pas :
 elle n'a aucune raison d'être atteignable depuis l'extérieur, on ne s'y connecte
-que de chez soi. Le filtre ci-dessous la rend à qui vient d'une adresse privée et
-la fait disparaître pour tout le monde d'autre — ce qui la garde joignable depuis
+que de chez soi. Le filtre ci-dessous la rend à qui vient d'une adresse du réseau
+local et la fait disparaître pour tout le monde d'autre — ce qui la garde joignable depuis
 la maison même après le passage à `"127.0.0.1:8090:8090"`, où le port 8090 n'est
 plus atteignable directement.
 
@@ -527,7 +527,11 @@ recettes.exemple.fr {
 	# à rouvrir la porte.
 	@administration path /_/* /api/collections/_superusers/* /api/collections/pbc_3142635823/*
 	handle @administration {
-		@interne remote_ip 192.168.0.0/16 10.0.0.0/8 172.16.0.0/12
+		# Les plages du réseau local, IPv4 **et** IPv6 : sans les secondes,
+		# un navigateur de la maison qui préfère l'IPv6 reçoit un 404 sur
+		# `/_/`. Une maison dont le fournisseur délègue un préfixe
+		# globalement routable doit y ajouter le sien — voir sous le bloc.
+		@interne remote_ip 192.168.0.0/16 10.0.0.0/8 172.16.0.0/12 127.0.0.1/32 ::1 fd00::/8 fe80::/10
 		handle @interne {
 			reverse_proxy 127.0.0.1:8090
 		}
@@ -551,8 +555,29 @@ L'application est alors joignable en `https://recettes.exemple.fr`, et le mot de
 passe ne circule plus en clair.
 
 `respond 404` plutôt que `403` : un 403 confirme que l'adresse existe, un 404 ne
-dit rien. Ajuster les plages à celle du réseau — celles-ci couvrent les adresses
-privées usuelles.
+dit rien.
+
+**Ajuster les plages à celles du réseau.** Les trois premières couvrent les
+adresses privées **IPv4** usuelles ; les suivantes sont leurs équivalents
+**IPv6** — la boucle locale, les adresses locales uniques (`fd00::/8`, la moitié
+de `fc00::/7` qui est effectivement attribuée sur place) et le lien-local. Sans
+elles, le filtre ne répond qu'en IPv4 : dès que le nom porte un enregistrement
+AAAA, ou que le réseau local est en IPv6, le navigateur de la maison préfère
+l'IPv6 et son adresse source ne correspond alors à aucune plage.
+
+**Une maison dont le fournisseur délègue un préfixe globalement routable doit y
+ajouter le sien.** Il n'existe pas, en IPv6, d'équivalent de `192.168.0.0/16` :
+les postes du logement portent des adresses publiques, tirées du préfixe délégué
+à la box — c'est le cas courant chez un fournisseur d'accès grand public, et
+aucune liste écrite d'avance ne peut le deviner. Le relever une fois (`ip -6
+addr` sur un poste de la maison, ou l'interface de la box) et l'ajouter à
+`@interne`.
+
+> **Un 404 sur `/_/` *depuis la maison* veut dire que l'adresse source n'est pas
+> dans les plages** — pas que l'administration est cassée. Le 404 ayant été
+> choisi pour ne rien dire, il ne le dira pas. Le geste est d'ajouter sa plage à
+> `@interne` ; **jamais** de retirer le bloc `@administration`, qui rouvrirait à
+> l'Internet entier exactement ce que cette section ferme.
 
 > **Les deux chemins `/api/collections/…` ne sont pas un doublon : ne pas en
 > retirer un.** PocketBase désigne une collection *par son nom ou par son
