@@ -23,6 +23,10 @@ func TestLesPlagesRefusees(t *testing.T) {
 		"172.16/12":            "http://172.16.0.1/recette",
 		"192.168/16":           "http://192.168.0.1/recette",
 		"non spécifiée":        "http://0.0.0.0/recette",
+		"plage partagée":       "http://100.100.100.100/recette",
+		"0.0.0.0/8 ailleurs":   "http://0.0.0.1/recette",
+		"banc d'essai":         "http://198.18.0.1/recette",
+		"réservée 240/4":       "http://240.0.0.1/recette",
 		"::1":                  "http://[::1]/recette",
 		"fc00::/7":             "http://[fc00::1]/recette",
 		"mappée v4":            "http://[::ffff:127.0.0.1]/recette",
@@ -74,10 +78,11 @@ func TestLesSchemasRefusesNeFontPartirAucuneRequete(t *testing.T) {
 // l'est pas. La politique vaut à chaque saut, pas seulement à l'entrée.
 func TestUneRedirectionEstReverifiee(t *testing.T) {
 	cas := map[string]string{
-		"plage privée":  "http://10.0.0.1/vole",
-		"boucle locale": "http://127.0.0.1:9/vole",
-		"ftp":           "ftp://exemple.test/vole",
-		"file":          "file:///etc/passwd",
+		"plage privée":   "http://10.0.0.1/vole",
+		"plage partagée": "http://100.100.100.100/vole",
+		"boucle locale":  "http://127.0.0.1:9/vole",
+		"ftp":            "ftp://exemple.test/vole",
+		"file":           "file:///etc/passwd",
 	}
 
 	for nom, vers := range cas {
@@ -160,7 +165,7 @@ func TestUneAdressePubliqueEstAcceptee(t *testing.T) {
 // [64:ff9b::a9fe:a9fe] est le service de métadonnées de l'hébergeur.
 func TestLesFormesMappeesSontRamenees(t *testing.T) {
 	cas := map[string][]string{
-		"mappée ::ffff:0:0/96": {"::ffff:127.0.0.1", "::ffff:10.0.0.1", "::ffff:0.0.0.0", "::ffff:169.254.169.254"},
+		"mappée ::ffff:0:0/96": {"::ffff:127.0.0.1", "::ffff:10.0.0.1", "::ffff:0.0.0.0", "::ffff:169.254.169.254", "::ffff:100.64.0.1"},
 		"NAT64 64:ff9b::/96":   {"64:ff9b::a9fe:a9fe", "64:ff9b::7f00:1", "64:ff9b::a00:1"},
 		"6to4 2002::/16":       {"2002:0a00:0001::", "2002:7f00:0001::"},
 		"compatible v4 ::/96":  {"::127.0.0.1"},
@@ -172,6 +177,39 @@ func TestLesFormesMappeesSontRamenees(t *testing.T) {
 				if !adresseInterdite(netip.MustParseAddr(brute)) {
 					t.Errorf("%s acceptée : la forme %s doit être ramenée avant l'examen", brute, famille)
 				}
+			}
+		})
+	}
+}
+
+// TestLesBornesDesPlagesReservees : les plages ajoutées se décrivent par un
+// masque, et un masque écrit trop large ou trop étroit ne se voit qu'à ses
+// extrémités — jamais en son milieu, que la table de TestLesPlagesRefusees
+// couvre déjà. On juge donc les deux bouts de la plage partagée, l'adresse de
+// diffusion qui ferme 240/4, et les deux adresses qui bordent la plage partagée
+// sans lui appartenir : celles-là doivent rester joignables.
+func TestLesBornesDesPlagesReservees(t *testing.T) {
+	refusees := map[string]string{
+		"plage partagée, premier hôte": "100.64.0.1",
+		"plage partagée, dernier hôte": "100.127.255.254",
+		"240/4, diffusion":             "255.255.255.255",
+	}
+	for nom, brute := range refusees {
+		t.Run(nom, func(t *testing.T) {
+			if !adresseInterdite(netip.MustParseAddr(brute)) {
+				t.Errorf("%s acceptée : la plage n'est pas refusée jusqu'à sa borne", brute)
+			}
+		})
+	}
+
+	acceptees := map[string]string{
+		"juste avant la plage partagée": "100.63.255.255",
+		"juste après la plage partagée": "100.128.0.0",
+	}
+	for nom, brute := range acceptees {
+		t.Run(nom, func(t *testing.T) {
+			if adresseInterdite(netip.MustParseAddr(brute)) {
+				t.Errorf("%s refusée : le masque de la plage partagée déborde sur des adresses publiques", brute)
 			}
 		})
 	}

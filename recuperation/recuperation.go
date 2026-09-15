@@ -364,6 +364,24 @@ func (r *recuperateur) controle(_, adresse string, _ syscall.RawConn) error {
 	return nil
 }
 
+// plagesReservees complète les prédicats de netip, qui ne connaissent ni la
+// plage partagée du RFC 6598 ni les plages que l'IANA garde pour elle. Compilées
+// une fois : MustParsePrefix à chaque appel coûterait un analyseur par connect.
+var plagesReservees = []netip.Prefix{
+	// 100.64.0.0/10, la plage partagée du RFC 6598. Tailscale y numérote les
+	// pairs d'un tailnet, et beaucoup de fournisseurs l'emploient en CGNAT :
+	// c'est le réseau privé de l'utilisateur, qu'IsPrivate ne couvre pas.
+	netip.MustParsePrefix("100.64.0.0/10"),
+	// 0.0.0.0/8, le « this network » du RFC 1122. IsUnspecified n'en connaît
+	// que la première adresse.
+	netip.MustParsePrefix("0.0.0.0/8"),
+	// 198.18.0.0/15, le banc d'essai du RFC 2544.
+	netip.MustParsePrefix("198.18.0.0/15"),
+	// 240.0.0.0/4, réservée par le RFC 1112 — l'adresse de diffusion
+	// 255.255.255.255 comprise.
+	netip.MustParsePrefix("240.0.0.0/4"),
+}
+
 // Les trois préfixes qui enferment une IPv4 dans une IPv6 et que netip.Addr.Unmap
 // ne connaît pas — il ne réduit que la forme mappée ::ffff:0:0/96.
 var (
@@ -393,31 +411,42 @@ func reduite(a netip.Addr) netip.Addr {
 
 // adresseInterdite dit les adresses que nous n'allons pas chercher : la boucle
 // locale, les plages privées, le lien-local — dont 169.254.169.254, qui sert les
-// métadonnées des hébergeurs — le multicast et l'adresse non spécifiée.
+// métadonnées des hébergeurs — le multicast, l'adresse non spécifiée, et les
+// plages de plagesReservees : la plage partagée du RFC 6598, où vit un tailnet,
+// « this network », le banc d'essai et la plage réservée de l'IANA.
 //
 // Quatre écritures enferment une IPv4 dans une IPv6, et chacune est ramenée à ce
 // qu'elle porte avant l'examen : sans quoi elle passerait pour une adresse v6
 // quelconque, qu'une passerelle traduirait ensuite vers ce que nous refusons. La
 // forme mappée ::ffff:127.0.0.1, le préfixe NAT64 64:ff9b::/96, 6to4 2002::/16
-// et la forme compatible v4 ::/96.
+// et la forme compatible v4 ::/96. Les plages de plagesReservees sont examinées
+// après cette réduction, comme les prédicats de netip.
 //
 // L'examen porte sur les deux formes, parce que réduire en ouvrirait une autre :
 // ::1 appartient à ::/96 et se réduit en 0.0.0.1, qui n'est ni la boucle locale
-// ni l'adresse non spécifiée. Une adresse est donc interdite si l'une ou l'autre
-// de ses deux formes l'est.
+// ni l'adresse non spécifiée — seul « this network » le rattrape. Une adresse est
+// donc interdite si l'une ou l'autre de ses deux formes l'est.
 func adresseInterdite(a netip.Addr) bool {
 	return interdite(a.Unmap()) || interdite(reduite(a))
 }
 
 func interdite(a netip.Addr) bool {
-	return !a.IsValid() ||
+	if !a.IsValid() ||
 		a.IsUnspecified() ||
 		a.IsLoopback() ||
 		a.IsPrivate() ||
 		a.IsLinkLocalUnicast() ||
 		a.IsLinkLocalMulticast() ||
 		a.IsInterfaceLocalMulticast() ||
-		a.IsMulticast()
+		a.IsMulticast() {
+		return true
+	}
+	for _, plage := range plagesReservees {
+		if plage.Contains(a) {
+			return true
+		}
+	}
+	return false
 }
 
 func resolutionSysteme(ctx context.Context, hote string) ([]netip.Addr, error) {
