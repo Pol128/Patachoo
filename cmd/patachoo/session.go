@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/hook"
@@ -28,6 +29,43 @@ import (
 // de poser Secure et Path=/ sans jamais poser de Domain — les trois attributs
 // dont il dépend, et que attributsDeSession garde dans les tests.
 const nomCookieSession = "__Host-patachoo_session"
+
+// nomCookieOuvertureDeSession date l'ouverture de la session, et lui seul : le
+// jeton de PocketBase ne porte que son échéance (core/record_tokens.go), pas sa
+// date de naissance, et chaque renouvellement la repousse de cinq jours pleins.
+// Sans ce second cookie, une session obtenue par renouvellements successifs ne
+// finit jamais : un jeton capté une fois ouvre le compte tant que son porteur
+// émet une requête par demi-vie.
+//
+// Le préfixe __Host- pour les mêmes raisons que nomCookieSession, et il compte
+// autant ici : un voisin qui partage notre domaine enregistrable poserait
+// sinon ce nom-là avec sa propre date d'ouverture, et rendrait au jeton volé la
+// durée que ce cookie lui retire.
+const nomCookieOuvertureDeSession = "__Host-patachoo_session_ouverte"
+
+// dureeMaximaleDeSession borne la durée totale d'une session, renouvellements
+// compris. Passé ce délai, le renouvellement cesse : la session s'éteint à
+// l'échéance de son jeton courant, et le compte doit se reconnecter.
+//
+// Trente jours, tranché le 16/09/2026. Sept faisait payer une reconnexion
+// hebdomadaire à l'usage, quatre-vingt-dix laissait un trimestre à un jeton
+// volé. Le dernier renouvellement possible tombe donc au plus tard au trentième
+// jour, et la reconnexion est exigée entre le 30e et le 35e — un jeton dure
+// cinq jours.
+const dureeMaximaleDeSession = 30 * 24 * time.Hour
+
+// typeJetonOuvertureDeSession sépare le cookie d'ouverture du jeton
+// d'authentification, que la même clé signe.
+//
+// Sans cette revendication, le jeton volé serait à lui-même son propre cookie
+// d'ouverture : recopié sous l'autre nom, il se vérifierait avec la même clé et
+// porterait déjà le bon identifiant de compte, pour une échéance à cinq jours
+// toujours fraîche. Le plafond ne bornerait plus rien.
+//
+// Une valeur à nous, et non l'une des cinq de core.TokenType* : ce jeton n'est
+// pas de PocketBase, et se ranger dans sa nomenclature promettrait une parenté
+// qu'il n'a pas.
+const typeJetonOuvertureDeSession = "patachooSessionOuverte"
 
 // cleSessionPorteeParLeCookie marque, dans le magasin de la requête, que c'est
 // notre cookie qui a fourni le jeton d'authentification — et non un en-tête que
@@ -185,6 +223,14 @@ func sessionARenouveler(e *core.RequestEvent) (string, time.Duration, bool) {
 		return "", 0, false
 	}
 
+	// La borne de durée totale, ici et pas ailleurs : après la mi-vie, qui se
+	// lit dans le jeton, et avant la règle d'authentification, qui se lit en
+	// base. Le cookie d'ouverture se lit en mémoire comme le reste ; le cas
+	// rare est le seul qui doive payer la base.
+	if !lOuvertureTientDansLaBorne(e) {
+		return "", 0, false
+	}
+
 	// La règle d'authentification décide de la prolongation comme elle décide
 	// de l'ouverture. Sans cette lecture, un compte que la règle ne couvre plus
 	// garde sa session indéfiniment tant qu'il émet une requête par demi-vie :
@@ -315,6 +361,118 @@ func cookieDeSessionEfface() *http.Cookie {
 	efface := cookieDeSession("", 0)
 	efface.MaxAge = -1
 	return efface
+}
+
+// revendicationsDOuverture dit de qui la session est, et rien de plus.
+//
+// La date d'ouverture, elle, n'a pas de revendication à elle : security.NewJWT
+// pose l'échéance à l'instant plus la durée qu'on lui donne, et cette durée est
+// le plafond lui-même — l'ouverture est donc l'exp moins le plafond. Une
+// seconde revendication qui la porterait pourrait contredire la première, et il
+// faudrait alors décider laquelle fait foi.
+func revendicationsDOuverture(compte *core.Record) jwt.MapClaims {
+	return jwt.MapClaims{
+		core.TokenClaimType: typeJetonOuvertureDeSession,
+		core.TokenClaimId:   compte.Id,
+	}
+}
+
+// cleDOuvertureDeSession est celle qui signe déjà les jetons du compte
+// (core/record_tokens.go).
+//
+// La réemployer donne deux propriétés sans une ligne de plus : le cookie meurt
+// quand le mot de passe ou le courriel change, puisque PocketBase régénère
+// alors tokenKey, et il ne vaut que pour le compte qui l'a reçu. Une clé à
+// nous, tirée ailleurs, aurait survécu au changement de mot de passe — c'est-à-dire
+// au seul geste qui coupe tout.
+func cleDOuvertureDeSession(compte *core.Record) string {
+	return compte.TokenKey() + compte.Collection().AuthToken.Secret
+}
+
+// cookieDOuvertureDeSession date l'ouverture au navigateur.
+//
+// Mêmes attributs que cookieDeSession, jusqu'au Path : deux cookies de la même
+// session qui différeraient d'un seul d'entre eux, et le navigateur en garde
+// deux homonymes dont l'un ne s'efface jamais. Max-Age vaut le plafond, comme
+// l'exp du jeton qu'il porte : un cookie qui lui survivrait ne prouverait plus
+// rien, et l'inverse couperait la session avant sa borne.
+func cookieDOuvertureDeSession(compte *core.Record) (*http.Cookie, error) {
+	jeton, err := security.NewJWT(revendicationsDOuverture(compte), cleDOuvertureDeSession(compte), dureeMaximaleDeSession)
+	if err != nil {
+		return nil, err
+	}
+
+	return &http.Cookie{
+		Name:     nomCookieOuvertureDeSession,
+		Value:    jeton,
+		Path:     "/",
+		MaxAge:   int(dureeMaximaleDeSession.Seconds()),
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+	}, nil
+}
+
+// poseLOuvertureDeSession dépose le cookie qui date la session, aux deux seuls
+// endroits où une session naît — et jamais au renouvellement, qui est toute sa
+// raison d'être : redaté à chaque passage, le plafond se remettrait à zéro et
+// ne bornerait rien.
+func poseLOuvertureDeSession(e *core.RequestEvent, compte *core.Record) error {
+	cookie, err := cookieDOuvertureDeSession(compte)
+	if err != nil {
+		return err
+	}
+	poseLeCookie(e, cookie)
+	return nil
+}
+
+// cookieDOuvertureEfface ordonne l'oubli du cookie d'ouverture.
+func cookieDOuvertureEfface() *http.Cookie {
+	efface := &http.Cookie{
+		Name:     nomCookieOuvertureDeSession,
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+	}
+	return efface
+}
+
+// lOuvertureTientDansLaBorne dit si la session peut encore être prolongée.
+//
+// Absent vaut refus, jamais « session neuve » : traiter l'absence comme une
+// ouverture à l'instant rendrait le plafond décoratif, puisqu'il suffirait de
+// jeter le cookie pour le remettre à zéro. La conséquence est assumée — les
+// sessions ouvertes avant le déploiement n'ont pas ce cookie, cessent de se
+// renouveler et s'éteignent dans les cinq jours.
+//
+// La signature est vérifiée ici, à la différence d'aPasseLaMiVie : personne ne
+// l'a validée avant nous, ce cookie n'étant pas celui que PocketBase lit. C'est
+// elle qui fait tout le travail — sans elle, il suffirait de récrire la date.
+//
+// L'identifiant est confronté à celui du compte alors que la clé de signature
+// est déjà propre au compte : le contrôle est redondant aujourd'hui, et il ne
+// le serait plus le jour où la clé cesserait de l'être.
+func lOuvertureTientDansLaBorne(e *core.RequestEvent) bool {
+	cookie, err := e.Request.Cookie(nomCookieOuvertureDeSession)
+	if err != nil {
+		return false
+	}
+
+	// ParseJWT refuse de lui-même un jeton expiré : la borne dépassée y entre
+	// par le même chemin qu'une signature qui ne vérifie pas.
+	revendications, err := security.ParseJWT(cookie.Value, cleDOuvertureDeSession(e.Auth))
+	if err != nil {
+		return false
+	}
+
+	if typeDuJeton, _ := revendications[core.TokenClaimType].(string); typeDuJeton != typeJetonOuvertureDeSession {
+		return false
+	}
+
+	id, _ := revendications[core.TokenClaimId].(string)
+	return id == e.Auth.Id
 }
 
 // utilisateur porte ce que les gabarits ont le droit de connaître du compte
