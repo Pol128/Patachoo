@@ -5,6 +5,39 @@
 # d'autre. Un critère ajouté au script arrive donc en CI sans qu'on touche à ce
 # YAML — sinon on entretient deux définitions du vert, dont une seule serait à
 # jour.
+#
+# --- Actions tierces : épinglées par empreinte -------------------------------
+#
+# Toute action tierce référencée par ce dépôt — ici comme dans publier.yml —
+# s'écrit `@<empreinte de commit sur 40 caractères>`, suivie sur la même ligne
+# d'un commentaire `# vX.Y.Z` qui donne la version exacte ainsi épinglée.
+#
+# Jamais `@v4`. Un tag de version majeure est redéployé par son mainteneur à
+# chaque version mineure : sous ce nom, ce que la CI exécute cesserait d'être
+# décidé par le dépôt, et changerait sans qu'une ligne bouge ici. Qui obtient
+# le droit de déplacer un de ces tags exécute son code sur le runner — et, du
+# côté de publier.yml, le fait signer par une attestation de provenance
+# authentique. Le commentaire de version n'est pas décoratif : une empreinte
+# nue ne dit pas ce qu'elle épingle, et personne ne saurait quelles notes de
+# version lire avant de monter.
+#
+# Pour monter une action de version, résoudre l'empreinte de la version visée,
+# jamais celle du tag mouvant — sinon le commentaire ne pourrait pas nommer la
+# version :
+#
+#     gh api --paginate repos/<propriétaire>/<action>/tags \
+#       --jq '.[] | "\(.name) \(.commit.sha)"'
+#
+# L'empreinte et son commentaire changent ensemble, dans le même geste : l'un
+# sans l'autre laisse un commentaire qui ment. Et `actions/checkout` est
+# référencée par les deux workflows : elle y porte la même empreinte, faute de
+# quoi le même dépôt exécuterait deux versions de la même action.
+#
+# L'entretien est manuel, et c'est un arbitrage écrit plutôt qu'un oubli :
+# Dependabot n'ajouterait que du confort contre un flux de demandes de fusion à
+# relire, sur un projet à un seul mainteneur (PATA-91). Le prix en est qu'une
+# empreinte vieillit en silence — un correctif de sécurité de l'action n'arrive
+# plus de lui-même.
 
 name: verifie
 
@@ -72,11 +105,11 @@ jobs:
       GOFLAGS: -count=1
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4.4.0
 
       # Aucun numéro de version ici : go.mod est la seule source. Une version
       # figée dans ce fichier divergerait en silence du jour où go.mod change.
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff   # v5.6.0
         with:
           go-version-file: go.mod
 
