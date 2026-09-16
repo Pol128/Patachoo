@@ -59,11 +59,33 @@ else
 	go test ./...
 fi
 
+# La version est figée, et c'est délibéré : une version flottante laissait le
+# proxy de modules décider, au moment où la commande tourne, de quel code
+# s'exécute ici — c'était la dernière publiée, quelle qu'elle soit.
+# Ici, c'est-à-dire sur la machine de développement, sous l'identité de
+# l'hébergeant, dans un répertoire de travail qui porte des jetons — à chaque
+# geste, puisque ce script se lance à chaque geste. Épingler ferme ce que le
+# journal de transparence ne couvre pas : il garantit qu'une version publiée
+# n'est pas réécrite, pas qu'une version nouvelle est honnête.
+#
+# Le contrepoids habituel de l'épinglage — « on cesse d'être à jour » — ne joue
+# pas ici : la base de vulnérabilités est interrogée sur vuln.go.dev à
+# l'exécution, indépendamment de la version de l'outil. Une faille publiée
+# demain est donc vue demain par ce binaire figé aujourd'hui. Ce qui est figé,
+# c'est le moteur d'analyse d'atteignabilité.
+#
+# Le dépôt n'a ni Dependabot ni automate de montée de version (tranché en
+# PATA-91) : la remonter est un geste manuel, à faire quand on le décide.
+#   go list -m -versions golang.org/x/vuln   # les versions publiées
+# puis changer le numéro ci-dessous. L'empreinte de ce qui est téléchargé vient
+# du journal de transparence (sum.golang.org), pas de go.sum : le module est
+# volontairement hors de go.mod, pour ne pas mêler l'outillage aux dépendances
+# du produit.
 echo "→ govulncheck"
 if [ "${SANS_RESEAU:-}" = "1" ]; then
 	echo "  sauté (SANS_RESEAU=1) — à repasser avant de clore la tâche"
 else
-	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+	go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 fi
 
 echo "✓ tout est vert"
