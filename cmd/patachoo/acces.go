@@ -21,6 +21,11 @@ func brancheLAcces(app core.App) {
 	// une règle ne dit rien du cas où le champ n'est pas fourni, et les deux
 	// collections gagnent à ne se protéger que d'une seule façon.
 	app.OnRecordUpdateRequest("comments").BindFunc(fige("author", "recipe"))
+	// Et sur ingredients, pour la même raison qu'on fige recipe sur comments :
+	// la règle de la collection interroge la recette portante telle qu'elle est
+	// enregistrée, donc avant le changement. Une ligne de sa propre recette
+	// passe le contrôle, puis atterrit sous celle d'un autre.
+	app.OnRecordUpdateRequest("ingredients").BindFunc(fige("recipe"))
 }
 
 // attribueALAppelant pose l'auteur d'une recette créée par l'API.
