@@ -36,6 +36,11 @@ func fiche(mux http.Handler, cookie *http.Cookie, id string) *httptest.ResponseR
 
 // recetteEnBase enregistre une recette, les champs donnés par-dessus un titre
 // par défaut : la plupart des tests ne portent que sur un champ à la fois.
+//
+// Elle est attribuée au compte de la session, pour la même raison que
+// recetteEnregistree (recettes_test.go) : depuis PATA-64, une recette qu'on n'a
+// pas ajoutée ne s'édite pas, et une fixture sans auteur ne décrirait plus le
+// cas ordinaire. Un champs qui porte created_by l'emporte.
 func recetteEnBase(t *testing.T, app core.App, champs map[string]any) *core.Record {
 	t.Helper()
 
@@ -46,6 +51,7 @@ func recetteEnBase(t *testing.T, app core.App, champs map[string]any) *core.Reco
 
 	recette := core.NewRecord(collection)
 	recette.Set("title", "Tarte aux pommes")
+	recette.Set(champAuteur, idDuCompteDeLaSession(t, app))
 	for nom, valeur := range champs {
 		recette.Set(nom, valeur)
 	}
@@ -75,6 +81,7 @@ func recetteEnBaseSansValidation(t *testing.T, app core.App, champs map[string]a
 
 	recette := core.NewRecord(collection)
 	recette.Set("title", "Tarte aux pommes")
+	recette.Set(champAuteur, idDuCompteDeLaSession(t, app))
 	for nom, valeur := range champs {
 		recette.Set(nom, valeur)
 	}
@@ -558,7 +565,10 @@ func TestAucunGabaritNutiliseLaFonctionRaw(t *testing.T) {
 
 func TestUneRecetteDepouilleeNeRendAucunLibelle(t *testing.T) {
 	app, mux, cookie := serveurConnecte(t)
-	recette := recetteEnBase(t, app, map[string]any{"title": "Pain perdu"})
+	// created_by vide, écrit à la main : « Ajoutée par » est un libellé comme
+	// les autres, et la fixture attribue par défaut à la session depuis
+	// PATA-64. Une recette dépouillée n'a pas d'auteur non plus.
+	recette := recetteEnBase(t, app, map[string]any{"title": "Pain perdu", champAuteur: ""})
 
 	// Le contenu seul, et non le document entier : la mise en page porte le
 	// réglage htmx de la politique de sécurité du contenu, dont la clé
@@ -1098,13 +1108,17 @@ func TestLAttributTitreDeLaLigneBruteEstEchappe(t *testing.T) {
 // cuisine, qui se termine par le même mot après un /commentaires/.
 var lienDEdition = regexp.MustCompile(`<a\s([^>]*href="/recettes/([^"/]+)/modifier"[^>]*)>([^<]*)</a>`)
 
-// La fiche mène à son édition sans condition d'affichage : la règle de la
-// collection dit déjà qui modifie — tout compte connecté —, et la fiche est
-// derrière la session. Cette recette n'a aucun auteur, et le lien y est quand
-// même.
-func TestLaFicheMeneALEditionDeLaRecette(t *testing.T) {
+// La fiche ne mène à son édition que sur sa propre recette (PATA-64) : ailleurs,
+// le lien promettrait un 404. C'est la condition qui porte déjà « Supprimer »,
+// juste en dessous, et Sienne est déjà calculé — rien à ajouter au modèle.
+func TestLaFicheNeMeneALEditionQueSurSaPropreRecette(t *testing.T) {
 	app, mux, cookie := serveurConnecte(t)
 	recette := recetteEnBase(t, app, nil)
+	autre := creeCompte(t, app, "autre@exemple.fr", "Autre")
+	dAutrui := recetteEnBase(t, app, map[string]any{champAuteur: autre.Id})
+	// created_by vide : une recette qui n'appartient à personne ne s'édite pas
+	// davantage, et la fiche ne doit pas l'offrir.
+	sansAuteur := recetteEnBase(t, app, map[string]any{champAuteur: ""})
 
 	corps := fiche(mux, cookie, recette.Id).Body.String()
 
@@ -1127,5 +1141,11 @@ func TestLaFicheMeneALEditionDeLaRecette(t *testing.T) {
 	// attribut hx- l'échangerait dans la fiche au lieu de l'ouvrir.
 	if strings.Contains(attributs, "hx-") {
 		t.Errorf("le lien vers l'édition porte un attribut HTMX : %q", attributs)
+	}
+
+	for nom, id := range map[string]string{"d'un autre": dAutrui.Id, "sans auteur": sansAuteur.Id} {
+		if corps := fiche(mux, cookie, id).Body.String(); lienDEdition.MatchString(corps) {
+			t.Errorf("un lien vers l'édition est offert sur la recette %s :\n%s", nom, corps)
+		}
 	}
 }

@@ -1641,6 +1641,10 @@ func ingredientsDe(t *testing.T, app core.App, recette *core.Record) []*core.Rec
 
 // recetteEnregistree pose une recette directement en base, sans passer par le
 // formulaire : c'est l'état de départ des tests d'édition.
+//
+// Elle est attribuée au compte de la session, parce que depuis PATA-64 c'est le
+// seul état où l'édition est offerte. Un champs qui porte created_by l'emporte
+// — y compris vide, qui est l'état, réel en base, d'une recette sans auteur.
 func recetteEnregistree(t *testing.T, app core.App, champs map[string]any) *core.Record {
 	t.Helper()
 
@@ -1650,6 +1654,7 @@ func recetteEnregistree(t *testing.T, app core.App, champs map[string]any) *core
 	}
 	recette := core.NewRecord(collection)
 	recette.Set("title", "Tarte aux pommes")
+	recette.Set(champAuteur, idDuCompteDeLaSession(t, app))
 	for nom, valeur := range champs {
 		recette.Set(nom, valeur)
 	}
@@ -1657,6 +1662,23 @@ func recetteEnregistree(t *testing.T, app core.App, champs map[string]any) *core
 		t.Fatalf("enregistrement de la recette : %v", err)
 	}
 	return recette
+}
+
+// idDuCompteDeLaSession rend le compte que carnetDeTest connecte, ou la chaîne
+// vide quand le montage n'en ouvre aucun — auquel cas la recette reste sans
+// auteur, comme avant PATA-64.
+//
+// Une erreur ignorée, et non un t.Fatalf comme compteDeLaSession : les deux
+// fixtures de recette servent aussi à des tests qui ne montent pas de session,
+// et leur en exiger une les ferait échouer sur leur décor.
+func idDuCompteDeLaSession(t *testing.T, app core.App) string {
+	t.Helper()
+
+	compte, err := app.FindAuthRecordByEmail("users", courrielDeTest)
+	if err != nil {
+		return ""
+	}
+	return compte.Id
 }
 
 // poseLesIngredients rattache les lignes à la recette, dans l'ordre donné.
@@ -1766,6 +1788,80 @@ func TestLesQuatreRoutesServentUnCompteConnecte(t *testing.T) {
 	}
 	if titre := relitLaRecette(t, app, recette.Id).GetString("title"); titre != "Tarte aux pommes" {
 		t.Errorf("titre %q après l'édition, %q attendu", titre, "Tarte aux pommes")
+	}
+}
+
+// --- Propriété : le sens du refus -----------------------------------------
+
+// Un compte connecté qui vise la recette d'un autre obtient la réponse d'un
+// identifiant inconnu — corps compris, et non un 403 : l'existence d'une
+// recette qu'on ne peut pas éditer n'est pas une information à donner par un
+// code de statut. C'est la ligne que laRecetteASupprimer tient déjà.
+//
+// Le contrôle se refait dans le code de la route, et pas seulement par
+// UpdateRule : nos routes écrivent par txApp.Save, qui n'applique pas les
+// règles de collection — celles-ci gardent l'API REST et non notre code Go.
+func TestLesRoutesDEditionRefusentLaRecetteDunAutre(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	autre := creeCompte(t, app, "autre@exemple.fr", "Autre")
+	recette := recetteEnregistree(t, app, map[string]any{
+		champAuteur: autre.Id,
+		"title":     "Titre d'origine",
+	})
+	poseLesIngredients(t, app, recette, "500 g de farine")
+
+	champs := champsValides()
+	champs.Set("titre", "Titre injecté")
+
+	formulaire := avecCookie(mux, http.MethodGet, "/recettes/"+recette.Id+"/modifier", cookie)
+	inconnue := avecCookie(mux, http.MethodGet, "/recettes/pas-une-recette/modifier", cookie)
+	edition := poste(t, mux, "/recettes/"+recette.Id, cookie, champs)
+
+	for nom, rec := range map[string]*httptest.ResponseRecorder{
+		"GET /recettes/{id}/modifier": formulaire,
+		"POST /recettes/{id}":         edition,
+	} {
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s : statut %d, attendu %d", nom, rec.Code, http.StatusNotFound)
+		}
+		if rec.Body.String() != inconnue.Body.String() {
+			t.Errorf("%s : corps %q, attendu celui d'un identifiant inconnu %q",
+				nom, rec.Body.String(), inconnue.Body.String())
+		}
+	}
+
+	// L'état enregistré fait foi, pas le code de retour : une route qui
+	// répondrait 404 après avoir écrit ne protégerait rien.
+	if titre := relitLaRecette(t, app, recette.Id).GetString("title"); titre != "Titre d'origine" {
+		t.Errorf("titre %q après l'édition de la recette d'un autre, %q attendu", titre, "Titre d'origine")
+	}
+	if lignes := lignesDe(t, app, recette); len(lignes) != 1 || lignes[0] != "500 g de farine" {
+		t.Errorf("ingrédients %q après l'édition de la recette d'un autre, inchangés attendus", lignes)
+	}
+}
+
+// created_by n'est pas Required : une recette peut le porter vide — importée
+// avant PATA-35, ou laissée par un compte parti avant la cascade de PATA-38.
+// Elle n'appartient à personne, donc personne ne l'édite, comme personne ne la
+// supprime.
+func TestUneRecetteSansAuteurNestEditableParPersonne(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	recette := recetteEnregistree(t, app, map[string]any{
+		champAuteur: "",
+		"title":     "Titre d'origine",
+	})
+
+	champs := champsValides()
+	champs.Set("titre", "Titre injecté")
+
+	if rec := avecCookie(mux, http.MethodGet, "/recettes/"+recette.Id+"/modifier", cookie); rec.Code != http.StatusNotFound {
+		t.Errorf("GET /recettes/{id}/modifier : statut %d, attendu %d", rec.Code, http.StatusNotFound)
+	}
+	if rec := poste(t, mux, "/recettes/"+recette.Id, cookie, champs); rec.Code != http.StatusNotFound {
+		t.Errorf("POST /recettes/{id} : statut %d, attendu %d", rec.Code, http.StatusNotFound)
+	}
+	if titre := relitLaRecette(t, app, recette.Id).GetString("title"); titre != "Titre d'origine" {
+		t.Errorf("titre %q après l'édition d'une recette sans auteur, %q attendu", titre, "Titre d'origine")
 	}
 }
 

@@ -6,37 +6,41 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 )
 
-// Les deux règles de PATA-35, littéralement.
+// Les trois règles, littéralement.
 //
-// Le premier terme de la règle de suppression n'est pas décoratif :
-// created_by n'est pas Required, une recette peut donc le porter vide —
-// importée avant cette tâche, ou créée par un compte supprimé depuis. Réduite
-// à « created_by = @request.auth.id », la règle comparerait "" à "" pour une
+// Le premier terme des règles d'auteur n'est pas décoratif : created_by n'est
+// pas Required, une recette peut donc le porter vide — importée avant PATA-35,
+// ou créée par un compte supprimé depuis. Réduite à
+// « created_by = @request.auth.id », la règle comparerait "" à "" pour une
 // requête non authentifiée, et lui accorderait la suppression.
 const (
-	regleCompteConnecte = `@request.auth.id != ""`
-	regleAuteurSeul     = `@request.auth.id != "" && created_by = @request.auth.id`
+	regleCompteConnecte    = `@request.auth.id != ""`
+	regleAuteurSeul        = `@request.auth.id != "" && created_by = @request.auth.id`
+	regleAuteurDeLaRecette = `@request.auth.id != "" && recipe.created_by = @request.auth.id`
 )
 
 // reglesAttendues : les dix règles, par collection puis par verbe.
 //
-// Un ingrédient n'a pas d'auteur propre : il fait partie d'une recette que
-// tout compte connecté peut modifier, et retirer une ligne est une
-// modification. La suppression de la recette les emporte déjà par cascade.
+// Un ingrédient n'a pas d'auteur propre : il tient le sien de la recette qui le
+// porte (PATA-64). Vider une recette ligne par ligne est le chemin destructeur
+// que l'audit décrivait, et fermer l'édition de la recette en laissant
+// ingredients ouvert à tout compte connecté ne fermerait rien. La lecture, elle,
+// reste partagée des deux côtés : le carnet se lit à plusieurs, il ne s'écrit
+// qu'à son auteur.
 var reglesAttendues = map[string]map[string]string{
 	"recipes": {
 		"list":   regleCompteConnecte,
 		"view":   regleCompteConnecte,
 		"create": regleCompteConnecte,
-		"update": regleCompteConnecte,
+		"update": regleAuteurSeul,
 		"delete": regleAuteurSeul,
 	},
 	"ingredients": {
 		"list":   regleCompteConnecte,
 		"view":   regleCompteConnecte,
-		"create": regleCompteConnecte,
-		"update": regleCompteConnecte,
-		"delete": regleCompteConnecte,
+		"create": regleAuteurDeLaRecette,
+		"update": regleAuteurDeLaRecette,
+		"delete": regleAuteurDeLaRecette,
 	},
 }
 
@@ -125,21 +129,32 @@ func TestUnVisiteurNePeutRienSurUneRecette(t *testing.T) {
 	}
 }
 
-// La décision du 18/08/2026 : on modifie à plusieurs, on ne supprime que le
-// sien. L'autorisation de modifier est donc affirmée ici, pour qu'elle ne
-// passe pas un jour pour un oubli qu'on « corrigerait ».
-func TestUnAutreCompteModifieMaisNeSupprimePas(t *testing.T) {
+// La décision du 18/08/2026 disait « on modifie à plusieurs, on ne supprime que
+// le sien » ; celle du 16/09/2026 (PATA-64) l'a reprise : on n'écrit plus que
+// sur le sien, tout court. La règle de suppression protégeait l'enregistrement
+// et non ce qu'il contient — vider une recette laissait à son auteur une fiche
+// blanche que lui seul pouvait effacer.
+func TestUnAutreCompteNeModifieNiNeSupprime(t *testing.T) {
 	app := baseNeuve(t)
 	a := compteNeuf(t, app, "a@exemple.test")
 	b := compteNeuf(t, app, "b@exemple.test")
 	recette := recetteDe(t, app, a)
 
 	regles := reglesDe(t, app, "recipes")
-	if !peutAcceder(t, app, recette, b, regles["update"]) {
-		t.Error("le compte B ne peut pas modifier la recette de A : les recettes sont partagées")
+	if peutAcceder(t, app, recette, b, regles["update"]) {
+		t.Error("le compte B modifie la recette de A")
 	}
 	if peutAcceder(t, app, recette, b, regles["delete"]) {
 		t.Error("le compte B supprime la recette de A")
+	}
+	// Le sens de l'autorisation, dans le même test : une fermeture trop large
+	// — la règle réduite à « personne » — ne doit pas passer pour un succès.
+	if !peutAcceder(t, app, recette, a, regles["update"]) {
+		t.Error("le compte A ne modifie plus sa propre recette")
+	}
+	// Et la lecture reste partagée : c'est ce que la décision laisse ouvert.
+	if !peutAcceder(t, app, recette, b, regles["view"]) {
+		t.Error("le compte B ne lit plus la recette de A : le carnet reste partagé en lecture")
 	}
 }
 

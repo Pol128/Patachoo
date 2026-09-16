@@ -170,7 +170,9 @@ func TestLesRoutesDeSuppressionRefusentLaRecetteDunAutre(t *testing.T) {
 // à personne, donc personne ne la supprime depuis l'interface.
 func TestUneRecetteSansAuteurNestSupprimableParPersonne(t *testing.T) {
 	app, mux, cookie := carnetDeTest(t)
-	recette := recetteEnregistree(t, app, nil)
+	// created_by vide, écrit à la main : la fixture attribue par défaut à la
+	// session, et c'est justement l'absence d'auteur qui est le sujet ici.
+	recette := recetteEnregistree(t, app, map[string]any{champAuteur: ""})
 
 	for _, methode := range []string{http.MethodGet, http.MethodPost} {
 		rec := avecCookie(mux, methode, cheminDeLaSuppression(recette), cookie)
