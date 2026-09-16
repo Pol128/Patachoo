@@ -56,6 +56,12 @@ golang.org/x/net (https://pkg.go.dev/golang.org/x/net) — licence BSD-3-Clause.
     Son paquet html analyse les pages dont on extrait les recettes. Déjà tiré
     par PocketBase ; il est devenu une dépendance directe avec l'extracteur.
 
+github.com/golang-jwt/jwt/v5 (https://github.com/golang-jwt/jwt) — licence MIT.
+    Signe et vérifie le cookie qui date l'ouverture d'une session, et borne
+    ainsi sa durée totale. Déjà tiré par PocketBase, dont les jetons
+    d'authentification sont des JWT ; il est devenu une dépendance directe avec
+    ce cookie-là.
+
 github.com/spf13/cobra (https://github.com/spf13/cobra) — licence Apache-2.0.
     Porte les sous-commandes du binaire. Déjà tiré par PocketBase, dont
     app.RootCmd est un *cobra.Command ; il est devenu une dépendance directe

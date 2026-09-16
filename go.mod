@@ -4,6 +4,7 @@ go 1.26.6
 
 require (
 	github.com/Pol128/moteur v0.1.1
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/pocketbase/dbx v1.12.0
 	github.com/pocketbase/pocketbase v0.39.11
 	github.com/spf13/cobra v1.10.2
@@ -22,7 +23,6 @@ require (
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.13 // indirect
 	github.com/ganigeorgiev/fexpr v0.6.0 // indirect
-	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/mattn/go-colorable v0.1.15 // indirect
