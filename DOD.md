@@ -126,9 +126,31 @@ DoD : aucun d'eux ne se lit dans un code de retour. Le point 5 est ce qui les
 rend vérifiables — le commentaire Vikunja est la trace. Une CI verte dit que
 rien n'est cassé, pas que la tâche est faite.
 
-**Le rouge n'interdit pas encore la fusion.** Il se voit sur la demande de
-fusion, il ne la bloque pas : la protection de branche est un réglage GitHub,
-hors dépôt, à poser à la main.
+**Le rouge interdit la fusion.** `verifie` est un contrôle requis sur `main` :
+une demande de fusion rouge ne peut pas être fusionnée. Ce fichier l'a longtemps
+dit autrement — « à poser à la main » —, et c'est resté écrit après que le
+réglage a été posé. Relevé le 16/09/2026, voici ce qu'il tient, et ce qu'il ne
+tient pas :
+
+- `verifie` requis, mais **non strict** : une branche n'a pas à être à jour sur
+  `main` pour être fusionnée. Un vert obtenu avant plusieurs commits de `main`
+  vaut donc encore, et c'est le trou connu de ce réglage — deux branches vertes
+  séparément peuvent casser `main` ensemble.
+- **Zéro approbation requise.** La boucle fusionne sans qu'un humain clique,
+  ce qui est voulu : c'est la review automatique qui décide, et son refus se lit
+  dans Vikunja plutôt que dans GitHub.
+- **Résolution des fils exigée.** Un fil de review ouvert bloque la fusion, fût-il
+  un détail. C'est ce qui tient une demande de fusion en « En revue » quand plus
+  personne ne la regarde, et il faut le savoir pour ne pas chercher la cause du
+  côté de la CI.
+- Historique linéaire, ni force-push ni suppression de `main`.
+- `enforce_admins` désactivé : le propriétaire passe outre. La protection défend
+  de l'inattention, pas d'une décision.
+
+Le réglage reste hors dépôt, sur une page de GitHub que ce fichier ne peut ni
+garantir ni voir changer. C'est pourquoi il porte ici une date de relevé plutôt
+qu'une affirmation au présent : ce qui est écrit là est vrai du jour où
+quelqu'un est allé regarder.
 
 **Rétroactivité.** PATA-1, PATA-2 et PATA-5 ont été livrées le 19/08/2026 sous
 une version implicite de cette DoD : `gofmt`, `go vet`, tests unitaires, et un
