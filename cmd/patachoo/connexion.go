@@ -92,6 +92,9 @@ func connexion(e *core.RequestEvent) error {
 		return err
 	}
 	poseLeCookieDeSession(e, cookieDeSession(jeton, compte.Collection().AuthToken.DurationTime()))
+	if err := poseLOuvertureDeSession(e, compte); err != nil {
+		return err
+	}
 
 	return e.Redirect(http.StatusSeeOther, "/")
 }
@@ -182,8 +185,13 @@ func echecDeConnexion(e *core.RequestEvent) error {
 	})
 }
 
-// deconnexion révoque les jetons du compte, efface le cookie et renvoie à
-// l'accueil.
+// deconnexion révoque les jetons du compte, efface les deux cookies de session
+// et renvoie à l'accueil.
+//
+// Les deux, et pas le seul jeton : le cookie qui date l'ouverture laissé en
+// place daterait la session suivante de l'ouverture de celle-ci, et la borne de
+// durée tomberait plus tôt que prévu pour qui se reconnecte depuis le même
+// navigateur.
 //
 // La révocation d'abord, parce qu'effacer le cookie ne referme que le
 // navigateur : la validité d'un jeton se lit dans sa seule signature
@@ -215,5 +223,6 @@ func deconnexion(e *core.RequestEvent) error {
 	}
 
 	poseLeCookieDeSession(e, cookieDeSessionEfface())
+	poseLeCookie(e, cookieDOuvertureEfface())
 	return e.Redirect(http.StatusSeeOther, "/")
 }

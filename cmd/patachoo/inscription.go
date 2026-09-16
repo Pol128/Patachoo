@@ -64,7 +64,7 @@ func pageInscription(e *core.RequestEvent) error {
 	})
 }
 
-// inscription crée le compte, puis dépose le cookie de session.
+// inscription crée le compte, puis dépose les cookies de session.
 //
 // L'inscription connecte : renvoyer l'inscrit vers un second formulaire lui
 // ferait ressaisir ce qu'il vient d'écrire.
@@ -112,6 +112,9 @@ func inscription(e *core.RequestEvent) error {
 		return err
 	}
 	poseLeCookieDeSession(e, cookieDeSession(jeton, collection.AuthToken.DurationTime()))
+	if err := poseLOuvertureDeSession(e, compte); err != nil {
+		return err
+	}
 
 	return e.Redirect(http.StatusSeeOther, "/")
 }
