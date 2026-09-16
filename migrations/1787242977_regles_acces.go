@@ -8,9 +8,16 @@ import (
 	"github.com/pocketbase/pocketbase/tools/types"
 )
 
-// Les recettes sont partagées : tout compte connecté les lit, les crée et les
-// modifie. Seule la suppression reste à qui a ajouté la recette — on travaille
-// à plusieurs sur un même livre, on ne jette pas le travail d'un autre.
+// Les recettes sont partagées : tout compte connecté les lit, les crée et — à
+// la date de cette migration — les modifie. Seule la suppression reste à qui a
+// ajouté la recette.
+//
+// Cet état a duré jusqu'au 16/09/2026 : 1789568400_edition_auteur.go réserve
+// depuis la modification à l'auteur, la sienne comme celle de ses ingrédients.
+// La règle de suppression protégeait l'enregistrement et non ce qu'il contient,
+// et on pouvait donc vider la recette d'un autre sans jamais l'effacer. Ce
+// fichier décrit ce qu'il a posé le 20/08/2026, pas le produit d'aujourd'hui —
+// il n'est pas retouché pour la même raison qui lui a donné naissance.
 //
 // Une migration nouvelle, et non le schéma initial retouché : une base déjà
 // installée n'appliquerait pas une migration qu'elle a déjà passée, et se
@@ -30,9 +37,13 @@ func init() {
 		}
 
 		// Un ingrédient n'a pas d'auteur propre : il fait partie d'une recette
-		// que tout compte connecté peut modifier, et retirer une ligne est une
-		// modification. La suppression de la recette les emporte déjà, par la
-		// cascade posée sur le champ recipe.
+		// que tout compte connecté peut alors modifier, et retirer une ligne
+		// est une modification. La suppression de la recette les emporte déjà,
+		// par la cascade posée sur le champ recipe.
+		//
+		// C'est précisément ce que 1789568400_edition_auteur.go a refermé : la
+		// ligne par ligne était le chemin par lequel on vidait la recette d'un
+		// autre.
 		return ecritLesRegles(app, "ingredients", connecte, connecte, connecte, connecte, connecte)
 	}, func(app core.App) error {
 		// nil, et non "" : une règle vide est publique, l'absence de règle

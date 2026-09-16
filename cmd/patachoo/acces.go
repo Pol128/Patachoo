@@ -77,15 +77,18 @@ func fige(champs ...string) func(*core.RecordRequestEvent) error {
 	}
 }
 
-// sienne dit si la recette appartient au compte donné.
+// sienne dit si la recette appartient au compte donné. Elle commande ce qu'on
+// en fait : la modifier comme la supprimer, et l'affichage des deux liens de la
+// fiche.
 //
-// Le premier terme n'est pas décoratif, et c'est celui de DeleteRule :
-// created_by n'est pas Required, et une recette peut le porter vide. Sans lui,
-// une recette sans auteur appartiendrait à quiconque n'en a pas non plus.
+// Le premier terme n'est pas décoratif, et c'est celui de UpdateRule et de
+// DeleteRule : created_by n'est pas Required, et une recette peut le porter
+// vide. Sans lui, une recette sans auteur appartiendrait à quiconque n'en a pas
+// non plus.
 //
-// La règle de collection est transposée ici parce que e.App.Delete ne
-// l'applique pas : les règles gardent l'API REST, pas notre code. Elle reste
-// en place, celle-ci la redouble.
+// Les règles de collection sont transposées ici parce que ni e.App.Delete ni
+// txApp.Save ne les appliquent : elles gardent l'API REST, pas notre code.
+// Elles restent en place, celle-ci les redouble.
 func sienne(recette *core.Record, compte string) bool {
 	auteur := recette.GetString(champAuteur)
 	return auteur != "" && auteur == compte
