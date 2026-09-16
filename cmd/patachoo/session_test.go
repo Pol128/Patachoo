@@ -16,6 +16,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/logger"
 	"github.com/pocketbase/pocketbase/tools/router"
+	"github.com/pocketbase/pocketbase/tools/security"
 )
 
 const (
@@ -290,13 +291,18 @@ func plusCourtEchecDeConnexion(t *testing.T, mux http.Handler, courriel string, 
 	return plusCourt
 }
 
-// avecCookie joue une requête portant ce seul cookie, sans en-tête
+// avecCookie joue une requête portant ces seuls cookies, sans en-tête
 // Authorization : c'est ce que fait un navigateur qui demande une page.
 //
 // Un POST y part muni de la paire anti-rejeu, et un GET sans : le jeton est ce
 // qu'un formulaire rendu par le serveur porte, et une page demandée par un
 // navigateur neuf n'en a encore aucun à joindre.
-func avecCookie(mux http.Handler, methode, cible string, cookie *http.Cookie) *httptest.ResponseRecorder {
+//
+// Variadique depuis que la session tient sur deux cookies — le jeton et la date
+// d'ouverture qui le borne : un navigateur les envoie ensemble, et un test qui
+// n'en joindrait qu'un n'exercerait pas le renouvellement. Un nil est ignoré,
+// pour les cas qui jouent la requête sans cookie du tout.
+func avecCookie(mux http.Handler, methode, cible string, cookies ...*http.Cookie) *httptest.ResponseRecorder {
 	var req *http.Request
 	if methode == http.MethodPost {
 		req = httptest.NewRequest(methode, cible, strings.NewReader(leJetonEstPose(nil).Encode()))
@@ -305,8 +311,10 @@ func avecCookie(mux http.Handler, methode, cible string, cookie *http.Cookie) *h
 	} else {
 		req = httptest.NewRequest(methode, cible, nil)
 	}
-	if cookie != nil {
-		req.AddCookie(cookie)
+	for _, cookie := range cookies {
+		if cookie != nil {
+			req.AddCookie(cookie)
+		}
 	}
 
 	rec := httptest.NewRecorder()
@@ -340,9 +348,16 @@ func cookieEventuelDe(rec *httptest.ResponseRecorder) *http.Cookie {
 // le remplacer, donc deux étapes qui posent chacune le leur partent ensemble,
 // et la réponse ne vaut plus que par leur ordre.
 func cookiesDeSession(rec *httptest.ResponseRecorder) []*http.Cookie {
+	return cookiesNommes(rec, nomCookieSession)
+}
+
+// cookiesNommes rend tous les Set-Cookie de ce nom. Le cookie d'ouverture se
+// compte exactement comme celui de la session, et pour la même raison : la
+// déconnexion doit en renvoyer un seul par nom.
+func cookiesNommes(rec *httptest.ResponseRecorder, nom string) []*http.Cookie {
 	var poses []*http.Cookie
 	for _, cookie := range (&http.Response{Header: rec.Header()}).Cookies() {
-		if cookie.Name == nomCookieSession {
+		if cookie.Name == nom {
 			poses = append(poses, cookie)
 		}
 	}
@@ -495,13 +510,14 @@ func TestLeCookieDeSessionPorteLePrefixeHost(t *testing.T) {
 			compte := compteParDefaut(t, app)
 			court := jetonRenouvelableCourt(t, app, compte, time.Minute)
 			return cookieDe(t, avecCookie(mux, http.MethodGet, "/sonde",
-				&http.Cookie{Name: nomCookieSession, Value: court}))
+				&http.Cookie{Name: nomCookieSession, Value: court}, cookieDOuvertureAgeeDe(t, compte, 0)))
 		}},
 		{"effacement à la déconnexion", func(t *testing.T) *http.Cookie {
 			app, mux := serveurDeTest(t)
 			compteParDefaut(t, app)
-			cookie := cookieDe(t, seConnecte(t, mux, courrielDeTest, motDePasseDeTest))
-			return cookieDe(t, avecCookie(mux, http.MethodPost, "/deconnexion", cookie))
+			connexion := seConnecte(t, mux, courrielDeTest, motDePasseDeTest)
+			return cookieDe(t, avecCookie(mux, http.MethodPost, "/deconnexion",
+				cookieDe(t, connexion), cookieDOuvertureDe(t, connexion)))
 		}},
 	}
 
@@ -769,10 +785,11 @@ func TestAucuneRequeteDePocketBaseNeReposeLeCookieDeSession(t *testing.T) {
 	// pour qu'il ne reste plus que le chemin en cause.
 	court := jetonRenouvelableCourt(t, app, compte, time.Minute)
 	cookie := &http.Cookie{Name: nomCookieSession, Value: court}
+	ouverture := cookieDOuvertureAgeeDe(t, compte, 0)
 
 	// Le témoin. Sans lui, ce test passerait aussi sur un jeton que le
 	// renouvellement aurait refusé de toute façon, et ne prouverait rien.
-	if pose := cookieEventuelDe(avecCookie(mux, http.MethodGet, "/sonde", cookie)); pose == nil {
+	if pose := cookieEventuelDe(avecCookie(mux, http.MethodGet, "/sonde", cookie, ouverture)); pose == nil {
 		t.Fatalf("le jeton du témoin n'est pas renouvelé sur une page du produit : ce test ne prouve rien")
 	}
 
@@ -781,7 +798,7 @@ func TestAucuneRequeteDePocketBaseNeReposeLeCookieDeSession(t *testing.T) {
 		{"l'interface d'administration", "/_/sonde"},
 	} {
 		t.Run(cas.nom, func(t *testing.T) {
-			rec := avecCookie(mux, http.MethodGet, cas.cible, cookie)
+			rec := avecCookie(mux, http.MethodGet, cas.cible, cookie, ouverture)
 
 			if poses := cookiesDeSession(rec); len(poses) != 0 {
 				t.Errorf("%d cookie(s) %q dans la réponse de %s, attendu 0 : %q",
@@ -1027,8 +1044,9 @@ func TestLaDeconnexionEffaceLeCookie(t *testing.T) {
 	app, mux := serveurDeTest(t, sonde)
 	compteParDefaut(t, app)
 
-	cookie := cookieDe(t, seConnecte(t, mux, courrielDeTest, motDePasseDeTest))
-	rec := avecCookie(mux, http.MethodPost, "/deconnexion", cookie)
+	connexion := seConnecte(t, mux, courrielDeTest, motDePasseDeTest)
+	cookie := cookieDe(t, connexion)
+	rec := avecCookie(mux, http.MethodPost, "/deconnexion", cookie, cookieDOuvertureDe(t, connexion))
 
 	if rec.Code != http.StatusSeeOther {
 		t.Errorf("statut %d, attendu %d", rec.Code, http.StatusSeeOther)
@@ -1043,6 +1061,18 @@ func TestLaDeconnexionEffaceLeCookie(t *testing.T) {
 	// Mêmes attributs, sinon le navigateur garde le cookie d'origine à côté
 	// de celui qu'on croit avoir effacé.
 	attributsDeSession(t, efface)
+
+	// Le cookie d'ouverture part avec l'autre : laissé en place, il daterait
+	// la session suivante de l'ouverture de celle-ci, et la borne tomberait
+	// plus tôt que prévu pour qui se reconnecte.
+	effaceOuverture := cookieDOuvertureDe(t, rec)
+	if effaceOuverture.Value != "" {
+		t.Errorf("cookie d'ouverture d'effacement de valeur %q, attendue vide", effaceOuverture.Value)
+	}
+	if effaceOuverture.MaxAge >= 0 {
+		t.Errorf("Max-Age %d du cookie d'ouverture, attendu négatif", effaceOuverture.MaxAge)
+	}
+	attributsDeSession(t, effaceOuverture)
 
 	// Ce que le navigateur enverra ensuite, c'est ce cookie-là : vide.
 	suivante := avecCookie(mux, http.MethodGet, "/sonde", efface)
@@ -1063,20 +1093,26 @@ func TestLaDeconnexionSousLaMiVieNeRenvoieQueLEffacement(t *testing.T) {
 	// que ce test garde, et elle n'a lieu que si le premier se déclenche.
 	court := jetonRenouvelableCourt(t, app, compte, time.Minute)
 
-	rec := avecCookie(mux, http.MethodPost, "/deconnexion", &http.Cookie{Name: nomCookieSession, Value: court})
+	rec := avecCookie(mux, http.MethodPost, "/deconnexion",
+		&http.Cookie{Name: nomCookieSession, Value: court}, cookieDOuvertureAgeeDe(t, compte, 0))
 
-	poses := cookiesDeSession(rec)
-	if len(poses) != 1 {
-		t.Fatalf("%d cookies %q dans la réponse, attendu 1 : %q",
-			len(poses), nomCookieSession, rec.Header().Values("Set-Cookie"))
+	// Les deux noms, et pas seulement celui de la session : le ménage de
+	// poseLeCookie se fait par nom, et un cookie d'ouverture qui partirait en
+	// double laisserait la réponse valoir par l'ordre de ses en-têtes.
+	for _, nom := range []string{nomCookieSession, nomCookieOuvertureDeSession} {
+		poses := cookiesNommes(rec, nom)
+		if len(poses) != 1 {
+			t.Fatalf("%d cookies %q dans la réponse, attendu 1 : %q",
+				len(poses), nom, rec.Header().Values("Set-Cookie"))
+		}
+		if poses[0].Value != "" {
+			t.Errorf("cookie %q de valeur %q, attendue vide", nom, poses[0].Value)
+		}
+		if poses[0].MaxAge >= 0 {
+			t.Errorf("Max-Age %d du cookie %q, attendu négatif", poses[0].MaxAge, nom)
+		}
+		attributsDeSession(t, poses[0])
 	}
-	if poses[0].Value != "" {
-		t.Errorf("cookie de valeur %q, attendue vide", poses[0].Value)
-	}
-	if poses[0].MaxAge >= 0 {
-		t.Errorf("Max-Age %d, attendu négatif", poses[0].MaxAge)
-	}
-	attributsDeSession(t, poses[0])
 }
 
 // Une page tierce peut soumettre un formulaire vers POST /deconnexion, mais
@@ -1122,9 +1158,11 @@ func TestLaDeconnexionSansSessionNEffaceRien(t *testing.T) {
 			if lieu := rec.Header().Get("Location"); lieu != "/connexion" {
 				t.Errorf("Location %q, attendue %q", lieu, "/connexion")
 			}
-			if poses := cookiesDeSession(rec); len(poses) != 0 {
-				t.Errorf("%d cookies %q dans la réponse, attendu 0 : %q",
-					len(poses), nomCookieSession, rec.Header().Values("Set-Cookie"))
+			for _, nom := range []string{nomCookieSession, nomCookieOuvertureDeSession} {
+				if poses := cookiesNommes(rec, nom); len(poses) != 0 {
+					t.Errorf("%d cookies %q dans la réponse, attendu 0 : %q",
+						len(poses), nom, rec.Header().Values("Set-Cookie"))
+				}
 			}
 		})
 	}
@@ -1311,7 +1349,10 @@ func TestUnJetonSousLaMiVieEstRenouvele(t *testing.T) {
 	// d'une session de navigateur — le seul que le renouvellement serve.
 	court := jetonRenouvelableCourt(t, app, compte, time.Minute)
 
-	rec := avecCookie(mux, http.MethodGet, "/sonde", &http.Cookie{Name: nomCookieSession, Value: court})
+	// Le cookie d'ouverture accompagne le jeton, comme il le fait dans un
+	// navigateur : c'est lui qui dit que la session tient encore dans sa borne.
+	rec := avecCookie(mux, http.MethodGet, "/sonde",
+		&http.Cookie{Name: nomCookieSession, Value: court}, cookieDOuvertureAgeeDe(t, compte, 0))
 
 	if rec.Body.String() != compte.Id {
 		t.Fatalf("la sonde a reconnu %q, attendu %q", rec.Body.String(), compte.Id)
@@ -1383,7 +1424,11 @@ func TestUneSessionQueLaRegleNautorisePlusNestPasRenouvelee(t *testing.T) {
 	}
 	court := jetonRenouvelableCourt(t, app, compte, time.Minute)
 
-	rec := avecCookie(mux, http.MethodGet, "/sonde", &http.Cookie{Name: nomCookieSession, Value: court})
+	// Le cookie d'ouverture est joint et tient dans sa borne : sans lui, ce
+	// test serait vert parce que le plafond aurait refusé, et ne dirait plus
+	// rien de la règle d'authentification.
+	rec := avecCookie(mux, http.MethodGet, "/sonde",
+		&http.Cookie{Name: nomCookieSession, Value: court}, cookieDOuvertureAgeeDe(t, compte, 0))
 
 	if rec.Body.String() != compte.Id {
 		t.Fatalf("la sonde a reconnu %q, attendu %q : le jeton doit rester valable, c'est sa prolongation qui est en cause",
@@ -1391,6 +1436,243 @@ func TestUneSessionQueLaRegleNautorisePlusNestPasRenouvelee(t *testing.T) {
 	}
 	if pose := cookieEventuelDe(rec); pose != nil {
 		t.Errorf("la session d'un compte que la règle refuse a été prolongée : %q", pose.Value)
+	}
+}
+
+// --- La borne de durée d'une session ---------------------------------------
+
+// cookieDOuvertureDe extrait le cookie qui date l'ouverture, ou fait échouer le
+// test.
+func cookieDOuvertureDe(t *testing.T, rec *httptest.ResponseRecorder) *http.Cookie {
+	t.Helper()
+
+	poses := cookiesNommes(rec, nomCookieOuvertureDeSession)
+	if len(poses) == 0 {
+		t.Fatalf("aucun cookie %q dans la réponse : %q", nomCookieOuvertureDeSession, rec.Header().Values("Set-Cookie"))
+	}
+	return poses[0]
+}
+
+// cookieDOuvertureAgeeDe forge le cookie d'une session ouverte il y a cet
+// âge-là : sa durée restante est ce que le plafond lui laisse.
+//
+// Un âge supérieur au plafond donne une durée négative, donc un jeton déjà
+// expiré — c'est ainsi que se joue la session qui a dépassé la borne, sans
+// avoir à attendre trente jours ni à toucher à l'horloge.
+func cookieDOuvertureAgeeDe(t *testing.T, compte *core.Record, age time.Duration) *http.Cookie {
+	t.Helper()
+
+	jeton, err := security.NewJWT(revendicationsDOuverture(compte), cleDOuvertureDeSession(compte), dureeMaximaleDeSession-age)
+	if err != nil {
+		t.Fatalf("émission du jeton d'ouverture : %v", err)
+	}
+	return &http.Cookie{Name: nomCookieOuvertureDeSession, Value: jeton}
+}
+
+// Sans ce cookie, rien ne dit depuis quand une session existe : le jeton de
+// PocketBase ne porte que son échéance, et chaque renouvellement la repousse de
+// cinq jours pleins. Un jeton capté une fois ouvrait alors le compte pour
+// toujours, à raison d'une requête tous les deux jours et demi.
+//
+// Les deux portes où une session naît sont jouées chacune pour elle-même : le
+// cookie déposé par l'une et pas par l'autre laisserait un chemin d'ouverture
+// sans borne, qui est exactement le constat qu'on ferme.
+func TestLesDeuxPortesDOuvertureDatentLaSession(t *testing.T) {
+	cas := []struct {
+		porte string
+		ouvre func(t *testing.T) (*core.Record, *httptest.ResponseRecorder)
+	}{
+		{"connexion", func(t *testing.T) (*core.Record, *httptest.ResponseRecorder) {
+			app, mux := serveurDeTest(t)
+			compte := compteParDefaut(t, app)
+			return compte, seConnecte(t, mux, courrielDeTest, motDePasseDeTest)
+		}},
+		{"inscription", func(t *testing.T) (*core.Record, *httptest.ResponseRecorder) {
+			app, mux := serveurDeTest(t)
+			ouvreLInscription(t, app)
+			rec := sInscrit(t, mux, champsDInscription())
+			compte, err := app.FindAuthRecordByEmail("users", courrielDInscription)
+			if err != nil {
+				t.Fatalf("compte %q introuvable après l'inscription : %v", courrielDInscription, err)
+			}
+			return compte, rec
+		}},
+	}
+
+	for _, c := range cas {
+		t.Run(c.porte, func(t *testing.T) {
+			compte, rec := c.ouvre(t)
+			ouverture := cookieDOuvertureDe(t, rec)
+
+			// Le nom en toutes lettres, et non relu dans la constante : un test
+			// qui reprendrait celle-ci suivrait n'importe quel renommage sans
+			// rien dire, alors que c'est le préfixe __Host- qui interdit à un
+			// sous-domaine voisin de poser ce cookie-là.
+			if attendu := "__Host-patachoo_session_ouverte"; ouverture.Name != attendu {
+				t.Errorf("cookie d'ouverture nommé %q, attendu %q", ouverture.Name, attendu)
+			}
+
+			// Les mêmes attributs que le cookie de session, préfixe __Host-
+			// compris : un seul qui diffère, et le navigateur se retrouve avec
+			// deux cookies homonymes dont rien ici ne distinguerait l'origine.
+			attributsDeSession(t, ouverture)
+			if attendu := int(dureeMaximaleDeSession.Seconds()); ouverture.MaxAge != attendu {
+				t.Errorf("Max-Age %d, attendu %d — le plafond de durée d'une session", ouverture.MaxAge, attendu)
+			}
+
+			// Signé, sinon il ne prouve rien : n'importe qui poserait sa propre
+			// date d'ouverture et le plafond deviendrait décoratif.
+			revendications, err := security.ParseJWT(ouverture.Value, cleDOuvertureDeSession(compte))
+			if err != nil {
+				t.Fatalf("le cookie d'ouverture ne se vérifie pas avec la clé du compte : %v", err)
+			}
+			if id, _ := revendications[core.TokenClaimId].(string); id != compte.Id {
+				t.Errorf("le cookie d'ouverture porte le compte %q, attendu %q", id, compte.Id)
+			}
+
+			echeance, err := revendications.GetExpirationTime()
+			if err != nil || echeance == nil {
+				t.Fatalf("échéance illisible dans le cookie d'ouverture : %v", err)
+			}
+			// La borne se lit dans l'exp : la durée passée à l'émission est le
+			// plafond lui-même. Une minute de battement pour le temps que le
+			// test passe à monter la base.
+			if ecart := time.Until(echeance.Time) - dureeMaximaleDeSession; ecart > 0 || ecart < -time.Minute {
+				t.Errorf("le cookie d'ouverture expire dans %v, attendu %v", time.Until(echeance.Time), dureeMaximaleDeSession)
+			}
+		})
+	}
+}
+
+// C'est toute la raison d'être du second cookie : un renouvellement qui le
+// redaterait remettrait le compteur à zéro à chaque passage, et la borne ne
+// bornerait rien.
+func TestLeRenouvellementNeRedatePasLOuverture(t *testing.T) {
+	app, mux := serveurDeTest(t, sonde)
+	compte := compteParDefaut(t, app)
+
+	court := jetonRenouvelableCourt(t, app, compte, time.Minute)
+	ouverture := cookieDOuvertureAgeeDe(t, compte, 10*24*time.Hour)
+
+	rec := avecCookie(mux, http.MethodGet, "/sonde",
+		&http.Cookie{Name: nomCookieSession, Value: court}, ouverture)
+
+	// Le témoin : sans renouvellement, l'absence de redatage ne prouve rien.
+	if frais := cookieEventuelDe(rec); frais == nil {
+		t.Fatalf("le jeton n'a pas été renouvelé : ce test ne prouve rien — %q", rec.Header().Values("Set-Cookie"))
+	}
+	if poses := cookiesNommes(rec, nomCookieOuvertureDeSession); len(poses) != 0 {
+		t.Errorf("le renouvellement redate l'ouverture (%d cookie(s) %q) : le plafond se remettrait à zéro à chaque passage",
+			len(poses), nomCookieOuvertureDeSession)
+	}
+}
+
+// Passé le plafond, le renouvellement cesse — rien de plus. La session
+// s'éteint d'elle-même à l'échéance de son jeton courant, et c'est pourquoi la
+// requête reste authentifiée : effacer le cookie ne retirerait rien à qui
+// détient déjà le jeton, et écourterait la session de la victime sans lui dire
+// pourquoi.
+func TestUneSessionAuDelaDuPlafondNestPasRenouvelee(t *testing.T) {
+	app, mux := serveurDeTest(t, sonde)
+	compte := compteParDefaut(t, app)
+
+	court := jetonRenouvelableCourt(t, app, compte, time.Minute)
+	ouverture := cookieDOuvertureAgeeDe(t, compte, dureeMaximaleDeSession+24*time.Hour)
+
+	rec := avecCookie(mux, http.MethodGet, "/sonde",
+		&http.Cookie{Name: nomCookieSession, Value: court}, ouverture)
+
+	if rec.Body.String() != compte.Id {
+		t.Fatalf("la sonde a reconnu %q, attendu %q : le jeton doit rester valable, c'est sa prolongation qui cesse",
+			rec.Body.String(), compte.Id)
+	}
+	if pose := cookieEventuelDe(rec); pose != nil {
+		t.Errorf("une session au-delà du plafond a été renouvelée : %q", pose.Value)
+	}
+}
+
+// Absent vaut refus, jamais « session neuve » : traiter l'absence comme une
+// ouverture à l'instant rendrait le plafond décoratif, puisqu'il suffirait de
+// jeter le cookie pour le remettre à zéro.
+func TestUnRenouvellementSansCookieDOuvertureEstRefuse(t *testing.T) {
+	app, mux := serveurDeTest(t, sonde)
+	compte := compteParDefaut(t, app)
+
+	court := jetonRenouvelableCourt(t, app, compte, time.Minute)
+
+	rec := avecCookie(mux, http.MethodGet, "/sonde", &http.Cookie{Name: nomCookieSession, Value: court})
+
+	if rec.Body.String() != compte.Id {
+		t.Fatalf("la sonde a reconnu %q, attendu %q", rec.Body.String(), compte.Id)
+	}
+	if pose := cookieEventuelDe(rec); pose != nil {
+		t.Errorf("une session sans cookie d'ouverture a été renouvelée : %q", pose.Value)
+	}
+}
+
+// Les trois façons de présenter un cookie d'ouverture qu'on n'a pas reçu de
+// nous. La troisième est la moins évidente et la plus dangereuse : le jeton
+// d'authentification est signé de la même clé, et il porte déjà l'identifiant
+// du compte. Recopié tel quel dans le cookie d'ouverture, il se vérifierait —
+// et l'attaquant qui détient le jeton volé se redaterait une ouverture de cinq
+// jours à volonté. C'est la revendication de type qui les sépare.
+func TestUnCookieDOuvertureQuOnNaPasEmisEstRefuse(t *testing.T) {
+	app, mux := serveurDeTest(t, sonde)
+	compte := compteParDefaut(t, app)
+
+	jetonDAuthentification, err := compte.NewAuthToken()
+	if err != nil {
+		t.Fatalf("émission du jeton d'authentification : %v", err)
+	}
+	signeAilleurs, err := security.NewJWT(revendicationsDOuverture(compte), "la-cle-de-l-attaquant", dureeMaximaleDeSession)
+	if err != nil {
+		t.Fatalf("émission du jeton signé ailleurs : %v", err)
+	}
+
+	cas := []struct{ nom, valeur string }{
+		{"valeur bricolée", "pas-un-jeton-du-tout"},
+		{"échéance repoussée sous une autre clé", signeAilleurs},
+		{"jeton d'authentification recopié", jetonDAuthentification},
+	}
+
+	for _, c := range cas {
+		t.Run(c.nom, func(t *testing.T) {
+			court := jetonRenouvelableCourt(t, app, compte, time.Minute)
+
+			rec := avecCookie(mux, http.MethodGet, "/sonde",
+				&http.Cookie{Name: nomCookieSession, Value: court},
+				&http.Cookie{Name: nomCookieOuvertureDeSession, Value: c.valeur})
+
+			if rec.Body.String() != compte.Id {
+				t.Fatalf("la sonde a reconnu %q, attendu %q", rec.Body.String(), compte.Id)
+			}
+			if pose := cookieEventuelDe(rec); pose != nil {
+				t.Errorf("un cookie d'ouverture que nous n'avons pas émis a fait renouveler la session : %q", pose.Value)
+			}
+		})
+	}
+}
+
+// Le cookie d'ouverture est lié à un compte, et la clé de signature l'est
+// aussi. Celui d'un compte complaisant — ou d'un compte à l'attaquant, ouvert à
+// l'instant — ne doit pas servir à prolonger la session d'un autre.
+func TestUnCookieDOuvertureDUnAutreCompteNeRenouvellePas(t *testing.T) {
+	app, mux := serveurDeTest(t, sonde)
+	compte := compteParDefaut(t, app)
+	autre := creeCompte(t, app, "autre@exemple.fr", "Autre")
+
+	court := jetonRenouvelableCourt(t, app, compte, time.Minute)
+
+	rec := avecCookie(mux, http.MethodGet, "/sonde",
+		&http.Cookie{Name: nomCookieSession, Value: court},
+		cookieDOuvertureAgeeDe(t, autre, 0))
+
+	if rec.Body.String() != compte.Id {
+		t.Fatalf("la sonde a reconnu %q, attendu %q", rec.Body.String(), compte.Id)
+	}
+	if pose := cookieEventuelDe(rec); pose != nil {
+		t.Errorf("le cookie d'ouverture du compte %q a prolongé la session du compte %q : %q",
+			autre.Id, compte.Id, pose.Value)
 	}
 }
 
