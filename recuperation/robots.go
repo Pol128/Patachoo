@@ -1,6 +1,7 @@
 package recuperation
 
 import (
+	"bytes"
 	"math"
 	"regexp"
 	"strconv"
@@ -22,9 +23,42 @@ import (
 // incompatible (DOD.md §4).
 
 // regle est un motif de chemin et ce qu'il en dit.
+//
+// expression porte la forme compilée du motif, quand il a des jokers ou une
+// ancre de fin. Elle est fabriquée une fois, à l'analyse : recompilée à chaque
+// chemin jugé, elle l'était pour chaque règle du groupe et pour chaque page de
+// l'hôte. Nil pour un motif ordinaire, qui se compare par préfixe — et nil
+// aussi pour un motif qu'on n'a pas su compiler, qui ne vaut pas interdiction.
 type regle struct {
-	motif    string
-	autorise bool
+	motif      string
+	autorise   bool
+	expression *regexp.Regexp
+}
+
+// nouvelleRegle fabrique la règle d'un motif, et compile ce qui doit l'être.
+// C'est le seul endroit où une regle naît.
+func nouvelleRegle(motif string, autorise bool) regle {
+	r := regle{motif: motif, autorise: autorise}
+	if !strings.ContainsAny(motif, "*$") {
+		return r
+	}
+
+	var expression strings.Builder
+	expression.WriteString("^")
+	for i, c := range motif {
+		switch {
+		case c == '*':
+			expression.WriteString(".*")
+		case c == '$' && i == len(motif)-1:
+			expression.WriteString("$")
+		default:
+			expression.WriteString(regexp.QuoteMeta(string(c)))
+		}
+	}
+	// Une expression qu'on ne sait pas compiler laisse le champ nil, et
+	// motifCorrespond en fait un motif qui ne correspond à rien.
+	r.expression, _ = regexp.Compile(expression.String())
+	return r
 }
 
 // groupe rassemble les règles qui valent pour une liste d'agents, et le
@@ -43,6 +77,112 @@ type groupe struct {
 // borne, nous appliquons la borne — et l'écart se voit dans le rythme, pas
 // dans un refus silencieux.
 const delaiAnnonceMax = 5 * time.Minute
+
+// tailleMaxRobots borne le robots.txt, indépendamment du plafond de la page.
+//
+// Il lui faut le sien : une fournée en lit un par hôte, et en retient les
+// règles analysées pour toute sa durée. Emprunté à la page, le plafond de
+// 5 Mio laisse un lot de 500 hôtes tenir des gibioctets de règles en mémoire,
+// et dévore le budget de temps de l'appel au point de faire échouer en
+// delai_depasse des pages parfaitement saines. La valeur est celle du
+// récolteur de référence, qui ignore lui aussi ce qui dépasse.
+const tailleMaxRobots = 512 << 10
+
+// reglesMaxRetenues borne ce qu'un hôte laisse derrière lui dans
+// RobotsRetenus, une fois son groupe choisi.
+//
+// Le plafond de taille ne suffit pas à le faire : 512 Kio de directives, ce
+// sont encore quelque 26 000 règles, et une règle à joker retenue avec son
+// expression compilée pèse ~1 125 octets là où son motif seul en pesait ~24.
+// Une fournée de 500 hôtes en tenait ainsi ~14 Gio — davantage qu'avant le
+// plafond, qui borne le fichier lu et jamais ce qu'il en reste.
+//
+// La borne porte sur le seul groupe retenu, et non sur le fichier entier.
+// Comptée tous groupes confondus, elle se laisserait épuiser par les règles
+// d'un autre agent : un robots.txt qui ouvre par cinq cents lignes pour
+// Googlebot avant de nous nommer ferait taire les nôtres, et nous irions
+// demander des chemins que le site nous a explicitement interdits.
+//
+// Au-delà, la règle est ignorée sans erreur ni refus du site — le même sort
+// que la queue du fichier au-delà du plafond de taille, et ce que le REP
+// demande : appliquer ce qu'on a lu.
+const reglesMaxRetenues = 500
+
+// pourNous réduit ce qu'un robots.txt dit à ce que nous en lirons jamais.
+//
+// autorise et delaiPour ne consultent qu'un groupe, celui que groupePour
+// désigne. Les autres sont analysés, gardés par RobotsRetenus pour toute la
+// durée de la fournée, et jamais regardés une seule fois. Les écarter avant la
+// mise en cache est ce qui ramène la rétention d'un hôte à celle de nos
+// propres règles — c'est la moitié « mémoire » du constat, que le plafond de
+// taille et la compilation unique ne touchent ni l'un ni l'autre.
+//
+// Le résultat se relit comme l'original : le groupe gardé garde ses jetons
+// d'agent, donc groupePour le désigne encore. Un fichier qui ne nous vise pas
+// rend un robots vide, qui n'interdit rien — comme un robots.txt absent.
+func (r robots) pourNous(agent string) robots {
+	g := r.groupePour(agent)
+	if g == nil {
+		return robots{}
+	}
+
+	retenu := groupe{agents: clones(g.agents), delai: g.delai}
+
+	regles := g.regles
+	if len(regles) > reglesMaxRetenues {
+		regles = regles[:reglesMaxRetenues]
+	}
+
+	// Recopier, et pas seulement tronquer : une tranche garde le tableau d'où
+	// elle vient, si bien que les milliers de règles écartées — et leurs
+	// expressions compilées — vivraient aussi longtemps que les cinq cents
+	// gardées. Les motifs sont clonés pour la même raison, un cran plus bas :
+	// strings.Split les rend adossés au tampon du fichier, et un seul motif
+	// retenu garderait à lui seul les 512 Kio entiers.
+	retenu.regles = make([]regle, len(regles))
+	for i, regle := range regles {
+		regle.motif = strings.Clone(regle.motif)
+		retenu.regles[i] = regle
+	}
+
+	return robots{groupes: []groupe{retenu}}
+}
+
+// clones recopie des chaînes adossées au tampon du fichier lu, pour que le
+// tampon puisse être rendu.
+func clones(chaines []string) []string {
+	copies := make([]string, len(chaines))
+	for i, chaine := range chaines {
+		copies[i] = strings.Clone(chaine)
+	}
+	return copies
+}
+
+// sousLePlafond rend, des octets lus, le texte à analyser.
+//
+// Le plafond, lui, est tenu par la lecture et par elle seule : cette fonction
+// ne le réapplique pas — deux endroits qui bornent la même chose, et l'un des
+// deux finit par mentir. Elle lit dans la longueur reçue que la lecture a été
+// tranchée, puisque son appelant demande un octet de plus que le plafond.
+//
+// Le dépassement n'est pas une erreur : le REP demande d'appliquer ce qu'on a
+// lu. Mais la lecture s'arrête où elle tombe, éventuellement au milieu d'une
+// directive — « Disallow: /recettes » devenu « Disallow: /rec » interdirait
+// plus que le site ne l'a écrit. Ce qui suit le dernier saut de ligne lu est
+// donc écarté, et seulement quand le plafond a été atteint. L'octet de surplus
+// n'est gardé que s'il est lui-même ce saut de ligne, où il ne pèse rien.
+func sousLePlafond(lu []byte) string {
+	if int64(len(lu)) <= tailleMaxRobots {
+		return string(lu)
+	}
+	fin := bytes.LastIndexByte(lu, '\n')
+	if fin < 0 {
+		// Pas un seul saut de ligne : tout ce qui a été lu est une directive
+		// coupée, il n'en reste rien d'interprétable.
+		return ""
+	}
+	return string(lu[:fin+1])
+}
 
 // decisionRobots est ce que le robots.txt d'un hôte dit, une fois lu : de quoi
 // trancher n'importe quel chemin de cet hôte sans le redemander.
@@ -147,7 +287,7 @@ func analyseRobots(texte string) robots {
 				continue
 			}
 			dernier := &r.groupes[len(r.groupes)-1]
-			dernier.regles = append(dernier.regles, regle{motif: valeur, autorise: champ == "allow"})
+			dernier.regles = append(dernier.regles, nouvelleRegle(valeur, champ == "allow"))
 		default:
 			suiteDAgents = false
 		}
@@ -199,7 +339,7 @@ func (r robots) autorise(chemin, agent string) bool {
 
 	poidsRetenu, autorise := -1, true
 	for _, regle := range g.regles {
-		if !motifCorrespond(regle.motif, chemin) {
+		if !motifCorrespond(regle, chemin) {
 			continue
 		}
 		poids := len(regle.motif)
@@ -240,34 +380,19 @@ func (r robots) groupePour(agent string) *groupe {
 	return etoile
 }
 
-// motifCorrespond compare un motif de robots.txt à un chemin : * vaut n'importe
-// quelle suite, un $ final ancre la fin, et le motif s'aligne toujours sur le
-// début du chemin.
-func motifCorrespond(motif, chemin string) bool {
-	if motif == "" {
+// motifCorrespond compare une règle de robots.txt à un chemin : * vaut
+// n'importe quelle suite, un $ final ancre la fin, et le motif s'aligne
+// toujours sur le début du chemin. Il ne fabrique plus rien : l'expression lui
+// arrive compilée depuis l'analyse.
+func motifCorrespond(r regle, chemin string) bool {
+	switch {
+	case r.expression != nil:
+		return r.expression.MatchString(chemin)
+	case r.motif == "" || strings.ContainsAny(r.motif, "*$"):
+		// Le motif vide ne vise rien, et un motif à joker sans expression est
+		// un motif qu'on n'a pas su compiler : ni l'un ni l'autre n'interdit.
 		return false
+	default:
+		return strings.HasPrefix(chemin, r.motif)
 	}
-	if !strings.ContainsAny(motif, "*$") {
-		return strings.HasPrefix(chemin, motif)
-	}
-
-	var expression strings.Builder
-	expression.WriteString("^")
-	for i, c := range motif {
-		switch {
-		case c == '*':
-			expression.WriteString(".*")
-		case c == '$' && i == len(motif)-1:
-			expression.WriteString("$")
-		default:
-			expression.WriteString(regexp.QuoteMeta(string(c)))
-		}
-	}
-
-	compilee, err := regexp.Compile(expression.String())
-	if err != nil {
-		// Un motif qu'on ne sait pas lire ne vaut pas interdiction.
-		return false
-	}
-	return compilee.MatchString(chemin)
 }
