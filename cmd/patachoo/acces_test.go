@@ -251,6 +251,42 @@ func TestLAPIRestNEcritPasDansLesIngredientsDeLaRecetteDunAutre(t *testing.T) {
 	}
 }
 
+// L'autre chemin, que la règle de collection ne ferme pas : recipe n'est pas
+// figé, et PocketBase n'évalue UpdateRule qu'en allant chercher la ligne, donc
+// sur son état d'avant modification. Bob écrit dans sa propre recette — son
+// droit —, puis retourne le rattachement de la ligne vers la recette d'Alice :
+// la règle a déjà dit oui, et la ligne atterrit sous un plat qu'il n'a pas
+// cuisiné. Rien ne borne la répétition.
+//
+// C'est exactement ce que fige("author", "recipe") tient déjà pour les notes ;
+// ingredients n'avait pas l'équivalent.
+func TestLAPIRestNeDeplacePasUnIngredientVersLaRecetteDunAutre(t *testing.T) {
+	app, mux := serveurDeTest(t)
+	alice := compteDeTest(t, app, "alice@exemple.test")
+	bob := compteDeTest(t, app, "bob@exemple.test")
+	deAlice := recetteDeLAuteur(t, app, alice)
+	deBob := recetteDeLAuteur(t, app, bob)
+
+	cree := appelLAPI(t, mux, http.MethodPost, "/ingredients/records", bob,
+		`{"recipe":"`+deBob.Id+`","raw":"200 g de farine"}`)
+	if cree.Code != http.StatusOK {
+		t.Fatalf("création dans sa propre recette : statut %d, attendu %d — corps :\n%s",
+			cree.Code, http.StatusOK, cree.Body.String())
+	}
+	ligne := lesIngredientsDe(t, app, deBob)[0]
+
+	deplace := appelLAPI(t, mux, http.MethodPatch, "/ingredients/records/"+ligne.Id, bob,
+		`{"recipe":"`+deAlice.Id+`"}`)
+
+	// L'état enregistré fait foi, pas le code de retour : refuser l'appel ou
+	// remettre le rattachement d'origine sont deux façons acceptables de ne pas
+	// déplacer la ligne.
+	if lignes := lesIngredientsDe(t, app, deAlice); len(lignes) != 0 {
+		t.Errorf("%d ingrédients sous la recette d'Alice après le PATCH de Bob, 0 attendu — statut %d, corps :\n%s",
+			len(lignes), deplace.Code, deplace.Body.String())
+	}
+}
+
 // Le sens de l'autorisation, côté ingrédients : Alice vide toujours sa propre
 // recette, et l'API rend toujours 204.
 func TestLAPIRestSupprimeToujoursUnIngredientDeSaPropreRecette(t *testing.T) {
