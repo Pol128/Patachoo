@@ -31,6 +31,13 @@ jobs:
   publier:
     runs-on: ubuntu-latest
 
+    # L'empreinte est reprise par le job de la Release, qui l'écrit dans ses
+    # notes : INSTALL.md apprend à épingler par empreinte, encore faut-il que
+    # celle de la version publiée soit lisible quelque part sans aller
+    # interroger le registre.
+    outputs:
+      empreinte: ${{ steps.pousser.outputs.digest }}
+
     # Les droits qu'il faut, et pas un de plus. Le bloc va sur le job, comme
     # dans verifie.yml : ce qui est écrit ici ne vaut que pour lui.
     #
@@ -112,3 +119,83 @@ jobs:
           subject-name: ghcr.io/pol128/patachoo
           subject-digest: ${{ steps.pousser.outputs.digest }}
           push-to-registry: true
+
+  # ─── La Release ──────────────────────────────────────────────────────────
+  #
+  # Ce que ce job achète : le pied de page du produit affiche le numéro de
+  # version en lien vers /releases (cmd/patachoo/vues/mise-en-page.html), et un
+  # tag seul ne remplit pas cette page — il s'range sous l'onglet « Tags », et
+  # /releases annonce « no releases published ». Sans ce job, le produit
+  # enverrait ses utilisateurs sur une page vide le jour même où il commence à
+  # leur montrer un numéro de version.
+  #
+  # Un job à lui, et non une étape de plus dans le précédent. Créer une Release
+  # demande `contents: write`, dont la construction n'a aucun besoin : séparés,
+  # les deux droits ne se rejoignent nulle part. Celui qui pousse l'image ne
+  # peut pas écrire dans le dépôt ; celui qui écrit la Release ne peut pas
+  # pousser d'image. C'est la règle que ce fichier s'est donnée plus haut.
+  #
+  # `gh` plutôt qu'une neuvième action tierce : PATA-88 a épinglé les huit
+  # actions de ce dépôt par empreinte, et écrit que leur remontée est un geste
+  # manuel faute d'automate. Une empreinte de plus à tenir à jour pour ce que la
+  # CLI préinstallée sur le runner fait en quelques lignes serait un mauvais
+  # échange.
+  release:
+    needs: publier
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4.4.0
+
+      - name: Publier la Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EMPREINTE: ${{ needs.publier.outputs.empreinte }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          notes=$(mktemp)
+
+          # Les notes sont la section du journal, pas la liste des commits :
+          # CHANGELOG.md dit ce que l'utilisateur verra de différent, ce qu'un
+          # « git log » ne dira jamais. La section est délimitée par son titre
+          # et par le « ## » suivant.
+          awk -v entete="## v$version " '
+            index($0, entete) == 1 { dedans = 1; next }
+            dedans && /^## /       { exit }
+            dedans                 { print }
+          ' CHANGELOG.md > "$notes"
+
+          # Une pré-version n'a pas de section, et c'est voulu : on ne clôt pas
+          # un journal pour une rc. On écrit alors nous-mêmes de quoi remplir la
+          # page, plutôt que de passer --generate-notes — la combinaison de ce
+          # drapeau avec --notes-file n'est pas définie, et la liste des commits
+          # n'apprend rien à qui installe.
+          if [ ! -s "$notes" ]; then
+            echo "aucune section « ## v$version » dans CHANGELOG.md — notes minimales"
+            printf 'Pré-version. Le journal est tenu dans [CHANGELOG.md](../blob/main/CHANGELOG.md) ;\ncelle-ci ne clôt aucune section.\n' > "$notes"
+          fi
+
+          # L'image, citée par son empreinte : c'est la forme qu'INSTALL.md
+          # recommande d'épingler, et elle ne se lit nulle part ailleurs sans
+          # interroger le registre.
+          {
+            printf '\n---\n\n## Image\n\n'
+            printf '    docker pull ghcr.io/pol128/patachoo@%s\n\n' "$EMPREINTE"
+            printf 'Provenance : `gh attestation verify oci://ghcr.io/pol128/patachoo@%s --repo %s`\n' \
+              "$EMPREINTE" "$GITHUB_REPOSITORY"
+          } >> "$notes"
+
+          # Le même critère que « latest=auto » chez metadata-action : un tag
+          # qui porte un tiret est une pré-version. Sans ce drapeau,
+          # v0.1.0-rc.1 deviendrait la « latest release » affichée par GitHub,
+          # alors qu'elle ne déplace même pas le tag « latest » de l'image.
+          drapeaux=(--title "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --notes-file "$notes")
+          case "$GITHUB_REF_NAME" in
+            *-*) drapeaux+=(--prerelease) ;;
+          esac
+
+          gh release create "$GITHUB_REF_NAME" "${drapeaux[@]}"
