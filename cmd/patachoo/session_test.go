@@ -1516,8 +1516,16 @@ func TestLesDeuxPortesDOuvertureDatentLaSession(t *testing.T) {
 			// compris : un seul qui diffère, et le navigateur se retrouve avec
 			// deux cookies homonymes dont rien ici ne distinguerait l'origine.
 			attributsDeSession(t, ouverture)
-			if attendu := int(dureeMaximaleDeSession.Seconds()); ouverture.MaxAge != attendu {
-				t.Errorf("Max-Age %d, attendu %d — le plafond de durée d'une session", ouverture.MaxAge, attendu)
+
+			// Trente jours en toutes lettres, et non relus dans
+			// dureeMaximaleDeSession : un test qui reprendrait la constante
+			// suivrait n'importe quel changement de valeur sans rien dire,
+			// alors que c'est la valeur elle-même qui est tranchée — et
+			// qu'un plafond qu'on double en silence ne borne plus grand-chose.
+			// Vérifié dans la passe de sabotages : porter la constante à
+			// soixante jours ne faisait rougir aucun test.
+			if attendu := 2_592_000; ouverture.MaxAge != attendu {
+				t.Errorf("Max-Age %d, attendu %d — le plafond de trente jours", ouverture.MaxAge, attendu)
 			}
 
 			// Signé, sinon il ne prouve rien : n'importe qui poserait sa propre
@@ -1535,10 +1543,12 @@ func TestLesDeuxPortesDOuvertureDatentLaSession(t *testing.T) {
 				t.Fatalf("échéance illisible dans le cookie d'ouverture : %v", err)
 			}
 			// La borne se lit dans l'exp : la durée passée à l'émission est le
-			// plafond lui-même. Une minute de battement pour le temps que le
-			// test passe à monter la base.
-			if ecart := time.Until(echeance.Time) - dureeMaximaleDeSession; ecart > 0 || ecart < -time.Minute {
-				t.Errorf("le cookie d'ouverture expire dans %v, attendu %v", time.Until(echeance.Time), dureeMaximaleDeSession)
+			// plafond lui-même. Trente jours écrits ici aussi, pour la même
+			// raison que le Max-Age. Une minute de battement pour le temps que
+			// le test passe à monter la base.
+			const plafondAttendu = 30 * 24 * time.Hour
+			if ecart := time.Until(echeance.Time) - plafondAttendu; ecart > 0 || ecart < -time.Minute {
+				t.Errorf("le cookie d'ouverture expire dans %v, attendu %v", time.Until(echeance.Time), plafondAttendu)
 			}
 		})
 	}
