@@ -88,6 +88,76 @@ const delaiAnnonceMax = 5 * time.Minute
 // récolteur de référence, qui ignore lui aussi ce qui dépasse.
 const tailleMaxRobots = 512 << 10
 
+// reglesMaxRetenues borne ce qu'un hôte laisse derrière lui dans
+// RobotsRetenus, une fois son groupe choisi.
+//
+// Le plafond de taille ne suffit pas à le faire : 512 Kio de directives, ce
+// sont encore quelque 26 000 règles, et une règle à joker retenue avec son
+// expression compilée pèse ~1 125 octets là où son motif seul en pesait ~24.
+// Une fournée de 500 hôtes en tenait ainsi ~14 Gio — davantage qu'avant le
+// plafond, qui borne le fichier lu et jamais ce qu'il en reste.
+//
+// La borne porte sur le seul groupe retenu, et non sur le fichier entier.
+// Comptée tous groupes confondus, elle se laisserait épuiser par les règles
+// d'un autre agent : un robots.txt qui ouvre par cinq cents lignes pour
+// Googlebot avant de nous nommer ferait taire les nôtres, et nous irions
+// demander des chemins que le site nous a explicitement interdits.
+//
+// Au-delà, la règle est ignorée sans erreur ni refus du site — le même sort
+// que la queue du fichier au-delà du plafond de taille, et ce que le REP
+// demande : appliquer ce qu'on a lu.
+const reglesMaxRetenues = 500
+
+// pourNous réduit ce qu'un robots.txt dit à ce que nous en lirons jamais.
+//
+// autorise et delaiPour ne consultent qu'un groupe, celui que groupePour
+// désigne. Les autres sont analysés, gardés par RobotsRetenus pour toute la
+// durée de la fournée, et jamais regardés une seule fois. Les écarter avant la
+// mise en cache est ce qui ramène la rétention d'un hôte à celle de nos
+// propres règles — c'est la moitié « mémoire » du constat, que le plafond de
+// taille et la compilation unique ne touchent ni l'un ni l'autre.
+//
+// Le résultat se relit comme l'original : le groupe gardé garde ses jetons
+// d'agent, donc groupePour le désigne encore. Un fichier qui ne nous vise pas
+// rend un robots vide, qui n'interdit rien — comme un robots.txt absent.
+func (r robots) pourNous(agent string) robots {
+	g := r.groupePour(agent)
+	if g == nil {
+		return robots{}
+	}
+
+	retenu := groupe{agents: clones(g.agents), delai: g.delai}
+
+	regles := g.regles
+	if len(regles) > reglesMaxRetenues {
+		regles = regles[:reglesMaxRetenues]
+	}
+
+	// Recopier, et pas seulement tronquer : une tranche garde le tableau d'où
+	// elle vient, si bien que les milliers de règles écartées — et leurs
+	// expressions compilées — vivraient aussi longtemps que les cinq cents
+	// gardées. Les motifs sont clonés pour la même raison, un cran plus bas :
+	// strings.Split les rend adossés au tampon du fichier, et un seul motif
+	// retenu garderait à lui seul les 512 Kio entiers.
+	retenu.regles = make([]regle, len(regles))
+	for i, regle := range regles {
+		regle.motif = strings.Clone(regle.motif)
+		retenu.regles[i] = regle
+	}
+
+	return robots{groupes: []groupe{retenu}}
+}
+
+// clones recopie des chaînes adossées au tampon du fichier lu, pour que le
+// tampon puisse être rendu.
+func clones(chaines []string) []string {
+	copies := make([]string, len(chaines))
+	for i, chaine := range chaines {
+		copies[i] = strings.Clone(chaine)
+	}
+	return copies
+}
+
 // sousLePlafond rend, des octets lus, le texte à analyser.
 //
 // Le plafond, lui, est tenu par la lecture et par elle seule : cette fonction

@@ -351,3 +351,70 @@ func TestLesMotifsSontCompilesALAnalyse(t *testing.T) {
 		}
 	}
 }
+
+// reglesEnSerie rend n directives d'un même champ, toutes distinctes, sous la
+// forme que prend une règle à joker — celle qui coûte le plus cher à retenir.
+func reglesEnSerie(champ string, n int) string {
+	var lignes strings.Builder
+	for i := range n {
+		fmt.Fprintf(&lignes, "%s: /a%d*b\n", champ, i)
+	}
+	return lignes.String()
+}
+
+// TestSeulLeGroupeQuiNousViseEstRetenu : ce qui entre dans RobotsRetenus y reste
+// pour toute la durée de la fournée. Les groupes des autres agents ne seront
+// jamais relus — autorise et delaiPour n'en consultent qu'un — et les garder
+// faisait tenir à un lot de 500 hôtes des gibioctets de règles mortes.
+func TestSeulLeGroupeQuiNousViseEstRetenu(t *testing.T) {
+	lu := analyseRobots("User-agent: googlebot\nDisallow: /g\n\nUser-agent: patachoo\nCrawl-delay: 2\nDisallow: /prive\n")
+	if len(lu.groupes) != 2 {
+		t.Fatalf("%d groupes analysés, attendu 2", len(lu.groupes))
+	}
+
+	retenu := lu.pourNous(Agent)
+	if len(retenu.groupes) != 1 {
+		t.Fatalf("%d groupes retenus, attendu 1 — les groupes qui ne nous visent pas sont gardés pour rien", len(retenu.groupes))
+	}
+	if regles := retenu.groupes[0].regles; len(regles) != 1 || regles[0].motif != "/prive" {
+		t.Fatalf("règles retenues %v, attendu la seule /prive", regles)
+	}
+	// Le groupe gardé garde ses jetons : le robots réduit doit se relire
+	// exactement comme l'original.
+	if retenu.autorise("/prive/notes", Agent) {
+		t.Error("/prive/notes autorisé après réduction : le groupe retenu ne se désigne plus lui-même")
+	}
+	if delai := retenu.delaiPour(Agent); delai != 2*time.Second {
+		t.Errorf("Crawl-delay %s après réduction, attendu 2s", delai)
+	}
+}
+
+// TestLesReglesDUnAutreAgentNeFontPasTaireLesNotres : la borne se compte sur le
+// seul groupe retenu. Comptée tous groupes confondus, elle se laisserait
+// épuiser par les règles d'un autre agent — un robots.txt qui ouvre par cinq
+// cents lignes pour Googlebot avant de nous nommer ferait taire les nôtres, et
+// nous irions demander un chemin que le site nous a explicitement interdit.
+func TestLesReglesDUnAutreAgentNeFontPasTaireLesNotres(t *testing.T) {
+	robots := "User-agent: googlebot\n" + reglesEnSerie("Disallow", reglesMaxRetenues+100) +
+		"\nUser-agent: patachoo\nDisallow: /prive\n"
+
+	if autorisePar(t, robots, "/prive/notes") {
+		t.Error("/prive/notes autorisé : les règles d'un autre agent ont épuisé la borne et fait taire la nôtre")
+	}
+}
+
+// TestLeNombreDeReglesRetenuesEstBorne : le plafond de taille borne le fichier
+// lu, jamais ce qu'il en reste. 512 Kio de directives, ce sont encore quelque
+// 26 000 règles, et une règle à joker retenue avec son expression compilée pèse
+// ~1 125 octets — une fournée de 500 hôtes en tenait ~14 Gio.
+func TestLeNombreDeReglesRetenuesEstBorne(t *testing.T) {
+	lu := analyseRobots("User-agent: *\n" + reglesEnSerie("Disallow", reglesMaxRetenues+10))
+
+	retenu := lu.pourNous(Agent)
+	if len(retenu.groupes) != 1 {
+		t.Fatalf("%d groupes retenus, attendu 1", len(retenu.groupes))
+	}
+	if n := len(retenu.groupes[0].regles); n != reglesMaxRetenues {
+		t.Errorf("%d règles retenues, attendu %d — ce qu'un hôte retient n'est borné que par la taille du fichier", n, reglesMaxRetenues)
+	}
+}

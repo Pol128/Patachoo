@@ -555,7 +555,10 @@ func (r *recuperateur) demandeRobots(ctx context.Context, adresse, hote string) 
 	if err != nil {
 		return decisionRobots{}, r.echec(err, adresse, Injoignable)
 	}
-	return decisionRobots{regles: analyseRobots(sousLePlafond(lu))}, nil
+	// Réduit au groupe qui nous vise avant d'être gardé : ce qui entre dans
+	// RobotsRetenus y reste pour toute la durée de la fournée, et les groupes
+	// des autres agents n'y seront jamais relus une seule fois.
+	return decisionRobots{regles: analyseRobots(sousLePlafond(lu)).pourNous(Agent)}, nil
 }
 
 // hoteDe rend l'hôte d'une cible, en minuscules : c'est la clé de la cadence,
