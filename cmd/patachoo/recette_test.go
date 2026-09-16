@@ -81,6 +81,7 @@ func recetteEnBaseSansValidation(t *testing.T, app core.App, champs map[string]a
 
 	recette := core.NewRecord(collection)
 	recette.Set("title", "Tarte aux pommes")
+	recette.Set(champAuteur, idDuCompteDeLaSession(t, app))
 	for nom, valeur := range champs {
 		recette.Set(nom, valeur)
 	}
@@ -564,7 +565,10 @@ func TestAucunGabaritNutiliseLaFonctionRaw(t *testing.T) {
 
 func TestUneRecetteDepouilleeNeRendAucunLibelle(t *testing.T) {
 	app, mux, cookie := serveurConnecte(t)
-	recette := recetteEnBase(t, app, map[string]any{"title": "Pain perdu"})
+	// created_by vide, écrit à la main : « Ajoutée par » est un libellé comme
+	// les autres, et la fixture attribue par défaut à la session depuis
+	// PATA-64. Une recette dépouillée n'a pas d'auteur non plus.
+	recette := recetteEnBase(t, app, map[string]any{"title": "Pain perdu", champAuteur: ""})
 
 	// Le contenu seul, et non le document entier : la mise en page porte le
 	// réglage htmx de la politique de sécurité du contenu, dont la clé

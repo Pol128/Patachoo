@@ -813,11 +813,25 @@ func metAJourLaRecette(e *core.RequestEvent) error {
 	return enregistre(e, recette, saisie)
 }
 
-// laRecetteDemandee lit l'identifiant de l'URL et rend la recette.
+// laRecetteDemandee lit l'identifiant de l'URL et rend la recette, si elle est
+// celle du compte connecté.
+//
+// La propriété se vérifie ici, dans le code des deux routes d'édition, et pas
+// seulement par UpdateRule : nos routes écrivent par txApp.Save dans
+// enregistre, qui n'applique pas les règles de collection — celles-ci gardent
+// l'API REST, pas notre code. C'est la mécanique déjà écrite pour la
+// suppression (suppression.go).
+//
+// La même 404 dans les deux cas, l'identifiant inconnu comme la recette d'un
+// autre : l'existence d'une recette qu'on ne peut pas éditer n'est pas une
+// information à donner par un code de statut.
 func laRecetteDemandee(e *core.RequestEvent) (*core.Record, error) {
 	recette, err := e.App.FindRecordById("recipes", e.Request.PathValue("id"))
 	if err != nil {
 		return nil, e.NotFoundError("Cette recette n'existe pas.", err)
+	}
+	if !sienne(recette, e.Auth.Id) {
+		return nil, e.NotFoundError("Cette recette n'existe pas.", nil)
 	}
 	return recette, nil
 }

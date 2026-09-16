@@ -56,6 +56,9 @@ func recetteEtiquetee(t *testing.T, app core.App, titre string, noms ...string) 
 	recette := core.NewRecord(collection)
 	recette.Set("title", titre)
 	recette.Set("tags", ids)
+	// Attribuée à la session, comme recetteEnregistree : depuis PATA-64, une
+	// recette qu'on n'a pas ajoutée n'ouvre pas son formulaire d'édition.
+	recette.Set(champAuteur, idDuCompteDeLaSession(t, app))
 	if err := app.Save(recette); err != nil {
 		t.Fatalf("enregistrement de la recette %q : %v", titre, err)
 	}
