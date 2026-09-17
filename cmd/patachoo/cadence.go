@@ -24,9 +24,8 @@ import (
 // faire.
 const delaiEntreRequetes = time.Second
 
-// attenteMaxUnitaire est ce qu'un chemin interactif accepte d'attendre le tour
-// d'un autre avant d'y renoncer — et rien de plus : le Crawl-delay que l'hôte
-// réclame pour lui-même s'attend toujours en entier, voir attendSonTour.
+// attenteMaxUnitaire est ce qu'un chemin interactif accepte d'attendre son tour
+// avant d'y renoncer, quelle que soit l'origine de l'attente.
 //
 // Le lot, lui, attend sans limite : il est asynchrone, personne n'est devant
 // lui, et attendre est la politesse. L'unitaire part d'une session qui attend
@@ -137,49 +136,45 @@ func nouvelleCadence(h horlogeDuLot) *cadence {
 // pendant l'attente. Un créneau réservé puis abandonné — contexte annulé — est
 // perdu, et c'est sans conséquence : il ne fait qu'espacer un peu plus.
 //
-// attenteMax borne ce que l'appelant accepte d'attendre **le tour d'un autre**,
-// et zéro ne borne rien. Au-delà, le tour n'est pas pris : renoncer après
-// l'avoir réservé pousserait la file de l'hôte d'une seconde pour une requête
-// qui ne partira pas, et suffirait à affamer un lot en cours en renonçant en
-// boucle.
+// attenteMax borne l'attente entière, et zéro ne borne rien. Au-delà, le tour
+// n'est pas pris : renoncer après l'avoir réservé pousserait la file de l'hôte
+// pour une requête qui ne partira pas, et suffirait à affamer un lot en cours
+// en renonçant en boucle.
 //
-// Ce que l'hôte réclame pour lui-même n'entre pas dans cette borne. Compté
-// dedans, tout site annonçant un Crawl-delay plus long qu'elle deviendrait
-// définitivement injoignable par les chemins interactifs — dès le premier
-// import et sans qu'aucun lot ne tourne, puisque le Crawl-delay est rapporté
-// avant la requête de page du même appel, et que rien ne le périme. L'attente
-// serait alors lue comme un hôte occupé, ce qu'elle n'est pas : c'est une
-// politesse, et elle se tient. C'est le même travers que echange évite déjà
-// pour delaiMax (recuperation/recuperation.go), et la borne le rejouait.
+// L'attente entière, et non la seule part qui vient d'un autre appel : ce que
+// l'hôte réclame pour lui-même compte dedans. Autrement, c'est le site visé qui
+// décide combien de temps un gestionnaire HTTP reste immobilisé — le
+// Crawl-delay est rapporté avant la requête de page du même appel,
+// delaiAnnonceMax en accepte cinq minutes, et cette attente est prise hors du
+// budget delaiMax de echange : plus rien ne la borne. Un serveur hostile
+// annoncerait « Crawl-delay: 300 » et immobiliserait un gestionnaire par hôte
+// importé, le plafond de dix imports par minute n'y changeant rien puisqu'un
+// sous-domaine par import suffit à en changer.
 //
-// Ce qui reste mesuré : ce qui est déjà réservé devant nous — une requête en
-// vol vers cet hôte, une ligne de lot le plus souvent —, plus notre propre
-// politesse. C'est bien l'attente derrière un lot que la tâche a tranchée, et
-// elle seule.
+// Ce que ce refus coûte, et qui est assumé : un site annonçant plus que la
+// borne n'est pas importable à la main. L'import en lot, lui, l'attend sans
+// limite — personne n'est devant son écran —, et c'est ce que le message du
+// renoncement dit à l'utilisateur.
 func (c *cadence) attendSonTour(ctx context.Context, hote string, attenteMax time.Duration) error {
 	c.mu.Lock()
 	maintenant := c.horloge.Maintenant()
 	creneau := maintenant
-	// devant est ce que l'attente vaudrait si l'hôte n'avait rien annoncé.
-	var devant time.Duration
 	if precedent, vu := c.dernier[hote]; vu {
 		// Pas de rafale accumulée : un hôte laissé de côté dix minutes ne
 		// gagne pas dix minutes de jetons, il repart de maintenant.
 		if prochain := precedent.Add(c.delaiDe(hote)); prochain.After(creneau) {
 			creneau = prochain
 		}
-		if notre := precedent.Add(delaiEntreRequetes); notre.After(maintenant) {
-			devant = notre.Sub(maintenant)
-		}
 	}
-	if attenteMax > 0 && devant > attenteMax {
+	attente := creneau.Sub(maintenant)
+	if attenteMax > 0 && attente > attenteMax {
 		c.mu.Unlock()
 		return recuperation.ErrAttenteTropLongue
 	}
 	c.dernier[hote] = creneau
 	c.mu.Unlock()
 
-	return c.horloge.Attends(ctx, creneau.Sub(maintenant))
+	return c.horloge.Attends(ctx, attente)
 }
 
 // retiens garde le Crawl-delay qu'un hôte annonce, quand il dépasse le nôtre.

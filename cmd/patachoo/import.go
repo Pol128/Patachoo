@@ -213,7 +213,8 @@ type preRemplissage struct {
 //
 // Le troisième retour distingue le seul échec qui ne soit pas un parcours
 // d'échec : l'appel a renoncé à attendre le tour de l'hôte, rien n'est parti,
-// et la bonne réponse est de proposer de recommencer — pas une fiche vide.
+// et il n'y a donc aucune fiche à proposer — pas même une fiche vide, qui
+// donnerait à croire que le site a été lu et n'a rien publié.
 func ceQuiAEteTrouve(ctx context.Context, adresse string) (preRemplissage, string, bool) {
 	// La cadence de l'instance, celle-là même que l'ouvrier du lot emprunte :
 	// l'import unitaire sort sur le réseau sous notre adresse et sous notre
@@ -335,10 +336,16 @@ const (
 	messageJSONInvalide    = "Ce site publie des données structurées illisibles : son balisage est cassé."
 	messageTitreAbsent     = "La recette publiée par ce site n'a pas de titre, et une fiche sans titre n'en est pas une."
 	// messageSiteOccupe n'est pas un échec du site : c'est nous qui avons
-	// renoncé à attendre notre tour vers lui, parce qu'un import en lot le
-	// parcourt déjà. Il dit donc de recommencer, là où les autres disent de ne
-	// pas insister.
-	messageSiteOccupe = "Ce site est déjà en cours de lecture par un import en lot : nous n'y enverrons pas deux requêtes à la fois. Réessayez dans un instant."
+	// renoncé à attendre notre tour vers lui.
+	//
+	// Il ne nomme pas ce qui éloigne ce tour, parce que le code ne le sait pas :
+	// recuperation.AttenteDeCadence ne distingue pas un import en lot qui
+	// parcourt l'hôte de l'hôte qui réclame lui-même de longs délais. Et il ne
+	// promet pas qu'un nouvel essai aboutira — sur un Crawl-delay long, rien ne
+	// périme l'annonce et tous les essais suivants renonceront au même endroit.
+	// Ce qu'il offre à la place est la seule sortie qui existe vraiment :
+	// l'import en lot, qui attend son tour sans limite.
+	messageSiteOccupe = "Nous espaçons nos visites à un même site, et notre prochain tour vers celui-ci est plus loin que ce qu'un import à la main accepte d'attendre : rien n'a été lu. Un import en lot, lui, patientera le temps qu'il faudra."
 )
 
 // messageDeLEchec nomme la cause dans les mots de l'utilisateur.

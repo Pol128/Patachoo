@@ -46,8 +46,9 @@ const (
 	TailleMax = "taille_max"
 	// AttenteDeCadence : le tour de l'hôte était plus loin que ce que
 	// l'appelant a dit accepter d'attendre, et l'appel y a renoncé. Rien n'est
-	// parti. Distincte de DelaiDepasse, et pas par scrupule : « ce site est
-	// occupé » se réessaie dans l'instant, « ce site ne répond pas » non.
+	// parti. Distincte de DelaiDepasse, et pas par scrupule : ici le site n'a
+	// rien refusé et n'a même rien vu, là il a été interrogé et n'a pas répondu
+	// — ce ne sont pas les mêmes suites, ni pour l'utilisateur ni pour nous.
 	AttenteDeCadence = "attente_de_cadence"
 )
 
@@ -152,19 +153,17 @@ func AvecTailleMax(octets int64) Option {
 // la requête de page, et non après l'appel : c'est ce qui le fait valoir dès
 // cette page-là.
 //
-// attenteMax est ce que l'appelant accepte d'attendre le tour d'un autre, et
-// zéro ne borne rien. Ce que l'hôte réclame pour lui-même n'y entre pas : une
-// implémentation qui compterait le Crawl-delay dedans ferait échouer tout site
-// qui en annonce plus qu'elle, au lieu de l'espacer — c'est exactement ce que
-// echange évite déjà pour delaiMax, et Retiens rapporte avant la page.
+// attenteMax est ce que l'appelant accepte d'attendre son tour, et zéro ne
+// borne rien. L'attente entière y entre, Crawl-delay annoncé compris : sans
+// cela, l'hôte visé décide de la durée de l'appel, puisque cette attente est
+// prise hors du budget delaiMax et que Retiens rapporte avant la page.
 //
 // Une implémentation qui ne peut pas tenir cette borne rend
 // ErrAttenteTropLongue sans rien attendre — et sans prendre le tour, qu'elle
 // n'utilisera pas. C'est la cadence qui en décide plutôt que ce paquet-ci,
-// parce qu'elle seule sait, avant d'attendre, à quelle distance est le tour et
-// ce qui l'éloigne : une échéance posée ici interromprait l'attente au lieu d'y
-// renoncer, et se lirait sur l'horloge du système là où la sienne peut être
-// virtuelle.
+// parce qu'elle seule sait, avant d'attendre, à quelle distance est le tour :
+// une échéance posée ici interromprait l'attente au lieu d'y renoncer, et se
+// lirait sur l'horloge du système là où la sienne peut être virtuelle.
 type Cadence interface {
 	AttendSonTour(ctx context.Context, hote string, attenteMax time.Duration) error
 	Retiens(hote string, annonce time.Duration)
@@ -180,9 +179,8 @@ func AvecCadence(c Cadence) Option {
 }
 
 // AvecAttenteMaxDeCadence borne le temps que l'appel accepte de passer à
-// attendre le tour d'un autre vers le même hôte, et rend AttenteDeCadence
-// au-delà. Le Crawl-delay que l'hôte réclame pour lui-même n'entre pas dans
-// cette borne : voir Cadence.
+// attendre son tour vers l'hôte, et rend AttenteDeCadence au-delà. Ce que
+// l'hôte réclame pour lui-même entre dans cette borne : voir Cadence.
 //
 // Sans elle, rien ne borne cette attente : c'est le cas de l'import en lot, qui
 // est asynchrone et que personne ne regarde. Un chemin interactif, lui, a
