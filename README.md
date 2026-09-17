@@ -74,6 +74,10 @@ Dans les deux états, `POST /api/collections/users/records` reste refusé —
 porte, la nôtre. Un compte créé sans passer par elle se crée depuis `/_/`, où
 le superuser édite `users` directement.
 
+Les deux chemins pour ouvrir un compte à quelqu'un — le créer soi-même depuis
+`/_/`, ou ouvrir l'inscription puis la refermer — sont détaillés dans [« Créer
+un compte ordinaire »](INSTALL.md#créer-un-compte-ordinaire) dans `INSTALL.md`.
+
 ## Ce que ça sait faire que les autres ne savent pas
 
 Lire une ligne d'ingrédient française. C'est un créneau vide, et ça se mesure :
