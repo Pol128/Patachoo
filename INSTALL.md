@@ -328,6 +328,65 @@ docker exec patachoo /patachoo superuser upsert vous@exemple.fr 'un-mot-de-passe
 Ce compte donne accès à `/_/`. Il administre l'instance ; ce n'est pas le compte
 avec lequel on range ses recettes au quotidien.
 
+### Créer un compte ordinaire
+
+Le superutilisateur ci-dessus administre l'instance ; il ne range pas les
+recettes. Le carnet se tient avec un **compte ordinaire**, et une instance neuve
+n'en porte aucun : elle démarre porte fermée, `/inscription` répond 404 et le
+lien vers cette page ne figure même pas sur `/connexion`. Il y a deux chemins
+pour ouvrir le premier, et ils ne supposent pas la même chose.
+
+**Ce que donne un compte ordinaire**, par les deux chemins : le carnet sur `/`
+— ses recettes, ses imports, ses commentaires. Pas `/_/` : l'administration
+demande un superutilisateur et ne connaît pas les comptes de la collection
+`users`.
+
+**Avant le reste, depuis un autre poste que celui qui héberge : il faut du
+TLS.** Sans lui, le navigateur jette le cookie de session, et ni la connexion ni
+l'inscription ne tiennent — la page revient en visiteur, sans message d'erreur.
+C'est expliqué plus haut, avec ses trois issues :
+[Hors de la machine locale : il faut du
+TLS](#hors-de-la-machine-locale--il-faut-du-tls).
+
+#### 1. Le créer à la main depuis `/_/` — le chemin par défaut
+
+L'instance reste porte fermée. Dans l'administration, collection `users`, *New
+record* : le courriel, le mot de passe, et `name` pour le nom affiché. Le compte
+est utilisable aussitôt sur `/connexion`.
+
+C'est ce qu'on fait pour deux ou trois comptes. Son prix : **c'est vous qui
+choisissez le mot de passe**, donc vous le connaissez, et il faut le transmettre
+à son titulaire par un canal qui ne le laisse pas traîner.
+
+#### 2. Ouvrir l'inscription, le temps qu'ils s'inscrivent, puis refermer
+
+Cochez `open_registration` dans `/_/`, collection `settings`, l'unique
+enregistrement, puis *Save*. Le réglage est **relu à chaque requête** : rien à
+redémarrer. `/inscription` sert alors son formulaire — courriel, mot de passe,
+confirmation, nom —, crée le compte et **connecte l'inscrit dans la foulée**.
+
+Décochez la case une fois que les intéressés se sont inscrits. L'intérêt du
+chemin est là : le mot de passe n'est connu que de son titulaire, il n'a transité
+par personne.
+
+Trois choses à savoir avant d'ouvrir :
+
+- **Le mot de passe fait 8 caractères au minimum.** C'est le plancher du champ
+  système de PocketBase ; Patachoo n'en ajoute pas.
+- **Aucune vérification de courriel n'est demandée** avant la première
+  connexion : rien n'envoie de courriel à l'inscription, et un compte non
+  vérifié ouvre le carnet comme un autre. L'adresse saisie n'est donc pas une
+  preuve d'identité.
+- **`POST /inscription` est plafonné à dix requêtes par heure et par adresse
+  IP**, tentatives ratées comprises — le limiteur compte les requêtes, pas les
+  comptes créés. Une maisonnée derrière un même NAT qui s'inscrit à plusieurs,
+  en se reprenant sur un mot de passe trop court ou un courriel déjà pris, peut
+  donc toucher le plafond ; il se relâche tout seul au bout de l'heure.
+
+Ouverte ou fermée, `POST /api/collections/users/records` reste refusé :
+`users.createRule` est verrouillée au superutilisateur. L'inscription n'a qu'une
+porte, et c'est celle-ci.
+
 ### Ce qu'il faut sauvegarder
 
 **`pb_data`, et rien d'autre.** La base SQLite, les fichiers téléversés et les
