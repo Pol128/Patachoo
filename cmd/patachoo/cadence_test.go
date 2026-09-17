@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/pocketbase/pocketbase/core"
 )
@@ -118,5 +120,85 @@ func TestUnImportUnitaireNAttendPasLeLotDUnAutreHote(t *testing.T) {
 	if attente := versB[0].instant.Sub(derniereVersA); attente != 0 {
 		t.Errorf("l'import unitaire vers b.example a attendu %v après la dernière requête vers a.example, attendu 0 : les hôtes s'attendent entre eux",
 			attente)
+	}
+}
+
+// --- La borne de l'attente unitaire ----------------------------------------
+
+// attenteUnitaireAttendue est ce qu'un chemin interactif accepte d'attendre le
+// tour d'un hôte avant de renoncer.
+//
+// Écrite en clair ici, et non relue depuis cadence.go : un test qui compare une
+// constante à elle-même ne vérifie que lui-même, et « une valeur codée sans
+// test finit augmentée temporairement » (DOD.md §3).
+const attenteUnitaireAttendue = 5 * time.Second
+
+// hoteOccupePour rend l'hôte visé après avoir pris son tour pour plus longtemps
+// que la borne : la requête suivante vers lui devra attendre au-delà de ce
+// qu'un chemin interactif accepte.
+func hoteOccupePour(t *testing.T, partagee *cadence, adresse string) {
+	t.Helper()
+
+	hote := hoteDe(adresse)
+	partagee.retiens(hote, attenteUnitaireAttendue+time.Second)
+	if err := partagee.attendSonTour(context.Background(), hote, 0); err != nil {
+		t.Fatalf("prise du tour de %q : %v", hote, err)
+	}
+}
+
+// Le lot attend son tour aussi longtemps qu'il le faut — il est asynchrone et
+// personne n'est devant lui. L'import unitaire, lui, est le chemin interactif :
+// au-delà de la borne il renonce et le dit, plutôt que de laisser tourner un
+// écran. Une attente synchrone sans plafond est aussi, en soi, un levier bon
+// marché : cent adresses d'un site qu'une fournée parcourt immobiliseraient
+// cent gestionnaires pendant des minutes.
+//
+// Rien ne part : le tour n'a pas été pris, donc le site visé n'a rien vu.
+func TestLImportUnitaireRenonceQuandLeTourEstTropLoin(t *testing.T) {
+	_, mux, cookie, _, horloge, _ := atelierPartage(t)
+
+	const unitaire = "https://a.example/unitaire"
+	reseau := avecReseau(t, horloge, siteServi("User-agent: *\nDisallow: /prive\n", unitaire))
+	hoteOccupePour(t, cadenceDeLInstance, unitaire)
+
+	rec := importeLURL(mux, cookie, unitaire, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("statut %d, attendu %d :\n%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	corps := rec.Body.String()
+	if estLeFormulaireDeRecette(corps) {
+		t.Fatalf("la fiche pré-remplie est rendue alors que rien n'a été lu :\n%s", corps)
+	}
+	exigeContient(t, corps, `role="alert"`, messageSiteOccupe)
+	if saisie := valeurDe(t, corps, "url"); saisie != unitaire {
+		t.Errorf("champ url %q, attendu %q : l'adresse saisie est perdue", saisie, unitaire)
+	}
+	if appels := reseau.appels(); len(appels) != 0 {
+		t.Errorf("%d requêtes émises alors que l'attente a été abandonnée :\n%v", len(appels), appels)
+	}
+}
+
+// Sur POST /recettes, le renoncement ne coûte pas la recette : elle est
+// enregistrée sans illustration, exactement comme quand l'image est
+// injoignable. Perdre une saisie entière parce qu'un lot occupe l'hôte de
+// l'image serait un remède pire que le mal.
+func TestLeTourTropLoinNeCoutePasLaRecette(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	serveur := serveurDImages(t, sertLesOctets(pngDeTest(t), "image/png"))
+	avecTelechargement(t, autoriseLesServeurs(serveur))
+
+	partagee := nouvelleCadence(nouvelleHorlogeVirtuelle())
+	avecCadenceDInstance(t, partagee)
+	hoteOccupePour(t, partagee, serveur.URL)
+
+	champs := champsValides()
+	champs.Set("image_url", serveur.URL+"/photo.png")
+	if rec := poste(t, mux, "/recettes", cookie, champs); rec.Code != http.StatusSeeOther {
+		t.Fatalf("statut %d, attendu %d :\n%s", rec.Code, http.StatusSeeOther, rec.Body.String())
+	}
+
+	if image := laRecette(t, app).GetString("image"); image != "" {
+		t.Errorf("image %q enregistrée, attendue aucune : l'attente abandonnée a tout de même rapporté un fichier", image)
 	}
 }
