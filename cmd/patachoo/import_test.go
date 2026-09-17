@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -13,6 +14,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/Pol128/Patachoo/recuperation"
@@ -842,5 +844,197 @@ func TestLAncienneRouteDApiNExistePlus(t *testing.T) {
 
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("statut %d pour POST /api/import, attendu %d", rec.Code, http.StatusNotFound)
+	}
+}
+
+// --- Le plafond de débit ---------------------------------------------------
+
+// seuilDeLImport est le nombre de POST /recettes/importer qu'une même adresse
+// a le droit de jouer dans la fenêtre.
+//
+// Écrit en clair, et non relu depuis la migration : un test qui compare une
+// constante à elle-même ne vérifie que lui-même. C'est ce chiffre-là que
+// DOD.md §3 demande de garder sous test — « une valeur codée sans test finit
+// augmentée temporairement ».
+const seuilDeLImport = 10
+
+// importeDepuis poste une adresse sur la route d'import depuis l'adresse
+// donnée — importeLURL laisse celle que httptest pose pour tout le monde, et le
+// limiteur compte par e.RealIP().
+func importeDepuis(mux http.Handler, ip string, cookie *http.Cookie, adresse string) *httptest.ResponseRecorder {
+	corps := leJetonEstPose(url.Values{"url": {adresse}}).Encode()
+	req := httptest.NewRequest(http.MethodPost, "/recettes/importer", strings.NewReader(corps))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookieDuJetonDeTest())
+	req.RemoteAddr = net.JoinHostPort(ip, "1234")
+	if cookie != nil {
+		req.AddCookie(cookie)
+	}
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+// recuperateurCompte sert la même page à chaque appel et compte les requêtes
+// sortantes. C'est ce compteur qui distingue « refusé » de « refusé après
+// coup » : un plafond qui tomberait après le gestionnaire aurait déjà dérangé
+// le site tiers, c'est-à-dire exactement ce que ce plafond existe pour éviter.
+func recuperateurCompte(t *testing.T) *atomic.Int64 {
+	t.Helper()
+
+	var appels atomic.Int64
+	avecRecuperateur(t, func(_ context.Context, _ string, _ ...recuperation.Option) (recuperation.Page, error) {
+		appels.Add(1)
+		return recuperation.Page{
+			Corps:       pageDuCorpus(t, "graphe-imbrique"),
+			URLFinale:   urlSource,
+			TypeContenu: "text/html",
+		}, nil
+	})
+	return &appels
+}
+
+// Chaque import déclenche deux requêtes sortantes vers le site visé, sous notre
+// adresse et notre nom, et rien n'en bornait le nombre : le onzième import
+// d'une minute est refusé, le dixième ne l'est pas.
+//
+// Et il est refusé *avant* le gestionnaire, donc avant que quoi que ce soit ne
+// parte : le compteur de requêtes sortantes ne bouge pas, et le corps rendu ne
+// porte pas la fiche pré-remplie que seul importe pose.
+func TestLeOnziemeImportDUneMinuteEstRefuse(t *testing.T) {
+	_, mux, cookie := carnetDeTest(t)
+	appels := recuperateurCompte(t)
+
+	const ip = "203.0.113.30"
+
+	for tentative := 1; tentative <= seuilDeLImport; tentative++ {
+		rec := importeDepuis(mux, ip, cookie, urlSource)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("import %d : statut %d, attendu %d — le plafond tombe avant le seuil",
+				tentative, rec.Code, http.StatusOK)
+		}
+	}
+
+	partiesAvant := appels.Load()
+
+	rec := importeDepuis(mux, ip, cookie, urlSource)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("import %d : statut %d, attendu %d — la route d'import n'a pas de plafond",
+			seuilDeLImport+1, rec.Code, http.StatusTooManyRequests)
+	}
+	if parties := appels.Load(); parties != partiesAvant {
+		t.Errorf("%d requêtes sortantes après l'import refusé, attendu %d : le site tiers a été dérangé malgré le refus",
+			parties, partiesAvant)
+	}
+	if estLeFormulaireDeRecette(rec.Body.String()) {
+		t.Errorf("la fiche pré-remplie est rendue sur un import refusé : le gestionnaire a été atteint :\n%s", rec.Body.String())
+	}
+}
+
+// Le dépassement de PocketBase sort en JSON, écrit par router.ErrorHandler. Or
+// /recettes/importer est un formulaire HTML ordinaire, comme la page du lot :
+// celui qui colle une adresse de trop verrait du JSON brut à la place de sa
+// page — et son adresse serait perdue avec.
+func TestLeDepassementDeLImportRendLaPageEnHTML(t *testing.T) {
+	_, mux, cookie := carnetDeTest(t)
+	recuperateurCompte(t)
+
+	rec := epuiseLePlafondDeLImport(t, mux, cookie, "203.0.113.31", urlSource)
+
+	if typeDeContenu := rec.Header().Get("Content-Type"); !strings.Contains(typeDeContenu, "text/html") {
+		t.Errorf("Content-Type %q, attendu du text/html : le dépassement est rendu en JSON", typeDeContenu)
+	}
+	exigeContient(t, rec.Body.String(), `name="url"`, `role="alert"`)
+
+	if message := entreBalises(rec.Body.String(), `<p class="erreur" role="alert">`, "</p>"); strings.TrimSpace(message) == "" {
+		t.Errorf("aucun message dans la page de dépassement :\n%s", rec.Body.String())
+	}
+	// « Le champ se re-rend avec ce que l'utilisateur a tapé » vaut aussi quand
+	// c'est le plafond qui refuse.
+	if saisie := valeurDe(t, rec.Body.String(), "url"); saisie != urlSource {
+		t.Errorf("champ url %q après le dépassement, attendu %q : l'adresse saisie est perdue", saisie, urlSource)
+	}
+}
+
+// L'étiquette de la règle porte la méthode, et pas seulement le chemin : la
+// page « coller l'URL » n'envoie rien sur le réseau, et la plafonner mettrait
+// le formulaire hors de portée de celui qui vient de dépasser son quota —
+// précisément la page qu'il doit voir.
+func TestLaPageDImportNEstPasPlafonnee(t *testing.T) {
+	_, mux, cookie := carnetDeTest(t)
+	reseauPiege(t)
+
+	const ip = "203.0.113.32"
+
+	for appel := 1; appel <= seuilDeLImport+5; appel++ {
+		rec := demandeDepuis(mux, ip, "/recettes/importer", cookie)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("appel %d de la page d'import : statut %d, attendu %d", appel, rec.Code, http.StatusOK)
+		}
+	}
+}
+
+// Le compteur est l'adresse du client, quelle que soit l'audience de la règle.
+// Un plafond qui enfermerait tout le monde dès qu'une adresse le dépasse
+// remplacerait l'abus d'un tiers par un déni de service chez nous.
+func TestLePlafondDeLImportNEnfermePasLesAutresAdresses(t *testing.T) {
+	_, mux, cookie := carnetDeTest(t)
+	recuperateurCompte(t)
+
+	epuiseLePlafondDeLImport(t, mux, cookie, "203.0.113.33", urlSource)
+
+	rec := importeDepuis(mux, "203.0.113.34", cookie, urlSource)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("statut %d pour une seconde adresse, attendu %d : le plafond d'une adresse ferme la porte aux autres",
+			rec.Code, http.StatusOK)
+	}
+	if !estLeFormulaireDeRecette(rec.Body.String()) {
+		t.Errorf("la fiche pré-remplie n'est pas rendue à la seconde adresse : son import n'a pas abouti :\n%s", rec.Body.String())
+	}
+}
+
+// epuiseLePlafondDeLImport joue un import de trop depuis la même adresse et
+// rend la réponse au dépassement.
+func epuiseLePlafondDeLImport(t *testing.T, mux http.Handler, cookie *http.Cookie, ip, adresse string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	var rec *httptest.ResponseRecorder
+	for tentative := 1; tentative <= seuilDeLImport+1; tentative++ {
+		rec = importeDepuis(mux, ip, cookie, adresse)
+	}
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("statut %d après %d imports depuis %s, attendu %d",
+			rec.Code, seuilDeLImport+1, ip, http.StatusTooManyRequests)
+	}
+	return rec
+}
+
+// Le plafond porte sur POST /recettes/importer, et sur lui seul. La seule
+// forme d'étiquette qui attraperait POST /recettes/{id} est le préfixe
+// « POST /recettes/ », qui plafonnerait du même coup l'ajout, la modification
+// et la suppression d'un commentaire et la suppression d'une recette — quatre
+// routes qu'aucun constat ne vise. Ce qui borne le rythme sortant de ces deux
+// routes-là, c'est la cadence partagée, pas un plafond de débit.
+func TestLEnregistrementDUneRecetteNEstPasPlafonne(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+	reseauPiege(t)
+
+	for creation := 1; creation <= seuilDeLImport+2; creation++ {
+		rec := poste(t, mux, "/recettes", cookie, champsValides())
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("création %d : statut %d, attendu %d — POST /recettes est plafonnée",
+				creation, rec.Code, http.StatusSeeOther)
+		}
+	}
+
+	premiere := recettes(t, app)[0]
+	for edition := 1; edition <= seuilDeLImport+2; edition++ {
+		rec := poste(t, mux, "/recettes/"+premiere.Id, cookie, champsValides())
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("édition %d : statut %d, attendu %d — POST /recettes/{id} est plafonnée",
+				edition, rec.Code, http.StatusSeeOther)
+		}
 	}
 }
