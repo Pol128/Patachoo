@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -141,10 +142,11 @@ const attenteUnitaireAttendue = 5 * time.Second
 // d'attendre. C'est l'état d'un hôte qu'une fournée est en train de parcourir.
 //
 // Deux prises, et non une. La première pose seulement la dernière requête
-// émise, dans le passé — l'hôte est alors poli, pas occupé, et un site poli
-// doit rester joignable (TestLeCrawlDelayDuSiteNInterditPasLImportUnitaire).
-// C'est la seconde qui réserve un créneau à venir, et c'est cela qu'un chemin
-// interactif refuse d'attendre.
+// émise, dans le passé : le tour suivant est alors à une seconde, et personne
+// n'est devant nous. C'est la seconde qui réserve un créneau à venir, et c'est
+// cela qu'un chemin interactif refuse d'attendre — l'hôte qu'une fournée
+// parcourt, par opposition à l'hôte qui réclame de longs délais pour lui-même
+// (TestLeCrawlDelayPlusLongQueLaBorneRefuseLImportUnitaire).
 //
 // Elle part sur un contexte déjà coupé : attendSonTour réserve avant
 // d'attendre, donc le créneau est posé et l'horloge n'a pas bougé — le tour
@@ -231,7 +233,8 @@ func TestLeTourTropLoinNeCoutePasLaRecette(t *testing.T) {
 
 // crawlDelayAnnonce est ce qu'un site poli demande entre deux requêtes. Plus
 // long que la borne de l'unitaire, et c'est tout l'intérêt : c'est la
-// configuration où les deux attentes se confondent si on ne les distingue pas.
+// configuration où la borne se déclenche sans qu'aucun lot ne tourne, et où le
+// site visé décide seul de la durée de notre attente.
 const crawlDelayAnnonce = 10 * time.Second
 
 // robotsQuiDemande écrit le robots.txt d'un site qui annonce ce délai.
@@ -239,48 +242,125 @@ func robotsQuiDemande(d time.Duration) string {
 	return fmt.Sprintf("User-agent: *\nCrawl-delay: %d\n", int(d.Seconds()))
 }
 
-// Un Crawl-delay long espace les requêtes de l'import unitaire ; il ne les fait
-// pas échouer. La borne porte sur le tour d'un autre — une requête déjà en vol
-// vers cet hôte —, jamais sur la politesse que le site réclame pour lui-même.
+// Sur un chemin interactif, aucune attente de cadence ne dépasse la borne,
+// quelle qu'en soit l'origine : un Crawl-delay plus long qu'elle fait renoncer
+// l'import unitaire, exactement comme un lot en cours.
 //
-// Sans cette distinction, tout site annonçant plus que la borne devient
-// définitivement non importable par le chemin unitaire, dès le premier import
-// et sans qu'aucun lot ne tourne : le Crawl-delay est rapporté avant la requête
-// de page du même appel, et c'est elle qui bute dessus. L'utilisateur lit alors
-// qu'un lot occupe le site, ce qui est faux, et qu'il peut réessayer, ce qui
-// n'aboutira jamais — rien ne périme ce que l'hôte a annoncé.
+// Ce n'est pas la même chose que de laisser le site décider : le Crawl-delay est
+// rapporté avant la requête de page du même appel, il n'entre dans aucun budget
+// de temps (echange prend le tour de rôle hors de delaiMax), et delaiAnnonceMax
+// accepte jusqu'à cinq minutes. Sans cette borne, un serveur qui annonce
+// « Crawl-delay: 300 » immobilise un gestionnaire HTTP cinq minutes par hôte
+// importé — le levier bon marché que la tâche nomme, et que le plafond de dix
+// imports par minute ne ferme pas, un sous-domaine par import suffisant à en
+// changer.
 //
-// C'est le travers que echange évite déjà pour delaiMax, pour la même raison et
-// dans les mêmes termes : une attente de cadence comptée dans une borne rend
-// injouable tout Crawl-delay plus long qu'elle.
-func TestLeCrawlDelayDuSiteNInterditPasLImportUnitaire(t *testing.T) {
+// Ce que ce renoncement coûte, et qui est assumé : un site annonçant plus que
+// la borne n'est pas importable à la main. L'import en lot, lui, l'attend sans
+// limite — c'est ce que le message doit dire, et ce que la borne laisse ouvert.
+func TestLeCrawlDelayPlusLongQueLaBorneRefuseLImportUnitaire(t *testing.T) {
 	_, mux, cookie, _, horloge, _ := atelierPartage(t)
 
 	const unitaire = "https://poli.example/unitaire"
 	reseau := avecReseau(t, horloge, siteServi(robotsQuiDemande(crawlDelayAnnonce), unitaire))
 
+	depart := horloge.Maintenant()
 	rec := importeLURL(mux, cookie, unitaire, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("statut %d, attendu %d :\n%s", rec.Code, http.StatusOK, rec.Body.String())
 	}
-	if corps := rec.Body.String(); !estLeFormulaireDeRecette(corps) {
-		t.Fatalf("la fiche pré-remplie n'est pas rendue alors que le site n'a rien refusé :\n%s", corps)
+
+	// Mesuré sur l'horloge virtuelle : la borne se lit en quelques
+	// microsecondes, et aucun test n'attend cinq secondes.
+	if ecoule := horloge.Maintenant().Sub(depart); ecoule >= attenteUnitaireAttendue {
+		t.Errorf("l'appel a passé %v en attente de cadence, attendu moins de %v : le site visé décide de la durée du gestionnaire",
+			ecoule, attenteUnitaireAttendue)
 	}
 
-	appels := reseau.appels()
-	if len(appels) != 2 {
-		t.Fatalf("%d requêtes émises, attendu 2 — le robots.txt puis la page :\n%v", len(appels), appels)
+	corps := rec.Body.String()
+	if estLeFormulaireDeRecette(corps) {
+		t.Fatalf("la fiche pré-remplie est rendue alors que la page n'a pas été lue :\n%s", corps)
 	}
-	// Espacées de ce que le site demande : sa politesse est tenue, pas
-	// contournée. Mesuré sur l'horloge virtuelle, en quelques microsecondes.
-	if ecart := appels[1].instant.Sub(appels[0].instant); ecart != crawlDelayAnnonce {
-		t.Errorf("robots.txt et page espacés de %v, attendu %v", ecart, crawlDelayAnnonce)
+	exigeContient(t, corps, `role="alert"`)
+	if message := html.UnescapeString(messageDErreur(t, corps)); message != messageSiteOccupe {
+		t.Errorf("message %q, attendu %q", message, messageSiteOccupe)
+	}
+	if saisie := valeurDe(t, corps, "url"); saisie != unitaire {
+		t.Errorf("champ url %q, attendu %q : l'adresse saisie est perdue", saisie, unitaire)
+	}
+	// Le robots.txt est parti — c'est lui qui a rapporté l'annonce —, la page
+	// non : son tour était trop loin, et le créneau n'a pas été pris.
+	if appels := reseau.appels(); len(appels) != 1 {
+		t.Errorf("%d requêtes émises, attendu 1 — le robots.txt seul :\n%v", len(appels), appels)
 	}
 }
 
-// Le pendant sur POST /recettes : un site qui demande dix secondes entre deux
-// requêtes ne coûte pas l'illustration. Elle part plus tard, elle part.
-func TestLeCrawlDelayDuSiteNeCoutePasLIllustration(t *testing.T) {
+// Deux imports successifs vers le même hôte poli, et c'est le second qui est
+// figé ici : un test qui n'en joue qu'un ne peut pas voir ce que le suivant
+// raconte.
+//
+// Le second ne sort même pas : l'annonce est retenue, rien ne la périme, et son
+// robots.txt bute déjà sur la borne. Le refus est donc stable, et c'est
+// précisément ce qu'un message ne doit pas présenter comme passager.
+func TestLeSecondImportDUnHotePoliRendLeMemeRefus(t *testing.T) {
+	_, mux, cookie, _, horloge, _ := atelierPartage(t)
+
+	const unitaire = "https://poli.example/unitaire"
+	reseau := avecReseau(t, horloge, siteServi(robotsQuiDemande(crawlDelayAnnonce), unitaire))
+
+	if rec := importeLURL(mux, cookie, unitaire, nil); rec.Code != http.StatusOK {
+		t.Fatalf("statut %d au premier import, attendu %d :\n%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	depart := horloge.Maintenant()
+	second := importeLURL(mux, cookie, unitaire, nil)
+	if second.Code != http.StatusOK {
+		t.Fatalf("statut %d au second import, attendu %d :\n%s", second.Code, http.StatusOK, second.Body.String())
+	}
+	if ecoule := horloge.Maintenant().Sub(depart); ecoule >= attenteUnitaireAttendue {
+		t.Errorf("le second import a passé %v en attente de cadence, attendu moins de %v", ecoule, attenteUnitaireAttendue)
+	}
+
+	corps := second.Body.String()
+	if estLeFormulaireDeRecette(corps) {
+		t.Fatalf("la fiche pré-remplie est rendue au second import :\n%s", corps)
+	}
+	if message := html.UnescapeString(messageDErreur(t, corps)); message != messageSiteOccupe {
+		t.Errorf("message du second import %q, attendu %q", message, messageSiteOccupe)
+	}
+	// Une seule requête en tout, celle du premier appel : le second n'a rien
+	// envoyé au site.
+	if appels := reseau.appels(); len(appels) != 1 {
+		t.Errorf("%d requêtes émises pour deux imports, attendu 1 :\n%v", len(appels), appels)
+	}
+}
+
+// Le message du renoncement n'affirme aucune cause que le code ne connaît pas.
+// recuperation.AttenteDeCadence ne distingue pas « un lot parcourt cet hôte »
+// de « cet hôte réclame de longs délais » : nommer le lot est donc faux une fois
+// sur deux, et « réessayez dans un instant » promet un aboutissement que rien ne
+// tient — l'annonce d'un hôte ne se périme pas.
+//
+// Les deux affirmations sont citées en clair, et non relues depuis la constante :
+// comparer le rendu à la constante ne fige rien, puisque la réécrire changerait
+// les deux côtés à la fois.
+func TestLeMessageDuRenoncementNAffirmeNiLotNiNouvelEssai(t *testing.T) {
+	const (
+		causeQueLeCodeNeConnaitPas = "en cours de lecture par un import en lot"
+		promesseQueRienNeTient     = "Réessayez dans un instant"
+	)
+
+	for _, affirmation := range []string{causeQueLeCodeNeConnaitPas, promesseQueRienNeTient} {
+		if strings.Contains(messageSiteOccupe, affirmation) {
+			t.Errorf("le message du renoncement affirme %q, ce que le code ne sait pas : %q", affirmation, messageSiteOccupe)
+		}
+	}
+}
+
+// Le pendant sur POST /recettes : un hôte poli y coûte l'illustration, jamais
+// la saisie. C'est la même borne que pour l'hôte occupé, et la recette est
+// enregistrée sans image, exactement comme quand l'image est injoignable.
+func TestLeCrawlDelayPlusLongQueLaBorneNeCoutePasLaRecette(t *testing.T) {
 	app, mux, cookie := carnetDeTest(t)
 	serveur := serveurDImagesRobots(t, robotsQuiDemande(crawlDelayAnnonce), sertLesOctets(pngDeTest(t), "image/png"))
 	avecTelechargement(t, autoriseLesServeurs(serveur))
@@ -291,7 +371,7 @@ func TestLeCrawlDelayDuSiteNeCoutePasLIllustration(t *testing.T) {
 		t.Fatalf("statut %d, attendu %d :\n%s", rec.Code, http.StatusSeeOther, rec.Body.String())
 	}
 
-	if image := laRecette(t, app).GetString("image"); image == "" {
-		t.Error("aucune image enregistrée : le Crawl-delay du site a été lu comme un hôte occupé")
+	if image := laRecette(t, app).GetString("image"); image != "" {
+		t.Errorf("image %q enregistrée, attendue aucune : la borne n'a pas tenu sur le Crawl-delay de l'hôte", image)
 	}
 }
