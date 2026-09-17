@@ -1,0 +1,1 @@
+- Le README renvoie vers le guide d'installation dès sa section « Démarrer » : installer une instance — image Docker, adresse et port, TLS, sauvegarde et restauration — ne se confond plus avec faire tourner le dépôt depuis les sources.
