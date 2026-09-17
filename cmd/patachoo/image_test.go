@@ -37,8 +37,17 @@ import (
 // --- Montage ---------------------------------------------------------------
 
 // avecTelechargement règle le récupérateur pour la durée du test.
+//
+// La cadence de l'instance est remplacée du même coup, et c'est indispensable :
+// celle de production est bâtie sur l'horloge du système, elle vit aussi
+// longtemps que le paquet, et tous les serveurs httptest de ces tests partagent
+// l'hôte 127.0.0.1. Sans cette substitution, chaque téléchargement attendrait
+// une seconde réelle le tour du précédent — le paquet entier se traînerait pour
+// une politesse envers un serveur de test.
 func avecTelechargement(t *testing.T, choix ...recuperation.Option) {
 	t.Helper()
+
+	avecCadenceDInstance(t, nouvelleCadence(nouvelleHorlogeVirtuelle()))
 
 	precedent := optionsDuTelechargement
 	optionsDuTelechargement = choix

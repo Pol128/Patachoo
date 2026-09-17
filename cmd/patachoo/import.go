@@ -205,7 +205,12 @@ type preRemplissage struct {
 // et le message qui nomme la cause quand quelque chose a manqué. Jamais
 // d'erreur : un import raté n'est pas une panne, c'est le parcours d'échec.
 func ceQuiAEteTrouve(ctx context.Context, adresse string) (preRemplissage, string) {
-	page, err := recuperePage(ctx, adresse)
+	// La cadence de l'instance, celle-là même que l'ouvrier du lot emprunte :
+	// l'import unitaire sort sur le réseau sous notre adresse et sous notre
+	// nom, et le rythme que le lot promet ne vaudrait rien s'il suffisait de
+	// coller une URL en boucle pour en sortir.
+	page, err := recuperePage(ctx, adresse,
+		recuperation.AvecCadence(cadenceDeRecuperation{cadenceDeLInstance}))
 	if err != nil {
 		// La page n'a pas été atteinte : il n'y a rien à lire, pas même ses
 		// balises Open Graph. Reste l'adresse collée.

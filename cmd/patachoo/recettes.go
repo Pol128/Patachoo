@@ -17,6 +17,8 @@ import (
 	"github.com/pocketbase/pocketbase/tools/hook"
 	"github.com/pocketbase/pocketbase/tools/router"
 	"github.com/pocketbase/pocketbase/tools/search"
+
+	"github.com/Pol128/Patachoo/recuperation"
 )
 
 // --- La liste et la recherche ----------------------------------------------
@@ -996,7 +998,11 @@ func poseLImage(e *core.RequestEvent, recette *core.Record) error {
 		return nil
 	}
 
-	distante, err := imageDistante(e.Request.Context(), adresse)
+	// La cadence de l'instance : le téléchargement d'une image est une requête
+	// sortante comme une autre, et l'hôte qu'elle vise peut être celui qu'une
+	// fournée est en train de parcourir.
+	distante, err := imageDistante(e.Request.Context(), adresse,
+		recuperation.AvecCadence(cadenceDeRecuperation{cadenceDeLInstance}))
 	if err != nil {
 		// Un échec de téléchargement ne fait pas perdre l'import : la recette
 		// est enregistrée sans image, et la cause reste côté serveur. Elle est

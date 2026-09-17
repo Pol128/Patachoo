@@ -152,11 +152,12 @@ func (f formulaireRecette) URLDeLImage() string {
 // routables sur l'adresse résolue. Rien n'en est réécrit ici : cette fonction ne
 // juge que ce qui revient.
 //
-// choix s'ajoute aux options du téléchargement, et n'existe que pour l'import en
-// lot : il tient sa cadence et son robots.txt retenu à la main, et son image
-// doit partir au même rythme que ses pages. L'unitaire n'en passe aucune — la
-// requête part d'une session qui attend sa réponse, il n'y a personne à
-// espacer.
+// choix s'ajoute aux options du téléchargement. Les deux chemins en passent, et
+// pas les mêmes : le lot y met le robots.txt retenu de sa fournée, que
+// l'unitaire n'a pas, et tous deux y mettent la cadence de l'instance — c'est
+// le même tour de rôle, et une image part au même rythme qu'une page. L'attente
+// que ce tour impose n'est bornée que pour l'unitaire : quelqu'un attend devant
+// son écran, là où une fournée a tout son temps.
 func imageDistante(ctx context.Context, adresse string, choix ...recuperation.Option) (*filesystem.File, error) {
 	// slices.Concat et non append : optionsDuTelechargement est une variable de
 	// paquet, et un append qui trouverait de la capacité écrirait dedans.

@@ -89,6 +89,21 @@ type cadence struct {
 	delais map[string]time.Duration
 }
 
+// cadenceDeLInstance est le tour de rôle unique du service : l'ouvrier du lot
+// et les chemins unitaires — l'import d'une URL, l'image que le formulaire fait
+// télécharger — y passent tous.
+//
+// Une variable de paquet, et non un champ de l'ouvrier, parce que les
+// gestionnaires de routes sont des fonctions de paquet sans dépendance
+// injectée (brancheLesRoutes) : c'est le seul porteur qu'ils atteignent, et
+// c'est aussi le seul point où un test peut en substituer une autre — la
+// sienne, bâtie sur l'horloge virtuelle.
+//
+// Deux cadences, une par chemin, reviendraient à deux requêtes par seconde vers
+// un même hôte, et le cadencement ne voudrait plus rien dire : c'est le même
+// argument qui veut qu'il n'y ait qu'un ouvrier.
+var cadenceDeLInstance = nouvelleCadence(horlogeSysteme{})
+
 func nouvelleCadence(h horlogeDuLot) *cadence {
 	return &cadence{
 		horloge: h,
