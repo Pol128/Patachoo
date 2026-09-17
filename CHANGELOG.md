@@ -19,6 +19,187 @@ diverger.
 
 ## À paraître
 
+_Rien pour l'instant._
+
+## v0.1.0 — 2026-09-17
+
+- Chaque version publiée a désormais sa page sur GitHub. Le numéro affiché dans
+  le pied de page renvoyait vers une liste de versions que rien ne remplissait —
+  un tag seul n'y apparaît pas. La CI y dépose maintenant, pour chaque version,
+  la section du journal qui la décrit et l'empreinte exacte de l'image publiée,
+  avec la commande qui en vérifie la provenance. Une pré-version y est marquée
+  comme telle, et ne se présente pas comme la dernière version disponible.
+- L'installation et l'utilisation courante du carnet sont désormais vérifiées de
+  bout en bout sur le binaire livrable, lancé comme on le lance chez soi :
+  l'instance neuve porte close, le superutilisateur qui ouvre l'inscription, le
+  premier compte créé et connecté — puis une recette écrite au formulaire,
+  retrouvée sur la liste et sur sa fiche, corrigée, et la déconnexion qui referme
+  derrière elle. Rien ne change pour qui s'en sert ; ce qui change, c'est qu'une
+  version qui casserait l'un de ces deux parcours ne peut plus sortir verte.
+- Les réponses du serveur portent `Referrer-Policy: no-referrer`. L'adresse
+  de l'instance ne part plus vers les sites tiers qu'une page contacte —
+  l'aperçu de l'image chez le site importé, le lien du pied de page. Pour une
+  installation auto-hébergée sur un domaine privé, c'est son existence qui
+  cesse d'être annoncée. En contrepartie, l'aperçu d'une image distante peut
+  ne plus s'afficher chez les sites qui refusent une requête sans `Referer`.
+- Les pages ne sont plus conservées par les caches. Le serveur répond
+  `Cache-Control: private, no-store` sur ses pages et ses fragments : un proxy
+  ou un CDN placé devant l'instance ne peut plus servir à un visiteur la page
+  rendue pour le compte d'un autre. Le navigateur redemande donc la page au
+  serveur lors d'une navigation arrière. La feuille de style, htmx et les
+  illustrations restent mis en cache comme avant.
+- Les pages portent désormais une politique de sécurité du contenu stricte.
+  Un script qui se glisserait dans une recette importée, un commentaire ou un
+  nom de compte n'a plus de quoi s'exécuter : le navigateur le refuse, et le
+  carnet reste hors d'atteinte. Rien ne change à l'usage — l'aperçu de l'image
+  d'un site importé s'affiche toujours, et le panneau d'administration garde le
+  sien.
+- L'image Docker est construite et publiée par la forge, sur tag de version, et
+  porte une attestation de provenance qui la relie au commit dont elle sort.
+  Chaque version publie ses références `0.1.0` et `0.1` à côté de `latest` ;
+  `INSTALL.md` dit comment épingler l'image par empreinte pour décider soi-même
+  quand on monte de version, et comment vérifier d'une commande que celle qu'on
+  a tirée vient bien de ce dépôt.
+- L'installation ne conseille plus d'écrire le mot de passe d'administration sur
+  la ligne de commande. `INSTALL.md` met en premier l'URL affichée dans les logs
+  au premier démarrage, qui crée le compte depuis le navigateur ; les commandes
+  `superuser upsert` qui restent, là et dans le `README`, disent ce qu'un
+  argument laisse voir dans `ps` et dans l'historique du shell, et comment s'en
+  prémunir ; les blocs `curl` de sauvegarde, de restauration et de répétition
+  lisent désormais le mot de passe au clavier.
+- La documentation dit comment exposer Patachoo hors de chez soi : une section
+  d'`INSTALL.md` donne le proxy inverse en HTTPS, la variante du compose qui
+  l'accompagne, et la façon de fermer `/_/` de l'extérieur. Le tableau des
+  chemins et le `README` avertissent désormais que `/_/` et `/api/` répondent
+  sur le même port que le carnet et ne doivent pas être publiés sans filtre
+  devant. Le chiffrement des réglages est aussi documenté pour Docker.
+- Les deux workflows de la forge n'exécutent plus que des actions épinglées par
+  empreinte de commit, la version exacte gardée en commentaire sur la même
+  ligne. Ce que la CI exécute est donc décidé par le dépôt : un tag comme `v4`
+  est redéployé par son mainteneur à chaque version mineure, et changeait sous
+  ce nom sans qu'une ligne bouge ici — sur la vérification comme sur la
+  publication de l'image, celle qui signe une attestation de provenance. Aucune
+  action ne change de lignée majeure au passage : on fige ce qui tournait déjà.
+  L'en-tête de `.github/workflows/verifie.yml` porte la convention et la
+  commande qui remonte une empreinte le jour où l'on veut monter de version.
+- `./verifie` ne télécharge plus la dernière version publiée de `govulncheck` au
+  moment où il tourne : il en exécute une version écrite en toutes lettres dans
+  le script, `v1.8.0`. Ce que la vérification exécute est donc décidé par le
+  dépôt et lisible sans rien lancer, là où `@latest` laissait le proxy de
+  modules choisir — sur la machine de développement comme sur le runner de CI,
+  à chaque poussée. L'analyse ne perd rien en fraîcheur : la base de
+  vulnérabilités est interrogée sur `vuln.go.dev` à l'exécution, indépendamment
+  de la version de l'outil. Le module reste hors de `go.mod` ; le script dit en
+  commentaire comment remonter ce numéro le jour venu.
+- `INSTALL.md` explique le réglage à faire derrière un proxy inverse. Sans lui,
+  le plafond de cinq tentatives de connexion par minute compte tous les
+  visiteurs sur un seul compteur, et « trop de tentatives » finit par être
+  opposé à des gens qui n'ont rien tenté. La section dit quel en-tête déclarer
+  dans `/_/`, laquelle des adresses est retenue, pourquoi ne jamais le déclarer
+  sans proxy, et comment vérifier le résultat.
+- La connexion et l'inscription ne lisent plus leurs champs que dans le corps
+  du formulaire. Un mot de passe placé dans l'adresse — `?courriel=…&mot-de-passe=…` —
+  n'ouvre plus de session et ne crée plus de compte : il cessait d'être un
+  secret dès la première requête, l'adresse complète étant recopiée dans les
+  journaux du serveur, dans les sauvegardes de la nuit et dans l'historique du
+  navigateur.
+- `INSTALL.md` explique comment servir Patachoo en HTTPS hors de la machine
+  locale — proxy inverse, certificat obtenu par Patachoo lui-même, ou simple
+  tunnel SSH — et nomme le symptôme d'un accès en clair depuis un autre poste :
+  la connexion est acceptée mais reste sans effet, parce que le navigateur jette
+  un cookie `Secure` venu d'une origine qui ne l'est pas. Rien ne change dans le
+  produit ; c'est la documentation qui décrivait un déploiement impossible.
+- Le cookie de session n'ouvre plus que les pages du produit. Il
+  n'authentifie plus les adresses `/api/` ni `/_/` : une faille d'affichage
+  dans une page n'y gagne donc plus l'API REST du compte connecté, avec ses
+  collections entières et ses opérations de compte. Rien ne change à l'usage —
+  les pages, les formulaires et les vignettes des recettes se comportent comme
+  avant — et un client d'API qui porte son propre jeton reste servi.
+- La déconnexion ne répond plus qu'à un compte connecté. Une demande qui
+  n'accompagne aucune session ouverte est renvoyée à la page de connexion sans
+  rien effacer : seul le navigateur qui tient la session peut y mettre fin.
+- Un site tiers ne peut plus vous connecter sur un compte qu'il contrôle. Les
+  formulaires de Patachoo portent désormais un jeton que le serveur vérifie à
+  la soumission : une page extérieure qui posterait toute seule sur la
+  connexion, l'inscription ou n'importe quelle autre action est refusée avant
+  d'avoir rien changé. Un formulaire laissé ouvert très longtemps peut à son
+  tour être refusé : la page invite alors à recharger et à recommencer.
+- Le cookie de session change de nom et **ce déploiement déconnecte tout le
+  monde une fois** : l'ancien cookie n'est plus lu, il faut se reconnecter. Le
+  nouveau nom porte le préfixe `__Host-`, qui fait refuser par le navigateur
+  tout cookie de session qu'un sous-domaine voisin — un `blog.exemple.fr` à
+  côté d'un `patachoo.exemple.fr` — tenterait de poser à sa place. Rien à
+  changer à l'installation.
+- Une session a désormais une durée de vie maximale de trente jours. Passé ce
+  délai, elle cesse de se prolonger toute seule et s'éteint dans les cinq jours
+  qui suivent : il faut alors se reconnecter. Les sessions déjà ouvertes au
+  moment de la mise à jour n'ont pas la date d'ouverture que ce plafond
+  réclame ; elles s'arrêtent de se prolonger tout de suite et demandent une
+  nouvelle connexion sous cinq jours.
+- « Se déconnecter » referme désormais la session **sur tous les appareils** du
+  compte, et plus seulement dans le navigateur d'où le geste est fait. Les
+  accès déjà ouverts ailleurs — un autre navigateur, un téléphone, un poste
+  partagé qu'on a quitté sans fermer — cessent aussitôt de fonctionner et
+  demandent une nouvelle connexion. Rien à changer à l'installation.
+- Une image téléversée est mesurée avant d'être rangée. Ses dimensions
+  passent désormais le même garde-fou de quarante mégapixels qu'une image
+  téléchargée depuis un site : au-delà, le formulaire revient avec un message
+  sur le champ image et rien n'est enregistré. Un fichier léger mais démesuré —
+  un aplat de 30 000 × 30 000 tient dans quelques centaines de kibioctets —
+  faisait jusqu'ici allouer des gibioctets au serveur à la première vignette
+  demandée, et la page d'accueil recommençait à chaque visite. Les formats que
+  le formulaire accepte ne changent pas, AVIF compris.
+- Un `robots.txt` démesuré ne met plus l'import en difficulté, ni par le
+  processeur ni par la mémoire. Il est lu jusqu'à 512 Kio — la limite du
+  récolteur de Google — et ce qui dépasse est ignoré, sans que le site soit
+  refusé pour autant ; une directive tranchée en son milieu par cette limite est
+  écartée plutôt qu'appliquée tronquée. Chaque motif à joker n'est plus compilé
+  qu'une fois, à la lecture du fichier, au lieu de l'être à chaque page jugée.
+  Et de tout le fichier, une fournée ne garde que le groupe de règles qui nous
+  vise — les groupes des autres robots n'étaient jamais relus —, dans la limite
+  de cinq cents règles : un site qui en écrit davantage pour nous voit les
+  suivantes ignorées, comme la queue d'un fichier au-delà du plafond. Un import
+  en lot ne peut donc plus saturer le serveur par des `robots.txt` volumineux,
+  ni échouer en « délai dépassé » sur des pages parfaitement saines.
+- Une grosse fournée d'import ne laisse plus s'accumuler des connexions
+  sortantes inactives. Chaque récupération de page fermait les siennes au bout
+  de quatre-vingt-dix secondes seulement : un lot de cinq cents adresses pouvait
+  ainsi épuiser les descripteurs de fichiers du serveur, qui cessait alors de
+  répondre à tout le monde, sans rien écrire dans les journaux. Elles sont
+  désormais fermées dès la page récupérée.
+- L'import refuse les adresses privées écrites en IPv6. Une URL qui enferme
+  une IPv4 interne dans une écriture NAT64 (`64:ff9b::/96`), 6to4
+  (`2002::/16`) ou compatible v4 (`::/96`) — par exemple
+  `http://[64:ff9b::a9fe:a9fe]/` pour 169.254.169.254 — est désormais refusée
+  comme l'est déjà sa forme v4. Les adresses publiques écrites sous ces mêmes
+  formes restent importables.
+- L'import refuse désormais les adresses d'un tailnet ou d'un réseau CGNAT, au
+  même titre que les adresses privées. Une installation posée sur un tailnet —
+  Tailscale numérote ses pairs dans la plage partagée `100.64.0.0/10` — ne peut
+  plus servir à en explorer les machines depuis une URL collée dans l'import.
+  Trois plages réservées voisines sont refusées avec elle : `0.0.0.0/8`,
+  `198.18.0.0/15` et `240.0.0.0/4`.
+- L'authentification par l'API est plafonnée comme la page de connexion : cinq
+  tentatives par minute et par adresse sur
+  `POST /api/collections/users/auth-with-password`, là où la règle livrée par
+  PocketBase en laissait quarante. La porte d'à côté gardait son plafond, celle-ci
+  ne l'avait pas. L'authentification d'administration, elle, ne bouge pas.
+- Une recette ne se modifie plus que par le compte qui l'a ajoutée, dans le
+  carnet comme par l'API : ses champs et ses ingrédients. Tout compte connecté
+  pouvait jusqu'ici vider le titre, les instructions et la source d'une recette,
+  puis en retirer les lignes une à une — il restait une fiche blanche que son
+  auteur seul pouvait effacer, sans rien à récupérer. Le lien « Modifier »
+  n'apparaît donc plus que sur ses propres recettes. Le carnet reste partagé
+  pour tout le reste : on lit, on cherche et on commente les recettes de tout le
+  monde, et corriger la coquille d'un autre passe désormais par une note.
+- Une note reste signée du compte qui l'a écrite, et rattachée à la recette sous
+  laquelle elle a été écrite. L'API acceptait qu'un compte retourne sa propre
+  note au nom d'un autre, ou la déplace sous une autre recette : les deux champs
+  sont désormais figés à la modification. Le carnet et ses pages ne changent pas.
+- Le dépôt dit où signaler une faille. `SECURITY.md` donne le canal — le
+  signalement privé de GitHub, et lui seul —, ce qu'un bon signalement contient,
+  et ce qu'il faut attendre d'une réponse sur un projet tenu sur temps libre.
+  Le `README` y renvoie.
 - Les données ne sont plus lisibles par les autres comptes de la machine. Le
   serveur crée `pb_data`, ses bases et ses sauvegardes en `0700` et `0600` :
   `data.db` porte en clair de quoi fabriquer un jeton d'administration, et
