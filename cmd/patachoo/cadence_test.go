@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"html"
 	"net/http"
@@ -135,9 +136,19 @@ func TestUnImportUnitaireNAttendPasLeLotDUnAutreHote(t *testing.T) {
 // test finit augmentée temporairement » (DOD.md §3).
 const attenteUnitaireAttendue = 5 * time.Second
 
-// hoteOccupePour rend l'hôte visé après avoir pris son tour pour plus longtemps
-// que la borne : la requête suivante vers lui devra attendre au-delà de ce
-// qu'un chemin interactif accepte.
+// hoteOccupePour place devant nous une requête en vol vers l'hôte visé : son
+// tour est déjà réservé, plus loin que ce qu'un chemin interactif accepte
+// d'attendre. C'est l'état d'un hôte qu'une fournée est en train de parcourir.
+//
+// Deux prises, et non une. La première pose seulement la dernière requête
+// émise, dans le passé — l'hôte est alors poli, pas occupé, et un site poli
+// doit rester joignable (TestLeCrawlDelayDuSiteNInterditPasLImportUnitaire).
+// C'est la seconde qui réserve un créneau à venir, et c'est cela qu'un chemin
+// interactif refuse d'attendre.
+//
+// Elle part sur un contexte déjà coupé : attendSonTour réserve avant
+// d'attendre, donc le créneau est posé et l'horloge n'a pas bougé — le tour
+// reste devant nous pour la suite du test, sans goroutine à synchroniser.
 func hoteOccupePour(t *testing.T, partagee *cadence, adresse string) {
 	t.Helper()
 
@@ -145,6 +156,12 @@ func hoteOccupePour(t *testing.T, partagee *cadence, adresse string) {
 	partagee.retiens(hote, attenteUnitaireAttendue+time.Second)
 	if err := partagee.attendSonTour(context.Background(), hote, 0); err != nil {
 		t.Fatalf("prise du tour de %q : %v", hote, err)
+	}
+
+	coupe, arrete := context.WithCancel(context.Background())
+	arrete()
+	if err := partagee.attendSonTour(coupe, hote, 0); !errors.Is(err, context.Canceled) {
+		t.Fatalf("réservation du tour suivant de %q : %v, attendu %v", hote, err, context.Canceled)
 	}
 }
 
