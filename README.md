@@ -10,6 +10,11 @@ comprises, source d'origine citée.
 
 ## Démarrer
 
+Deux chemins, à ne pas confondre. Pour **installer une instance**, tout est
+dans [le guide d'installation : image Docker, `docker-compose.yml`, adresse et
+port, TLS, sauvegarde et restauration](INSTALL.md). Les commandes ci-dessous
+sont l'autre chemin — **faire tourner le dépôt depuis les sources**.
+
 ```sh
 go run ./cmd/patachoo serve         # http://127.0.0.1:8090
 go run ./cmd/patachoo superuser upsert vous@exemple.fr 'motdepasse'
