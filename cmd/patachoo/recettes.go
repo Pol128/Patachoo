@@ -1002,7 +1002,8 @@ func poseLImage(e *core.RequestEvent, recette *core.Record) error {
 	// sortante comme une autre, et l'hôte qu'elle vise peut être celui qu'une
 	// fournée est en train de parcourir.
 	distante, err := imageDistante(e.Request.Context(), adresse,
-		recuperation.AvecCadence(cadenceDeRecuperation{cadenceDeLInstance}))
+		recuperation.AvecCadence(cadenceDeRecuperation{cadenceDeLInstance}),
+		recuperation.AvecAttenteMaxDeCadence(attenteMaxUnitaire))
 	if err != nil {
 		// Un échec de téléchargement ne fait pas perdre l'import : la recette
 		// est enregistrée sans image, et la cause reste côté serveur. Elle est

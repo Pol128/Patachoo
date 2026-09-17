@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/Pol128/Patachoo/recuperation"
 )
 
 // Le rythme des requêtes sortantes de l'import en lot, hôte par hôte.
@@ -21,6 +23,21 @@ import (
 // un site qui nous autorise dix requêtes par seconde ne nous oblige pas à les
 // faire.
 const delaiEntreRequetes = time.Second
+
+// attenteMaxUnitaire est ce qu'un chemin interactif accepte d'attendre le tour
+// d'un hôte avant d'y renoncer.
+//
+// Le lot, lui, attend sans limite : il est asynchrone, personne n'est devant
+// lui, et attendre est la politesse. L'unitaire part d'une session qui attend
+// sa réponse, et cinq secondes d'écran qui tourne sont déjà beaucoup — un hôte
+// qu'une fournée parcourt à un Crawl-delay de cinq minutes en ferait des
+// minutes. Laisser du travail de fond bloquer sans plafond du travail
+// interactif est la mauvaise priorité.
+//
+// Et une attente synchrone non bornée est en soi un levier bon marché : cent
+// adresses d'un site qu'on fait parcourir par ailleurs immobiliseraient cent
+// gestionnaires pendant des minutes.
+const attenteMaxUnitaire = 5 * time.Second
 
 // horlogeDuLot est le temps que l'ouvrier lit et attend.
 //
@@ -118,7 +135,12 @@ func nouvelleCadence(h horlogeDuLot) *cadence {
 // les hôtes de front : le verrou n'est tenu que le temps du calcul, jamais
 // pendant l'attente. Un créneau réservé puis abandonné — contexte annulé — est
 // perdu, et c'est sans conséquence : il ne fait qu'espacer un peu plus.
-func (c *cadence) attendSonTour(ctx context.Context, hote string) error {
+//
+// attenteMax borne ce que l'appelant accepte d'attendre, et zéro ne borne rien.
+// Au-delà, le tour n'est pas pris : renoncer après l'avoir réservé pousserait
+// la file de l'hôte d'une seconde pour une requête qui ne partira pas, et
+// suffirait à affamer un lot en cours en renonçant en boucle.
+func (c *cadence) attendSonTour(ctx context.Context, hote string, attenteMax time.Duration) error {
 	c.mu.Lock()
 	maintenant := c.horloge.Maintenant()
 	creneau := maintenant
@@ -129,10 +151,15 @@ func (c *cadence) attendSonTour(ctx context.Context, hote string) error {
 			creneau = prochain
 		}
 	}
+	attente := creneau.Sub(maintenant)
+	if attenteMax > 0 && attente > attenteMax {
+		c.mu.Unlock()
+		return recuperation.ErrAttenteTropLongue
+	}
 	c.dernier[hote] = creneau
 	c.mu.Unlock()
 
-	return c.horloge.Attends(ctx, creneau.Sub(maintenant))
+	return c.horloge.Attends(ctx, attente)
 }
 
 // retiens garde le Crawl-delay qu'un hôte annonce, quand il dépasse le nôtre.
@@ -156,8 +183,8 @@ func (c *cadence) retiens(hote string, annonce time.Duration) {
 // le sien.
 type cadenceDeRecuperation struct{ *cadence }
 
-func (c cadenceDeRecuperation) AttendSonTour(ctx context.Context, hote string) error {
-	return c.attendSonTour(ctx, hote)
+func (c cadenceDeRecuperation) AttendSonTour(ctx context.Context, hote string, attenteMax time.Duration) error {
+	return c.attendSonTour(ctx, hote, attenteMax)
 }
 
 func (c cadenceDeRecuperation) Retiens(hote string, annonce time.Duration) {

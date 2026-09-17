@@ -80,7 +80,13 @@ func importe(e *core.RequestEvent) error {
 		return rendLaPageDImport(e, adresse, refus)
 	}
 
-	trouve, message := ceQuiAEteTrouve(e.Request.Context(), adresse)
+	trouve, message, renonce := ceQuiAEteTrouve(e.Request.Context(), adresse)
+	if renonce {
+		// Rien n'a été lu, et il n'y a pas de fiche à proposer : le champ se
+		// re-rend avec l'adresse et le message, comme après un refus de saisie.
+		// Un formulaire vide donnerait à croire que le site n'a rien publié.
+		return rendLaPageDImport(e, adresse, message)
+	}
 
 	saisie, err := formulaireVide(e.App)
 	if err != nil {
@@ -204,17 +210,22 @@ type preRemplissage struct {
 // Elle rend toujours de quoi remplir le formulaire — au pire l'adresse seule —
 // et le message qui nomme la cause quand quelque chose a manqué. Jamais
 // d'erreur : un import raté n'est pas une panne, c'est le parcours d'échec.
-func ceQuiAEteTrouve(ctx context.Context, adresse string) (preRemplissage, string) {
+//
+// Le troisième retour distingue le seul échec qui ne soit pas un parcours
+// d'échec : l'appel a renoncé à attendre le tour de l'hôte, rien n'est parti,
+// et la bonne réponse est de proposer de recommencer — pas une fiche vide.
+func ceQuiAEteTrouve(ctx context.Context, adresse string) (preRemplissage, string, bool) {
 	// La cadence de l'instance, celle-là même que l'ouvrier du lot emprunte :
 	// l'import unitaire sort sur le réseau sous notre adresse et sous notre
 	// nom, et le rythme que le lot promet ne vaudrait rien s'il suffisait de
 	// coller une URL en boucle pour en sortir.
 	page, err := recuperePage(ctx, adresse,
-		recuperation.AvecCadence(cadenceDeRecuperation{cadenceDeLInstance}))
+		recuperation.AvecCadence(cadenceDeRecuperation{cadenceDeLInstance}),
+		recuperation.AvecAttenteMaxDeCadence(attenteMaxUnitaire))
 	if err != nil {
 		// La page n'a pas été atteinte : il n'y a rien à lire, pas même ses
 		// balises Open Graph. Reste l'adresse collée.
-		return preRemplissage{SourceURL: adresse}, messageDeLEchec(err)
+		return preRemplissage{SourceURL: adresse}, messageDeLEchec(err), estUneAttenteAbandonnee(err)
 	}
 
 	ouverture := litOpenGraph(page.Corps)
@@ -231,13 +242,20 @@ func ceQuiAEteTrouve(ctx context.Context, adresse string) (preRemplissage, strin
 		// qui devrait sinon tout retaper.
 		trouve.Titre = ouverture.Titre
 		trouve.ImageDistante = ouverture.Image
-		return trouve, messageDeLEchec(err)
+		return trouve, messageDeLEchec(err), false
 	}
 
 	champs := preRemplissageDe(recette)
 	champs.SourceURL = trouve.SourceURL
 	champs.SourceNom = trouve.SourceNom
-	return champs, ""
+	return champs, "", false
+}
+
+// estUneAttenteAbandonnee dit si l'échec est un renoncement à attendre le tour
+// de l'hôte. C'est la cause nommée qui le dit, jamais le texte de l'erreur.
+func estUneAttenteAbandonnee(err error) bool {
+	var refus *recuperation.Erreur
+	return errors.As(err, &refus) && refus.Cause == recuperation.AttenteDeCadence
 }
 
 // preRemplissageDe rend, d'une recette extraite, les champs qu'elle garnit.
@@ -316,6 +334,11 @@ const (
 	messageAucunBalisage   = "Ce site ne publie pas ses recettes dans un format exploitable."
 	messageJSONInvalide    = "Ce site publie des données structurées illisibles : son balisage est cassé."
 	messageTitreAbsent     = "La recette publiée par ce site n'a pas de titre, et une fiche sans titre n'en est pas une."
+	// messageSiteOccupe n'est pas un échec du site : c'est nous qui avons
+	// renoncé à attendre notre tour vers lui, parce qu'un import en lot le
+	// parcourt déjà. Il dit donc de recommencer, là où les autres disent de ne
+	// pas insister.
+	messageSiteOccupe = "Ce site est déjà en cours de lecture par un import en lot : nous n'y enverrons pas deux requêtes à la fois. Réessayez dans un instant."
 )
 
 // messageDeLEchec nomme la cause dans les mots de l'utilisateur.
@@ -356,6 +379,8 @@ func messageDuRefus(refus *recuperation.Erreur) string {
 		return messagePolitique
 	case recuperation.TailleMax:
 		return messageTropVolumineuse
+	case recuperation.AttenteDeCadence:
+		return messageSiteOccupe
 	default:
 		return messageInjoignable
 	}

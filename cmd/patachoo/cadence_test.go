@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"html"
 	"net/http"
 	"testing"
 	"time"
@@ -170,7 +171,12 @@ func TestLImportUnitaireRenonceQuandLeTourEstTropLoin(t *testing.T) {
 	if estLeFormulaireDeRecette(corps) {
 		t.Fatalf("la fiche pré-remplie est rendue alors que rien n'a été lu :\n%s", corps)
 	}
-	exigeContient(t, corps, `role="alert"`, messageSiteOccupe)
+	exigeContient(t, corps, `role="alert"`)
+	// Le message est relu échappé : c'est le texte que l'utilisateur voit, pas
+	// sa forme dans la source de la page.
+	if message := html.UnescapeString(messageDErreur(t, corps)); message != messageSiteOccupe {
+		t.Errorf("message %q, attendu %q", message, messageSiteOccupe)
+	}
 	if saisie := valeurDe(t, corps, "url"); saisie != unitaire {
 		t.Errorf("champ url %q, attendu %q : l'adresse saisie est perdue", saisie, unitaire)
 	}

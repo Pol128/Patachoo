@@ -31,7 +31,7 @@ type cadenceNotee struct {
 	annonce time.Duration
 }
 
-func (c *cadenceNotee) AttendSonTour(_ context.Context, hote string) error {
+func (c *cadenceNotee) AttendSonTour(_ context.Context, hote string, _ time.Duration) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -66,7 +66,7 @@ func (c *cadenceNotee) delaiRapporte() time.Duration {
 // vérifier que l'attente ne se prend pas sur le compte d'une borne.
 type cadenceLente struct{ attente time.Duration }
 
-func (c cadenceLente) AttendSonTour(ctx context.Context, _ string) error {
+func (c cadenceLente) AttendSonTour(ctx context.Context, _ string, _ time.Duration) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()

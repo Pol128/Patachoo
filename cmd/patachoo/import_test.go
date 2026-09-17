@@ -400,6 +400,9 @@ func lesCauses() []cause {
 		{"page trop volumineuse", func(t *testing.T) {
 			echoue(t, &recuperation.Erreur{Cause: recuperation.TailleMax, URL: urlSource})
 		}},
+		{"attente du tour abandonnée", func(t *testing.T) {
+			echoue(t, &recuperation.Erreur{Cause: recuperation.AttenteDeCadence, URL: urlSource})
+		}},
 		{"JSON-LD sans recette", func(t *testing.T) {
 			sert(t, pageDuCorpus(t, "ldjson-sans-recette"), urlSource)
 		}},
