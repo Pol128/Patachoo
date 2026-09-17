@@ -194,8 +194,8 @@ func TestLImportUnitaireRenonceQuandLeTourEstTropLoin(t *testing.T) {
 	exigeContient(t, corps, `role="alert"`)
 	// Le message est relu échappé : c'est le texte que l'utilisateur voit, pas
 	// sa forme dans la source de la page.
-	if message := html.UnescapeString(messageDErreur(t, corps)); message != messageSiteOccupe {
-		t.Errorf("message %q, attendu %q", message, messageSiteOccupe)
+	if message := html.UnescapeString(messageDErreur(t, corps)); message != messageTourTropLoin {
+		t.Errorf("message %q, attendu %q", message, messageTourTropLoin)
 	}
 	if saisie := valeurDe(t, corps, "url"); saisie != unitaire {
 		t.Errorf("champ url %q, attendu %q : l'adresse saisie est perdue", saisie, unitaire)
@@ -282,8 +282,8 @@ func TestLeCrawlDelayPlusLongQueLaBorneRefuseLImportUnitaire(t *testing.T) {
 		t.Fatalf("la fiche pré-remplie est rendue alors que la page n'a pas été lue :\n%s", corps)
 	}
 	exigeContient(t, corps, `role="alert"`)
-	if message := html.UnescapeString(messageDErreur(t, corps)); message != messageSiteOccupe {
-		t.Errorf("message %q, attendu %q", message, messageSiteOccupe)
+	if message := html.UnescapeString(messageDErreur(t, corps)); message != messageTourTropLoin {
+		t.Errorf("message %q, attendu %q", message, messageTourTropLoin)
 	}
 	if saisie := valeurDe(t, corps, "url"); saisie != unitaire {
 		t.Errorf("champ url %q, attendu %q : l'adresse saisie est perdue", saisie, unitaire)
@@ -325,8 +325,8 @@ func TestLeSecondImportDUnHotePoliRendLeMemeRefus(t *testing.T) {
 	if estLeFormulaireDeRecette(corps) {
 		t.Fatalf("la fiche pré-remplie est rendue au second import :\n%s", corps)
 	}
-	if message := html.UnescapeString(messageDErreur(t, corps)); message != messageSiteOccupe {
-		t.Errorf("message du second import %q, attendu %q", message, messageSiteOccupe)
+	if message := html.UnescapeString(messageDErreur(t, corps)); message != messageTourTropLoin {
+		t.Errorf("message du second import %q, attendu %q", message, messageTourTropLoin)
 	}
 	// Une seule requête en tout, celle du premier appel : le second n'a rien
 	// envoyé au site.
@@ -351,8 +351,8 @@ func TestLeMessageDuRenoncementNAffirmeNiLotNiNouvelEssai(t *testing.T) {
 	)
 
 	for _, affirmation := range []string{causeQueLeCodeNeConnaitPas, promesseQueRienNeTient} {
-		if strings.Contains(messageSiteOccupe, affirmation) {
-			t.Errorf("le message du renoncement affirme %q, ce que le code ne sait pas : %q", affirmation, messageSiteOccupe)
+		if strings.Contains(messageTourTropLoin, affirmation) {
+			t.Errorf("le message du renoncement affirme %q, ce que le code ne sait pas : %q", affirmation, messageTourTropLoin)
 		}
 	}
 }

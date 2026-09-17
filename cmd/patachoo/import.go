@@ -335,8 +335,10 @@ const (
 	messageAucunBalisage   = "Ce site ne publie pas ses recettes dans un format exploitable."
 	messageJSONInvalide    = "Ce site publie des données structurées illisibles : son balisage est cassé."
 	messageTitreAbsent     = "La recette publiée par ce site n'a pas de titre, et une fiche sans titre n'en est pas une."
-	// messageSiteOccupe n'est pas un échec du site : c'est nous qui avons
-	// renoncé à attendre notre tour vers lui.
+	// messageTourTropLoin n'est pas un échec du site : c'est nous qui avons
+	// renoncé à attendre notre tour vers lui. Nommé d'après ce que le code sait
+	// — le tour est trop loin — et non d'après une occupation de l'hôte, qu'il
+	// ne sait pas constater.
 	//
 	// Il ne nomme pas ce qui éloigne ce tour, parce que le code ne le sait pas :
 	// recuperation.AttenteDeCadence ne distingue pas un import en lot qui
@@ -345,7 +347,7 @@ const (
 	// périme l'annonce et tous les essais suivants renonceront au même endroit.
 	// Ce qu'il offre à la place est la seule sortie qui existe vraiment :
 	// l'import en lot, qui attend son tour sans limite.
-	messageSiteOccupe = "Nous espaçons nos visites à un même site, et notre prochain tour vers celui-ci est plus loin que ce qu'un import à la main accepte d'attendre : rien n'a été lu. Un import en lot, lui, patientera le temps qu'il faudra."
+	messageTourTropLoin = "Nous espaçons nos visites à un même site, et notre prochain tour vers celui-ci est plus loin que ce qu'un import à la main accepte d'attendre : rien n'a été lu. Un import en lot, lui, patientera le temps qu'il faudra."
 )
 
 // messageDeLEchec nomme la cause dans les mots de l'utilisateur.
@@ -387,7 +389,7 @@ func messageDuRefus(refus *recuperation.Erreur) string {
 	case recuperation.TailleMax:
 		return messageTropVolumineuse
 	case recuperation.AttenteDeCadence:
-		return messageSiteOccupe
+		return messageTourTropLoin
 	default:
 		return messageInjoignable
 	}
