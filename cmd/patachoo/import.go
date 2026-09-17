@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -48,7 +49,8 @@ var recuperePage = func(ctx context.Context, adresse string, choix ...recuperati
 // champ, avant le moindre appel.
 func brancheLImport(routeur *router.Router[*core.RequestEvent]) {
 	routeur.GET("/recettes/importer", pageImport).Bind(exigeUneSession())
-	routeur.POST("/recettes/importer", importe).Bind(exigeLeJetonAntiRejeu(), exigeUneSession())
+	routeur.POST("/recettes/importer", importe).Bind(exigeLeJetonAntiRejeu(), exigeUneSession(),
+		rendLeDepassementEnHTML("patachooDepassementImport", rendLeDepassementDeLImport))
 }
 
 // donneesImport est ce que la page « coller l'URL » donne à son gabarit. URL
@@ -104,10 +106,40 @@ func importe(e *core.RequestEvent) error {
 // rendLaPageDImport rend le champ « coller l'URL », avec un message s'il y en
 // a un.
 func rendLaPageDImport(e *core.RequestEvent, adresse, message string) error {
-	return rendre(e, "import.html", "import-corps.html", &donneesImport{
+	return rendLaPageDImportAvecStatut(e, http.StatusOK, adresse, message)
+}
+
+// rendLaPageDImportAvecStatut rend la même page sous un autre code de retour.
+//
+// Le dépassement du plafond en a besoin : un refus du limiteur rendu 200 ferait
+// passer pour une page valide ce que le protocole doit signaler comme un refus.
+func rendLaPageDImportAvecStatut(e *core.RequestEvent, statut int, adresse, message string) error {
+	return rendreAvecStatut(e, statut, "import.html", "import-corps.html", &donneesImport{
 		donneesPage: donneesPage{Titre: "Importer une recette — Patachoo", Message: message},
 		URL:         adresse,
 	})
+}
+
+// messageDebitDeLImportDepasse est ce que voit celui qui a dépassé le plafond
+// de débit posé par la migration 1789660000_debit_import.
+//
+// Il parle de l'adresse, et non du compte : le limiteur compte par e.RealIP()
+// quelle que soit l'audience de la règle, et promettre un plafond par compte
+// serait promettre ce que le code ne fait pas.
+const messageDebitDeLImportDepasse = "Trop d'imports lancés depuis cette adresse. Réessayez dans une minute."
+
+// rendLeDepassementDeLImport est ce que rendLeDepassementEnHTML rend quand le
+// plafond de POST /recettes/importer tombe : le champ « coller l'URL »
+// lui-même, sous un 429.
+//
+// L'adresse est reprise de la requête refusée : « le champ se re-rend avec ce
+// que l'utilisateur a tapé » vaut aussi quand c'est le plafond qui refuse, et
+// importe n'a jamais été appelé pour la lire. Au-delà de borneDuCorpsRattrape
+// la lecture échoue et le champ revient vide — le refus reste lisible, c'est ce
+// qui compte.
+func rendLeDepassementDeLImport(e *core.RequestEvent) error {
+	return rendLaPageDImportAvecStatut(e, http.StatusTooManyRequests,
+		e.Request.PostFormValue("url"), messageDebitDeLImportDepasse)
 }
 
 // refusDeLAdresse dit pourquoi une adresse ne mérite pas qu'on aille la
