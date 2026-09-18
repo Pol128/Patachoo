@@ -10,3 +10,14 @@
 
 <button id="lancer-le-lot" type="submit">Lancer le lot</button>
 </form>
+
+<section class="fournees">
+<h2>Vos fournées</h2>
+{{if .Fournees}}
+<ul class="liste-fournees">
+{{range .Fournees}}<li class="fournee-listee"><a href="{{.Lien}}">Fournée du {{.Date}}</a> — {{.Etat}}{{with .Tag}}, sous le tag <a href="{{.URL}}">{{.Texte}}</a>{{end}}</li>
+{{end}}</ul>
+{{else}}
+<p class="aucune-fournee">Vous n'avez encore lancé aucune fournée.</p>
+{{end}}
+</section>

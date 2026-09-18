@@ -1,0 +1,2 @@
+- La page « Importer un lot » liste désormais vos vingt dernières fournées, avec leur date, leur tag et leur état : le rapport d'un import se retrouve après coup, et plus seulement au moment où il s'affiche.
+- Dans le rapport d'une fournée, chaque adresse qui n'a pas abouti porte une case à cocher. Elle reste cochée quand vous revenez sur la page, et l'en-tête dit combien d'adresses vous avez reprises sur le total des échecs.
