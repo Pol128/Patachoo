@@ -11,9 +11,14 @@
 {{range .Detail}}<li class="famille">{{.Libelle}} : <strong>{{.Compte}}</strong></li>
 {{end}}</ul>
 {{if .Echecs}}
-<p>Les adresses qui n'ont pas abouti, à reprendre une par une dans l'import unitaire :</p>
+<p>Les adresses qui n'ont pas abouti, à reprendre une par une dans l'import unitaire.</p>
+<p class="reprises"><strong>{{.Reprises}}</strong> reprises sur <strong>{{len .Echecs}}</strong>.</p>
 <ul class="echecs">
-{{range .Echecs}}<li class="echec"><code>{{.URL}}</code> <span class="cause">{{.Cause}}</span></li>
+{{range .Echecs}}{{if .Reprise}}<li class="echec reprise">{{else}}<li class="echec">{{end}}<code>{{.URL}}</code> <span class="cause">{{.Cause}}</span>
+<form class="bascule-reprise" method="post" action="{{.Lien}}" hx-post="{{.Lien}}" hx-target="#suivi-du-lot" hx-swap="outerHTML">
+<input type="hidden" name="_antirejeu" value="{{$.JetonAntiRejeu}}">
+<button type="submit">{{if .Reprise}}Annuler la reprise{{else}}Marquer comme reprise{{end}}</button>
+</form></li>
 {{end}}</ul>
 {{end}}
 {{else}}

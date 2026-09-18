@@ -28,6 +28,15 @@ import (
 // finit par diverger de celle qui est branchée.
 const cheminDuSuivi = cheminDuLot + "/{id}"
 
+// cheminDeLaReprise porte la bascule d'une ligne en échec, dans le prolongement
+// du suivi. Même raison qu'au-dessus : une URL recopiée finit par diverger de
+// celle qui est branchée.
+const cheminDeLaReprise = cheminDuSuivi + "/lignes/{ligne}"
+
+// champDeLaReprise porte l'état coché d'une adresse en échec — ce que
+// l'utilisateur déclare, là où status porte ce que l'ouvrier a constaté.
+const champDeLaReprise = "handled"
+
 // cadenceDuSuivi est l'intervalle du rafraîchissement HTMX.
 //
 // Deux secondes : l'ouvrier ne peut pas traiter plus d'une URL par seconde et
@@ -68,6 +77,11 @@ type donneesSuivi struct {
 	Comptes []compteDuRapport
 	Detail  []compteDuRapport
 	Echecs  []echecDuRapport
+
+	// Reprises est le nombre d'adresses en échec que l'utilisateur a cochées,
+	// sur le total des échecs — que le gabarit tire de Echecs. C'est ce qui
+	// fait dire à l'écran, d'un coup d'œil, ce qui reste à faire.
+	Reprises int
 }
 
 // compteDuRapport est une famille et son effectif.
@@ -82,6 +96,15 @@ type echecDuRapport struct {
 	// Cause est le libellé français, jamais la valeur enregistrée : c'est ce
 	// que quelqu'un lit pour décider s'il reprend l'adresse à la main.
 	Cause string
+
+	// Lien est l'adresse à laquelle la case de cette ligne se poste, composée
+	// ici et non par le gabarit : une URL recopiée diverge le jour où la route
+	// bouge, et celle-ci en porte deux identifiants.
+	Lien string
+
+	// Reprise dit que l'utilisateur a déclaré s'en être occupé. L'adresse
+	// reste en échec pour autant — c'est une déclaration, pas un nouveau sort.
+	Reprise bool
 }
 
 // lienDuSuivi rend l'adresse du suivi d'un lot.
@@ -93,26 +116,86 @@ func lienDuSuivi(lot string) string {
 	return cheminDuLot + "/" + lot
 }
 
+// lienDeLaReprise rend l'adresse à laquelle la case d'une ligne se poste.
+//
+// Écrite ici pour la même raison que la précédente, et à partir d'elle : les
+// deux routes se suivent, et une adresse recomposée à la main les laisserait
+// diverger.
+func lienDeLaReprise(lot, ligne string) string {
+	return lienDuSuivi(lot) + "/lignes/" + ligne
+}
+
 // suiviDuLot rend la progression ou le rapport, selon l'état du lot.
+func suiviDuLot(e *core.RequestEvent) error {
+	lot := leLotDuCompte(e)
+	if lot == nil {
+		return pageLotIntrouvable(e)
+	}
+
+	return rendLeSuivi(e, lot)
+}
+
+// leLotDuCompte rend la fournée que l'URL désigne, si elle est bien celle du
+// compte connecté, et nil sinon.
 //
 // La propriété se vérifie ici, dans le code de la route : ces pages sont
 // servies par notre code Go, que les règles de collection ne gardent pas — et
 // les collections de l'import en lot n'en ont d'ailleurs aucune, elles sont
 // fermées à l'API REST.
-func suiviDuLot(e *core.RequestEvent) error {
+//
+// Un nil plutôt qu'une 404 rendue sur place, comme laNoteDemandee : le choix
+// entre document et fragment appartient à rendre, et une fonction de recherche
+// qui écrirait la réponse ne pourrait plus être appelée deux fois.
+func leLotDuCompte(e *core.RequestEvent) *core.Record {
 	lot, err := e.App.FindRecordById("imports", e.Request.PathValue("id"))
-	// Une 404 dans les deux cas, et non une 403 pour le second : l'existence
-	// de la fournée d'un autre compte n'est pas une information à donner par
-	// un code de statut.
+	// Une absence dans les deux cas, et non un refus pour le second :
+	// l'existence de la fournée d'un autre compte n'est pas une information à
+	// donner par un code de statut.
 	if err != nil || lot.GetString(champAuteur) != e.Auth.Id {
-		return pageLotIntrouvable(e)
+		return nil
 	}
+	return lot
+}
 
+// rendLeSuivi met en forme l'état du lot et le rend — fragment ou document,
+// c'est rendre qui tranche.
+func rendLeSuivi(e *core.RequestEvent, lot *core.Record) error {
 	donnees, err := suiviDe(e.App, lot)
 	if err != nil {
 		return err
 	}
 	return rendre(e, "import-lot-suivi.html", "import-lot-suivi-corps.html", donnees)
+}
+
+// basculeLaReprise inverse la case d'une adresse en échec, puis rend le suivi.
+//
+// Elle ne regarde pas le statut du lot : seul le rapport — donc un lot terminé
+// — offre le bouton, et ajouter un refus pour un lot en cours coûterait une
+// règle et un test sans rien protéger.
+//
+// Le rendu passe par rendre, qui choisit seul entre le fragment et le
+// document : la case fonctionne donc aussi sans JavaScript, HTMX ne faisant
+// qu'éviter le rechargement.
+func basculeLaReprise(e *core.RequestEvent) error {
+	lot := leLotDuCompte(e)
+	if lot == nil {
+		return pageLotIntrouvable(e)
+	}
+
+	ligne, err := e.App.FindRecordById("import_urls", e.Request.PathValue("ligne"))
+	// La ligne doit appartenir au lot cité, et pas seulement exister : sans ce
+	// second contrôle, la propriété porterait sur un lot et l'écriture sur un
+	// autre.
+	if err != nil || ligne.GetString("batch") != lot.Id {
+		return pageLotIntrouvable(e)
+	}
+
+	ligne.Set(champDeLaReprise, !ligne.GetBool(champDeLaReprise))
+	if err := e.App.Save(ligne); err != nil {
+		return fmt.Errorf("reprise de la ligne %s : %w", ligne.Id, err)
+	}
+
+	return rendLeSuivi(e, lot)
 }
 
 // pageLotIntrouvable répond par une page lisible, et non par une page vide.
@@ -146,6 +229,7 @@ func suiviDe(app core.App, lot *core.Record) (*donneesSuivi, error) {
 
 	if donnees.Termine {
 		donnees.Comptes, donnees.Detail, donnees.Echecs = leRapport(lignes)
+		donnees.Reprises = reprises(donnees.Echecs)
 		return donnees, nil
 	}
 
@@ -193,6 +277,19 @@ func traitees(lignes []*core.Record) int {
 		}
 	}
 	return traitees
+}
+
+// reprises compte les adresses en échec que l'utilisateur a cochées. Sur les
+// échecs seuls, et non sur la fournée : le rapport ne liste une à une que
+// celles-là, et elles seules portent une case.
+func reprises(echecs []echecDuRapport) int {
+	comptees := 0
+	for _, echec := range echecs {
+		if echec.Reprise {
+			comptees++
+		}
+	}
+	return comptees
 }
 
 func estTraitee(statut string) bool {
@@ -269,8 +366,10 @@ func leRapport(lignes []*core.Record) (comptes, detail []compteDuRapport, echecs
 			cause := ligne.GetString("cause")
 			parFamille[familleDeLaCause(cause)]++
 			echecs = append(echecs, echecDuRapport{
-				URL:   ligne.GetString("url"),
-				Cause: libelleDeLaCause(cause, ligne.GetInt("code")),
+				URL:     ligne.GetString("url"),
+				Cause:   libelleDeLaCause(cause, ligne.GetInt("code")),
+				Lien:    lienDeLaReprise(ligne.GetString("batch"), ligne.Id),
+				Reprise: ligne.GetBool(champDeLaReprise),
 			})
 		}
 	}

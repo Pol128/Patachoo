@@ -30,6 +30,15 @@ const cheminDuLot = "/recettes/importer/lot"
 // la coupe a eu lieu.
 const plafondDuLot = 500
 
+// fourneesListeesAuPlus borne la liste des fournées affichée sous le
+// formulaire de saisie.
+//
+// Vingt, et sans pagination : la liste est un chemin de retour vers un rapport
+// qu'on vient de lancer, pas un historique à explorer. Un compte qui en a lancé
+// cent n'a pas à faire défiler cent lignes pour atteindre son formulaire, et la
+// fournée ancienne se retrouve par son tag.
+const fourneesListeesAuPlus = 20
+
 // fourneesMaxParMinute borne la recherche d'un nom de tag libre.
 //
 // Le nom du lot porte la minute ; deux lots de la même minute se distinguent
@@ -82,6 +91,18 @@ type ligneEcartee struct {
 	Motif string
 }
 
+// fourneeListee est une fournée telle qu'elle se lit dans la liste : de quoi la
+// reconnaître, et par où y revenir.
+type fourneeListee struct {
+	Lien string
+	Date string
+	Etat string
+
+	// Tag est nil quand la fournée n'en a plus, comme sur le rapport : le
+	// gabarit s'ouvre alors sur un {{with}} et n'écrit pas de lien orphelin.
+	Tag *lienDeFait
+}
+
 // donneesLot est ce que les gabarits du lot reçoivent — la page de saisie
 // comme la confirmation.
 type donneesLot struct {
@@ -90,23 +111,30 @@ type donneesLot struct {
 	Saisie     string
 	Ecartees   []ligneEcartee
 
+	// Fournees est la liste des fournées du compte connecté, sous le
+	// formulaire. Nil sur la confirmation, qui porte le suivi de celle qui
+	// vient de partir et n'a que faire des précédentes.
+	Fournees []fourneeListee
+
 	// Suivi est le fragment vivant que la confirmation porte, et il n'est
 	// rempli que par elle : c'est le point d'accroche par lequel la
 	// progression, puis le rapport, prennent la place de « lot lancé ».
 	Suivi *donneesSuivi
 }
 
-// brancheLImportEnLot pose les trois routes de la fournée : la saisie, le
-// lancement, et le suivi (rapport.go).
+// brancheLImportEnLot pose les quatre routes de la fournée : la saisie, le
+// lancement, le suivi et la reprise d'une adresse en échec (rapport.go).
 //
 // Toutes derrière exigeUneSession, comme les routes du formulaire : elles
 // rendent des pages et écrivent en base, et le contrôle passe avant la lecture
-// de la saisie comme avant celle du lot.
+// de la saisie comme avant celle du lot. Les deux POST portent en plus le
+// contrôle anti-rejeu, comme tous les POST du produit.
 func brancheLImportEnLot(routeur *router.Router[*core.RequestEvent]) {
 	routeur.GET(cheminDuLot, pageImportEnLot).Bind(exigeUneSession())
 	routeur.POST(cheminDuLot, lanceLeLot).Bind(exigeLeJetonAntiRejeu(), exigeUneSession(),
 		rendLeDepassementEnHTML("patachooDepassementLot", rendLeDepassementDuLot))
 	routeur.GET(cheminDuSuivi, suiviDuLot).Bind(exigeUneSession())
+	routeur.POST(cheminDeLaReprise, basculeLaReprise).Bind(exigeLeJetonAntiRejeu(), exigeUneSession())
 }
 
 // pageImportEnLot rend la page de saisie vide.
@@ -125,11 +153,65 @@ func rendLaSaisie(e *core.RequestEvent, saisie, message string) error {
 // Le dépassement du plafond en a besoin : un refus du limiteur rendu 200 ferait
 // passer pour une page valide ce que le protocole doit signaler comme un refus.
 func rendLaSaisieAvecStatut(e *core.RequestEvent, statut int, saisie, message string) error {
+	fournees, err := lesFourneesDe(e.App, e.Auth)
+	if err != nil {
+		return err
+	}
+
 	return rendreAvecStatut(e, statut, "import-lot.html", "import-lot-corps.html", &donneesLot{
 		donneesPage: donneesPage{Titre: "Import en lot — Patachoo", Message: message},
 		Disclaimer:  disclaimerDuLot,
 		Saisie:      saisie,
+		Fournees:    fournees,
 	})
+}
+
+// lesFourneesDe rend les dernières fournées d'un compte, de la plus récente à
+// la plus ancienne.
+//
+// Le filtre porte sur l'auteur, et c'est lui qui tient la règle d'accès : la
+// liste des URLs soumises par un compte est à lui, et ces collections n'ont
+// aucune règle de collection pour le dire à notre place — elles sont fermées à
+// l'API REST, et notre code Go ne les traverserait pas de toute façon.
+//
+// e.Auth est lu sans garde, comme dans leLotDuCompte : les deux chemins qui
+// mènent ici passent exigeUneSession, et le rattrapage du dépassement
+// (debit.go) n'est armé que sur une règle d'audience « @auth » — un visiteur ne
+// l'atteint pas.
+//
+// Le tag est relu fournée par fournée, par la fonction qui le relit déjà pour
+// le rapport : vingt lectures bornées, et surtout la même réaction qu'ailleurs
+// au tag supprimé depuis l'administration — une absence, pas une panne.
+func lesFourneesDe(app core.App, compte *core.Record) ([]fourneeListee, error) {
+	lots, err := app.FindRecordsByFilter("imports", "created_by = {:compte}", "-created",
+		fourneesListeesAuPlus, 0, dbx.Params{"compte": compte.Id})
+	if err != nil {
+		return nil, fmt.Errorf("fournées de %s : %w", compte.Id, err)
+	}
+
+	listees := make([]fourneeListee, 0, len(lots))
+	for _, lot := range lots {
+		tag, err := tagDuLot(app, lot)
+		if err != nil {
+			return nil, err
+		}
+		listees = append(listees, fourneeListee{
+			Lien: lienDuSuivi(lot.Id),
+			Date: dateEnFrancais(lot.GetDateTime("created")),
+			Etat: etatAffiche(lot),
+			Tag:  tag,
+		})
+	}
+	return listees, nil
+}
+
+// etatAffiche dit, en français, où en est une fournée. Deux états et pas
+// davantage : c'est ce que porte imports.status.
+func etatAffiche(lot *core.Record) string {
+	if lot.GetString("status") == statutTermine {
+		return "terminée"
+	}
+	return "en cours"
 }
 
 // rendLeDepassementDuLot est ce que rendLeDepassementEnHTML rend quand le

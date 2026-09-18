@@ -557,3 +557,48 @@ footer {
 .cause {
 	color: #6b675f;
 }
+
+/* Une adresse reprise : l'utilisateur a déclaré s'en être occupé. Atténuée et
+   non barrée — elle reste en échec, et reste à recopier dans l'import
+   unitaire. */
+.reprise {
+	color: #6b675f;
+}
+
+/* Le compte des reprises sur le total des échecs, au-dessus de la liste :
+   c'est ce qui reste à faire, d'un coup d'œil, et c'est ce qu'on vient relire
+   en revenant sur la page. */
+.reprises {
+	margin: 0.4rem 0 0.8rem;
+	font-size: 1.1rem;
+}
+
+/* La case d'une ligne reste sur la ligne : un formulaire est un bloc, et
+   l'empilerait sinon sous la cause. */
+.bascule-reprise {
+	display: inline;
+	margin-left: 0.5rem;
+}
+
+/* La liste des fournées, sous le formulaire de saisie. Détachée par un trait,
+   comme les notes de cuisine sous une recette : c'est le même geste — ce qui a
+   déjà été fait, sous ce qu'on est en train de faire. */
+.fournees {
+	margin-top: 2.5rem;
+	border-top: 1px solid var(--trait);
+}
+
+.liste-fournees {
+	margin: 0;
+	padding-left: 1.2rem;
+}
+
+.fournee-listee {
+	margin-bottom: 0.3rem;
+}
+
+/* Un compte qui n'a encore rien lancé lit une phrase : une section vide passe
+   pour une panne. */
+.aucune-fournee {
+	color: #6b675f;
+}

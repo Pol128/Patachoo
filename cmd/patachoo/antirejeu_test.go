@@ -13,6 +13,8 @@ import (
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/router"
+
+	"github.com/Pol128/Patachoo/recuperation"
 )
 
 // --- Les deux moitiés de la double soumission ------------------------------
@@ -59,7 +61,7 @@ var champHiddenDuJeton = regexp.MustCompile(
 
 // --- Le montage des requêtes ----------------------------------------------
 
-// postDeTest décrit l'une des onze routes POST du produit : son chemin, la
+// postDeTest décrit l'une des douze routes POST du produit : son chemin, la
 // saisie qu'un navigateur y enverrait, et l'encodage du formulaire qui la sert.
 type postDeTest struct {
 	nom       string
@@ -123,13 +125,13 @@ func joueLePost(t *testing.T, mux http.Handler, p postDeTest, session *http.Cook
 	return rec
 }
 
-// lesOnzePost rend les onze routes POST du produit, nommément, dans l'ordre où
-// brancheLesRoutes les pose.
+// lesDouzePost rend les douze routes POST du produit, nommément, dans l'ordre
+// où brancheLesRoutes les pose.
 //
 // Nommément, et non par une lecture du routeur : une route ajoutée demain
 // n'apparaîtrait pas ici, et c'est précisément ce que le relevé doit faire
 // remarquer à celui qui l'ajoute.
-func lesOnzePost(recette, note *core.Record) []postDeTest {
+func lesDouzePost(recette, note, ligne *core.Record) []postDeTest {
 	notes := "/recettes/" + recette.Id + "/commentaires"
 	return []postDeTest{
 		{nom: "connexion", cible: "/connexion", sansSession: true,
@@ -149,27 +151,31 @@ func lesOnzePost(recette, note *core.Record) []postDeTest {
 			champs: url.Values{"url": {"https://exemple.fr/recette"}}},
 		{nom: "lancement d'un lot", cible: cheminDuLot,
 			champs: url.Values{"urls": {"https://exemple.fr/recette"}}},
+		{nom: "reprise d'une adresse en échec",
+			cible: lienDeLaReprise(ligne.GetString("batch"), ligne.Id)},
 		{nom: "ajout d'une note", cible: notes, champs: corpsDe("Trop cuit de dix minutes.")},
 		{nom: "modification d'une note", cible: notes + "/" + note.Id, champs: corpsDe("Finalement, très bien.")},
 		{nom: "suppression d'une note", cible: notes + "/" + note.Id + "/supprimer"},
 	}
 }
 
-// atelierAntiRejeu monte le carnet, une recette signée du compte de la session
-// et une note à lui : les onze routes ont ainsi toutes une cible réelle, et un
-// refus qui viendrait d'un identifiant inconnu ne pourrait pas se confondre
-// avec celui du jeton.
+// atelierAntiRejeu monte le carnet, une recette signée du compte de la session,
+// une note à lui et une fournée à lui dont une adresse a échoué : les douze
+// routes ont ainsi toutes une cible réelle, et un refus qui viendrait d'un
+// identifiant inconnu ne pourrait pas se confondre avec celui du jeton.
 //
-// Le réseau est piégé : aucune des onze ne doit sortir, et l'import est la
+// Le réseau est piégé : aucune des douze ne doit sortir, et l'import est la
 // seule qui le ferait si le gestionnaire s'exécutait.
-func atelierAntiRejeu(t *testing.T) (core.App, http.Handler, *http.Cookie, *core.Record, *core.Record) {
+func atelierAntiRejeu(t *testing.T) (core.App, http.Handler, *http.Cookie, *core.Record, *core.Record, *core.Record) {
 	t.Helper()
 
 	app, mux, cookie := atelierDeLot(t)
 	ouvreLInscription(t, app)
 	recette := laSienne(t, app, nil)
 	note := noteEnBase(t, app, recette, compteDeLaSession(t, app), "Une note.")
-	return app, mux, cookie, recette, note
+	lot := clot(t, app, lotEnBase(t, app, leCompteDeLaSession(t, app),
+		ligneVoulue{url: "https://exemple.fr/muette", statut: statutEchec, cause: recuperation.DelaiDepasse}))
+	return app, mux, cookie, recette, note, laLigne(t, app, lot, "https://exemple.fr/muette")
 }
 
 // --- Le refus, route par route --------------------------------------------
@@ -177,10 +183,10 @@ func atelierAntiRejeu(t *testing.T) (core.App, http.Handler, *http.Cookie, *core
 // Un POST sans champ _antirejeu est refusé par un 403, quelle que soit la
 // route : c'est la page tierce qui soumet toute seule un formulaire qu'elle a
 // écrit, et qui n'a aucun moyen de connaître le jeton.
-func TestLesOnzeRoutesPostRefusentUnePostSansJeton(t *testing.T) {
-	app, mux, session, recette, note := atelierAntiRejeu(t)
+func TestLesDouzeRoutesPostRefusentUnePostSansJeton(t *testing.T) {
+	app, mux, session, recette, note, ligne := atelierAntiRejeu(t)
 
-	for _, p := range lesOnzePost(recette, note) {
+	for _, p := range lesDouzePost(recette, note, ligne) {
 		t.Run(p.nom, func(t *testing.T) {
 			rec := joueLePost(t, mux, p, session, "", jetonDeTest)
 
@@ -208,10 +214,10 @@ func TestLesOnzeRoutesPostRefusentUnePostSansJeton(t *testing.T) {
 // façon : c'est le jeton d'une autre session, ou celui qu'un voisin same-site
 // aurait fourni sans pouvoir fournir le cookie que le préfixe __Host- lui
 // interdit.
-func TestLesOnzeRoutesPostRefusentUnJetonQuiNeCorrespondPas(t *testing.T) {
-	_, mux, session, recette, note := atelierAntiRejeu(t)
+func TestLesDouzeRoutesPostRefusentUnJetonQuiNeCorrespondPas(t *testing.T) {
+	_, mux, session, recette, note, ligne := atelierAntiRejeu(t)
 
-	for _, p := range lesOnzePost(recette, note) {
+	for _, p := range lesDouzePost(recette, note, ligne) {
 		t.Run(p.nom, func(t *testing.T) {
 			rec := joueLePost(t, mux, p, session, "le-jeton-d-une-autre-session", jetonDeTest)
 
@@ -411,7 +417,10 @@ func jetonDuFormulaire(t *testing.T, corps string) string {
 // Le décompte se fait sur le système de fichiers embarqué, celui qui part dans
 // le binaire : un gabarit oublié de l'embed ne serait pas servi.
 func TestChaqueFormulaireEnPostPorteLeChampAntiRejeu(t *testing.T) {
-	const attendus = 10
+	// Onze depuis PATA-119 : la bascule de reprise ajoute un formulaire au
+	// gabarit du suivi. Un seul, bien que le rapport le rende une fois par
+	// adresse en échec — le décompte porte sur les gabarits, pas sur le rendu.
+	const attendus = 11
 
 	var formulaires, champs int
 	err := fs.WalkDir(vues, ".", func(chemin string, entree fs.DirEntry, err error) error {
@@ -447,7 +456,7 @@ func TestChaqueFormulaireEnPostPorteLeChampAntiRejeu(t *testing.T) {
 // en page elle-même — la déconnexion vit dans son en-tête, sous un {{with}}, et
 // c'est le piège que le déroulé signale.
 func TestChaquePageRendLeJetonDeSonCookie(t *testing.T) {
-	_, mux, session, recette, _ := atelierAntiRejeu(t)
+	_, mux, session, recette, _, ligne := atelierAntiRejeu(t)
 
 	pages := []struct {
 		nom         string
@@ -462,6 +471,9 @@ func TestChaquePageRendLeJetonDeSonCookie(t *testing.T) {
 		{nom: "suppression d'une recette", cible: "/recettes/" + recette.Id + "/supprimer", avecSession: true},
 		{nom: "import unitaire", cible: "/recettes/importer", avecSession: true},
 		{nom: "import en lot", cible: cheminDuLot, avecSession: true},
+		// Le rapport d'une fournée porte un formulaire par adresse en échec,
+		// et c'est la seule page dont les formulaires se comptent par ligne.
+		{nom: "rapport d'une fournée", cible: lienDuSuivi(ligne.GetString("batch")), avecSession: true},
 		{nom: "notes de la fiche", cible: "/recettes/" + recette.Id, avecSession: true},
 	}
 
@@ -597,7 +609,7 @@ func TestLAPIRestNexigeAucunJeton(t *testing.T) {
 //
 // Ce n'est pas un état que le produit atteint : brancheLesRoutes pose les deux
 // middlewares ensemble. C'est celui qu'un branchement futur pourrait
-// atteindre, et il s'ouvrirait alors sans bruit sur les onze routes — la
+// atteindre, et il s'ouvrirait alors sans bruit sur les douze routes — la
 // comparaison de deux chaînes vides est vraie. La route témoin reproduit
 // exactement ce cas sur le montage réel, en écartant d'elle le seul middleware
 // de pose.

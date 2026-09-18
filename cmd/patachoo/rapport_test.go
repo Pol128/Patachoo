@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"net/http/httptest"
 	"regexp"
 	"strings"
 	"testing"
@@ -99,7 +100,11 @@ func suivi(t *testing.T, mux http.Handler, cookie *http.Cookie, lot *core.Record
 
 // motifDUnEchec lit une ligne de la liste des échecs : l'adresse, puis le
 // libellé de sa cause.
-var motifDUnEchec = regexp.MustCompile(`<li class="echec"><code>(.*?)</code> <span class="cause">(.*?)</span></li>`)
+//
+// La classe est lue par préfixe, et non à l'identique : une ligne reprise porte
+// « echec reprise ». Et le motif ne s'arrête plus au </li>, puisque la ligne
+// porte désormais son formulaire de bascule derrière sa cause.
+var motifDUnEchec = regexp.MustCompile(`<li class="echec[^"]*"><code>(.*?)</code> <span class="cause">(.*?)</span>`)
 
 // echecsRendus rend, pour chaque adresse listée, le libellé affiché à côté.
 func echecsRendus(corps string) map[string]string {
@@ -602,5 +607,266 @@ func TestLaProgressionSeRendEncoreSansLaRecetteEntree(t *testing.T) {
 	}
 	if strings.Contains(corps, "Dernière recette entrée") {
 		t.Errorf("la progression nomme une recette supprimée :\n%s", corps)
+	}
+}
+
+// --- La reprise d'une adresse en échec --------------------------------------
+//
+// Le rapport devient une liste de choses à faire : chaque adresse qui n'a pas
+// abouti porte une case que l'utilisateur coche lui-même, et qu'il retrouve
+// cochée en revenant sur la page. « Reprise », et jamais « traitée » —
+// traitees désigne déjà, plus haut dans ce fichier, les lignes dont l'ouvrier
+// connaît le sort.
+
+// bascule poste la case d'une ligne, comme le bouton du rapport le fait.
+//
+// Par posteNote, qui n'a de la note que son nom : c'est l'envoi urlencodé d'un
+// formulaire sans téléversement, et c'en est un.
+func bascule(t *testing.T, mux http.Handler, cookie *http.Cookie, lot, ligne string, entetes map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	return posteNote(t, mux, lienDeLaReprise(lot, ligne), cookie, nil, entetes)
+}
+
+// enHTMX est ce qu'un navigateur muni de HTMX ajoute à sa requête.
+var enHTMX = map[string]string{"HX-Request": "true"}
+
+// laLigne rend la ligne du lot qui porte cette adresse.
+func laLigne(t *testing.T, app core.App, lot *core.Record, adresse string) *core.Record {
+	t.Helper()
+
+	for _, ligne := range lignesDuLot(t, app, lot) {
+		if ligne.GetString("url") == adresse {
+			return ligne
+		}
+	}
+	t.Fatalf("aucune ligne %q dans le lot %s", adresse, lot.Id)
+	return nil
+}
+
+// repriseEnBase relit l'état coché d'une ligne : une assertion sur un
+// enregistrement gardé en mémoire ne dirait rien de ce qui est écrit.
+func repriseEnBase(t *testing.T, app core.App, ligne *core.Record) bool {
+	t.Helper()
+
+	relue, err := app.FindRecordById("import_urls", ligne.Id)
+	if err != nil {
+		t.Fatalf("relecture de la ligne %s : %v", ligne.Id, err)
+	}
+	return relue.GetBool("handled")
+}
+
+// motifDeLaLigneDEchec capte la classe d'une ligne en échec et son adresse :
+// c'est par la classe que le rendu dit qu'elle a été reprise.
+var motifDeLaLigneDEchec = regexp.MustCompile(`<li class="(echec[^"]*)"><code>(.*?)</code>`)
+
+// reprisesRendues dit, pour chaque adresse listée, si le rendu la marque
+// reprise.
+func reprisesRendues(corps string) map[string]bool {
+	rendues := map[string]bool{}
+	for _, trouve := range motifDeLaLigneDEchec.FindAllStringSubmatch(corps, -1) {
+		rendues[trouve[2]] = strings.Contains(trouve[1], "reprise")
+	}
+	return rendues
+}
+
+// Cocher, recharger, décocher, recharger : la bascule marche dans les deux
+// sens et l'état survit à la page. C'est tout ce que la tâche demande — sans
+// la persistance, la case ne serait qu'un ornement.
+func TestUneAdresseEnEchecSeCocheEtSeDecoche(t *testing.T) {
+	app, mux, cookie := atelierDeLot(t)
+	lot := clot(t, app, lotEnBase(t, app, leCompteDeLaSession(t, app),
+		ligneVoulue{url: "https://exemple.fr/muette", statut: statutEchec, cause: recuperation.DelaiDepasse},
+		ligneVoulue{url: "https://exemple.fr/nue", statut: statutEchec, cause: jsonld.AucunBalisage},
+	))
+	ligne := laLigne(t, app, lot, "https://exemple.fr/muette")
+
+	if rec := bascule(t, mux, cookie, lot.Id, ligne.Id, enHTMX); rec.Code != http.StatusOK {
+		t.Fatalf("statut %d à la bascule, attendu %d — corps :\n%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !repriseEnBase(t, app, ligne) {
+		t.Errorf("la ligne n'est pas reprise en base après la bascule")
+	}
+
+	rendues := reprisesRendues(suivi(t, mux, cookie, lot))
+	if !rendues["https://exemple.fr/muette"] {
+		t.Errorf("la ligne cochée n'est pas marquée reprise au rechargement : %v", rendues)
+	}
+	// La bascule ne coche qu'elle : une case qui en cocherait deux ne dirait
+	// plus ce qui reste à faire.
+	if rendues["https://exemple.fr/nue"] {
+		t.Errorf("la bascule a coché une autre ligne : %v", rendues)
+	}
+
+	if rec := bascule(t, mux, cookie, lot.Id, ligne.Id, enHTMX); rec.Code != http.StatusOK {
+		t.Fatalf("statut %d au décochage, attendu %d", rec.Code, http.StatusOK)
+	}
+	if repriseEnBase(t, app, ligne) {
+		t.Errorf("la ligne est encore reprise en base après le décochage")
+	}
+	if reprisesRendues(suivi(t, mux, cookie, lot))["https://exemple.fr/muette"] {
+		t.Errorf("la ligne décochée est encore marquée reprise au rechargement")
+	}
+}
+
+// Le rapport dit d'un coup d'œil ce qui reste à faire : le nombre de lignes
+// cochées sur le total des échecs. Sans ce compte, il faut parcourir la liste
+// pour savoir où on en est.
+func TestLeRapportCompteLesReprisesSurLeTotalDesEchecs(t *testing.T) {
+	app, mux, cookie := atelierDeLot(t)
+	lot := clot(t, app, lotEnBase(t, app, leCompteDeLaSession(t, app),
+		ligneVoulue{url: "https://exemple.fr/reussie", statut: statutImportee},
+		ligneVoulue{url: "https://exemple.fr/1", statut: statutEchec, cause: recuperation.Injoignable},
+		ligneVoulue{url: "https://exemple.fr/2", statut: statutEchec, cause: recuperation.DelaiDepasse},
+		ligneVoulue{url: "https://exemple.fr/3", statut: statutEchec, cause: jsonld.AucunBalisage},
+	))
+
+	if corps := suivi(t, mux, cookie, lot); !strings.Contains(corps, "<strong>0</strong> reprises sur <strong>3</strong>") {
+		t.Errorf("le rapport ne compte pas 0 reprises sur 3 :\n%s", corps)
+	}
+
+	bascule(t, mux, cookie, lot.Id, laLigne(t, app, lot, "https://exemple.fr/2").Id, enHTMX)
+
+	// Le total reste celui des échecs, et non celui de la fournée : l'adresse
+	// importée n'a pas de case et n'a rien à faire dans ce compte.
+	if corps := suivi(t, mux, cookie, lot); !strings.Contains(corps, "<strong>1</strong> reprises sur <strong>3</strong>") {
+		t.Errorf("le rapport ne compte pas 1 reprise sur 3 :\n%s", corps)
+	}
+}
+
+// La case marche sans JavaScript : le POST d'un formulaire ordinaire rend le
+// document entier, comme le reste du produit. HTMX n'évite que le
+// rechargement.
+func TestLaBasculeSeRendEnPageEntiereSansHTMX(t *testing.T) {
+	app, mux, cookie := atelierDeLot(t)
+	lot := clot(t, app, lotEnBase(t, app, leCompteDeLaSession(t, app),
+		ligneVoulue{url: "https://exemple.fr/muette", statut: statutEchec, cause: recuperation.DelaiDepasse},
+	))
+	ligne := laLigne(t, app, lot, "https://exemple.fr/muette")
+
+	rec := bascule(t, mux, cookie, lot.Id, ligne.Id, nil)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("statut %d, attendu %d — corps :\n%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	corps := rec.Body.String()
+	if !strings.Contains(corps, "<!doctype html>") {
+		t.Errorf("la bascule sans HTMX ne rend pas une page entière :\n%s", corps)
+	}
+	if !reprisesRendues(corps)["https://exemple.fr/muette"] {
+		t.Errorf("la page rendue ne marque pas la ligne reprise :\n%s", corps)
+	}
+}
+
+// Le formulaire de chaque ligne porte le champ caché : sans lui, le contrôle
+// anti-rejeu refuserait la soumission du gabarit que nous rendons nous-mêmes.
+func TestChaqueLigneEnEchecPorteSonFormulaireDeReprise(t *testing.T) {
+	app, mux, cookie := atelierDeLot(t)
+	lot := clot(t, app, lotEnBase(t, app, leCompteDeLaSession(t, app),
+		ligneVoulue{url: "https://exemple.fr/muette", statut: statutEchec, cause: recuperation.DelaiDepasse},
+	))
+	ligne := laLigne(t, app, lot, "https://exemple.fr/muette")
+
+	corps := suivi(t, mux, cookie, lot)
+
+	lien := lienDeLaReprise(lot.Id, ligne.Id)
+	exigeContient(t, corps,
+		`action="`+lien+`"`,
+		`hx-post="`+lien+`"`,
+		`<input type="hidden" name="_antirejeu"`,
+	)
+}
+
+// --- Ce que la reprise refuse -----------------------------------------------
+
+// La fournée d'un autre compte ne se coche pas, et le refus est une 404 :
+// l'existence du lot d'autrui n'est pas une information à donner par un code de
+// statut (DOD.md §3, « Règles d'accès »).
+func TestLaRepriseRefuseLeLotDunAutreCompte(t *testing.T) {
+	app, mux, cookie := atelierDeLot(t)
+	autre := creeCompte(t, app, "autre@exemple.fr", "Autre")
+	lot := clot(t, app, lotEnBase(t, app, autre,
+		ligneVoulue{url: "https://exemple.fr/la-sienne", statut: statutEchec, cause: recuperation.Injoignable}))
+	ligne := laLigne(t, app, lot, "https://exemple.fr/la-sienne")
+
+	rec := bascule(t, mux, cookie, lot.Id, ligne.Id, enHTMX)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("statut %d sur le lot d'un autre, attendu %d", rec.Code, http.StatusNotFound)
+	}
+	if repriseEnBase(t, app, ligne) {
+		t.Errorf("la ligne d'un autre compte a été cochée")
+	}
+}
+
+// Une ligne qui n'appartient pas au lot cité est refusée de même : l'URL doit
+// désigner ce qu'elle prétend désigner, sans quoi le contrôle de propriété
+// porterait sur un lot et l'écriture sur un autre.
+func TestLaRepriseRefuseUneLigneDunAutreLot(t *testing.T) {
+	app, mux, cookie := atelierDeLot(t)
+	titulaire := leCompteDeLaSession(t, app)
+	sien := clot(t, app, lotEnBase(t, app, titulaire,
+		ligneVoulue{url: "https://exemple.fr/sienne", statut: statutEchec, cause: recuperation.Injoignable}))
+	autre := clot(t, app, lotEnBase(t, app, creeCompte(t, app, "autre@exemple.fr", "Autre"),
+		ligneVoulue{url: "https://exemple.fr/ailleurs", statut: statutEchec, cause: recuperation.Injoignable}))
+	ligne := laLigne(t, app, autre, "https://exemple.fr/ailleurs")
+
+	// Le lot est bien le sien, la ligne ne l'est pas.
+	rec := bascule(t, mux, cookie, sien.Id, ligne.Id, enHTMX)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("statut %d sur une ligne hors du lot, attendu %d", rec.Code, http.StatusNotFound)
+	}
+	if repriseEnBase(t, app, ligne) {
+		t.Errorf("une ligne hors du lot cité a été cochée")
+	}
+}
+
+// Sans jeton anti-rejeu, rien n'est écrit : la bascule est un POST comme les
+// autres, et une page tierce ne doit pas pouvoir cocher à la place de
+// quelqu'un.
+func TestLaRepriseExigeLeJetonAntiRejeu(t *testing.T) {
+	app, mux, cookie := atelierDeLot(t)
+	lot := clot(t, app, lotEnBase(t, app, leCompteDeLaSession(t, app),
+		ligneVoulue{url: "https://exemple.fr/muette", statut: statutEchec, cause: recuperation.DelaiDepasse},
+	))
+	ligne := laLigne(t, app, lot, "https://exemple.fr/muette")
+
+	rec := joueLePost(t, mux, postDeTest{cible: lienDeLaReprise(lot.Id, ligne.Id)}, cookie, "", jetonDeTest)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("statut %d sans jeton, attendu %d", rec.Code, http.StatusForbidden)
+	}
+	if repriseEnBase(t, app, ligne) {
+		t.Errorf("la ligne a été cochée par un POST sans jeton")
+	}
+}
+
+// Sans session, la bascule n'écrit rien : un visiteur est renvoyé vers la
+// connexion, comme sur le suivi.
+//
+// Le statut est exigé, et non « tout sauf 200 » : sans la session, e.Auth est
+// nil et la lecture du lot paniquerait, ce qu'un middleware de PocketBase
+// rattrape en 500. Un test qui se contenterait d'un refus prendrait donc cette
+// panique pour la règle — c'est ce que la passe de sabotages de la DoD a
+// relevé.
+func TestLaRepriseExigeUneSession(t *testing.T) {
+	app, mux, _ := atelierDeLot(t)
+	lot := clot(t, app, lotEnBase(t, app, leCompteDeLaSession(t, app),
+		ligneVoulue{url: "https://exemple.fr/muette", statut: statutEchec, cause: recuperation.DelaiDepasse},
+	))
+	ligne := laLigne(t, app, lot, "https://exemple.fr/muette")
+
+	rec := bascule(t, mux, nil, lot.Id, ligne.Id, enHTMX)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Errorf("statut %d pour un visiteur, attendu %d — corps :\n%s",
+			rec.Code, http.StatusSeeOther, rec.Body.String())
+	}
+	if destination := rec.Header().Get("Location"); destination != "/connexion" {
+		t.Errorf("redirection vers %q, attendu %q", destination, "/connexion")
+	}
+	if repriseEnBase(t, app, ligne) {
+		t.Errorf("la ligne a été cochée par un visiteur")
 	}
 }

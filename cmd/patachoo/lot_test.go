@@ -9,12 +9,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/tools/types"
 )
 
 // --- Montage ---------------------------------------------------------------
@@ -920,4 +922,197 @@ func TestLaSaisieRepriseAuDepassementEstEchappee(t *testing.T) {
 	if !strings.Contains(corps, "&lt;script&gt;alert(1)&lt;/script&gt;") {
 		t.Errorf("la saisie reprise n'apparaît pas échappée :\n%s", corps)
 	}
+}
+
+// --- La liste des fournées --------------------------------------------------
+//
+// Le rapport d'une fournée est une page à part entière, mais son adresse
+// n'était affichée nulle part une fois la confirmation quittée : rien ne
+// listait les fournées d'un compte, et le chemin pour y revenir n'existait pas.
+// La liste va sous le formulaire de saisie, qui est déjà dans la barre de
+// navigation.
+
+// motifDUneFourneeListee capte une entrée de la liste : son lien, puis son
+// libellé.
+var motifDUneFourneeListee = regexp.MustCompile(`<li class="fournee-listee">(.*?)</li>`)
+
+// fourneesListees rend les entrées de la liste, dans l'ordre où la page les
+// affiche.
+func fourneesListees(corps string) []string {
+	var entrees []string
+	for _, trouve := range motifDUneFourneeListee.FindAllStringSubmatch(corps, -1) {
+		entrees = append(entrees, trouve[1])
+	}
+	return entrees
+}
+
+// pageDeSaisie rend le corps de /recettes/importer/lot.
+func pageDeSaisie(t *testing.T, mux http.Handler, cookie *http.Cookie) string {
+	t.Helper()
+
+	rec := demande(mux, cheminDuLot, cookie, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("statut %d sur la page de saisie, attendu %d", rec.Code, http.StatusOK)
+	}
+	return rec.Body.String()
+}
+
+// Chaque fournée du compte est listée avec un lien vers son rapport : c'est le
+// chemin de retour qui manquait.
+func TestLaPageDeSaisieListeLesFourneesDuCompte(t *testing.T) {
+	app, mux, cookie := atelierDeLot(t)
+	titulaire := leCompteDeLaSession(t, app)
+	premiere := lotEnBase(t, app, titulaire, ligneVoulue{url: "https://a.exemple.fr/une"})
+	seconde := clot(t, app, lotEnBase(t, app, titulaire, ligneVoulue{url: "https://b.exemple.fr/une"}))
+
+	corps := pageDeSaisie(t, mux, cookie)
+
+	entrees := fourneesListees(corps)
+	if len(entrees) != 2 {
+		t.Fatalf("%d fournées listées, attendu 2 :\n%s", len(entrees), corps)
+	}
+	for _, lot := range []*core.Record{premiere, seconde} {
+		if !strings.Contains(corps, `href="`+lienDuSuivi(lot.Id)+`"`) {
+			t.Errorf("la liste ne renvoie pas au rapport du lot %s :\n%s", lot.Id, corps)
+		}
+	}
+}
+
+// L'état de chaque fournée est dit : une fournée en cours et une fournée
+// terminée ne se relisent pas dans le même esprit.
+func TestLaListeDesFourneesDitLetatEtLeTagDeChacune(t *testing.T) {
+	app, mux, cookie := atelierDeLot(t)
+	titulaire := leCompteDeLaSession(t, app)
+	encours := lotEnBase(t, app, titulaire, ligneVoulue{url: "https://a.exemple.fr/une"})
+	terminee := clot(t, app, lotEnBase(t, app, titulaire, ligneVoulue{url: "https://b.exemple.fr/une"}))
+
+	corps := pageDeSaisie(t, mux, cookie)
+
+	entrees := map[string]string{}
+	for _, entree := range fourneesListees(corps) {
+		for _, lot := range []*core.Record{encours, terminee} {
+			if strings.Contains(entree, lienDuSuivi(lot.Id)) {
+				entrees[lot.Id] = entree
+			}
+		}
+	}
+
+	if etat := entrees[encours.Id]; !strings.Contains(etat, "en cours") {
+		t.Errorf("la fournée en cours ne le dit pas : %q", etat)
+	}
+	if etat := entrees[terminee.Id]; !strings.Contains(etat, "terminée") {
+		t.Errorf("la fournée terminée ne le dit pas : %q", etat)
+	}
+
+	// Le tag est ce sous quoi les recettes de la fournée se retrouvent : sans
+	// lui, deux fournées du même jour ne se distinguent pas.
+	for _, lot := range []*core.Record{encours, terminee} {
+		tag, err := app.FindRecordById("tags", lot.GetString("tag"))
+		if err != nil {
+			t.Fatalf("tag du lot %s : %v", lot.Id, err)
+		}
+		if !strings.Contains(entrees[lot.Id], html.EscapeString(tag.GetString("name"))) {
+			t.Errorf("la fournée %s n'est pas nommée par son tag %q : %q",
+				lot.Id, tag.GetString("name"), entrees[lot.Id])
+		}
+	}
+}
+
+// La fournée d'un autre compte n'apparaît jamais. Le test est écrit dans le
+// sens du refus (DOD.md §3, « Règles d'accès ») : la liste des URLs soumises
+// par un compte est à lui.
+func TestLaListeDesFourneesEcarteCellesDunAutreCompte(t *testing.T) {
+	app, mux, cookie := atelierDeLot(t)
+	autre := creeCompte(t, app, "autre@exemple.fr", "Autre")
+	sienne := lotEnBase(t, app, autre, ligneVoulue{url: "https://exemple.fr/la-sienne"})
+	mienne := lotEnBase(t, app, leCompteDeLaSession(t, app), ligneVoulue{url: "https://exemple.fr/la-mienne"})
+
+	corps := pageDeSaisie(t, mux, cookie)
+
+	if !strings.Contains(corps, lienDuSuivi(mienne.Id)) {
+		t.Errorf("la liste n'affiche pas la fournée du compte connecté :\n%s", corps)
+	}
+	if strings.Contains(corps, lienDuSuivi(sienne.Id)) {
+		t.Errorf("la liste affiche la fournée d'un autre compte :\n%s", corps)
+	}
+	if entrees := fourneesListees(corps); len(entrees) != 1 {
+		t.Errorf("%d fournées listées, attendu 1 : %v", len(entrees), entrees)
+	}
+}
+
+// Un compte sans fournée lit une phrase qui le dit, et non une liste vide : une
+// section sans contenu passe pour une panne.
+func TestUnCompteSansFourneeLeLitAuLieuDuneListeVide(t *testing.T) {
+	_, mux, cookie := atelierDeLot(t)
+
+	corps := pageDeSaisie(t, mux, cookie)
+
+	if entrees := fourneesListees(corps); len(entrees) != 0 {
+		t.Fatalf("%d fournées listées pour un compte qui n'en a aucune : %v", len(entrees), entrees)
+	}
+	if !strings.Contains(corps, "aucune fournée") {
+		t.Errorf("la page ne dit pas que le compte n'a lancé aucune fournée :\n%s", corps)
+	}
+}
+
+// De la plus récente à la plus ancienne : c'est celle qu'on vient de lancer
+// qu'on revient lire, pas celle du mois dernier.
+func TestLaListeDesFourneesVaDeLaPlusRecenteALaPlusAncienne(t *testing.T) {
+	app, mux, cookie := atelierDeLot(t)
+	titulaire := leCompteDeLaSession(t, app)
+
+	veille := dateLeLot(t, app, lotEnBase(t, app, titulaire, ligneVoulue{url: "https://a.exemple.fr/une"}),
+		time.Now().Add(-48*time.Hour))
+	hier := dateLeLot(t, app, lotEnBase(t, app, titulaire, ligneVoulue{url: "https://b.exemple.fr/une"}),
+		time.Now().Add(-24*time.Hour))
+	aujourdhui := dateLeLot(t, app, lotEnBase(t, app, titulaire, ligneVoulue{url: "https://c.exemple.fr/une"}),
+		time.Now())
+
+	entrees := fourneesListees(pageDeSaisie(t, mux, cookie))
+	if len(entrees) != 3 {
+		t.Fatalf("%d fournées listées, attendu 3 : %v", len(entrees), entrees)
+	}
+
+	for rang, lot := range []*core.Record{aujourdhui, hier, veille} {
+		if !strings.Contains(entrees[rang], lienDuSuivi(lot.Id)) {
+			t.Errorf("la fournée de rang %d n'est pas %s : %q", rang, lot.Id, entrees[rang])
+		}
+	}
+}
+
+// Bornée aux vingt dernières, sans pagination : un compte qui a lancé cent
+// fournées n'a pas à faire défiler cent lignes pour atteindre son formulaire.
+func TestLaListeDesFourneesSarreteAVingt(t *testing.T) {
+	app, mux, cookie := atelierDeLot(t)
+	titulaire := leCompteDeLaSession(t, app)
+
+	for rang := 0; rang <= fourneesListeesAuPlus; rang++ {
+		dateLeLot(t, app,
+			lotEnBase(t, app, titulaire, ligneVoulue{url: fmt.Sprintf("https://exemple.fr/%d", rang)}),
+			time.Now().Add(time.Duration(rang)*time.Minute))
+	}
+
+	entrees := fourneesListees(pageDeSaisie(t, mux, cookie))
+	if len(entrees) != fourneesListeesAuPlus {
+		t.Errorf("%d fournées listées, attendu %d", len(entrees), fourneesListeesAuPlus)
+	}
+}
+
+// dateLeLot fixe la date de création d'un lot.
+//
+// Par SetRaw, comme les dates de noteEnBase : created est un autodate, et
+// PocketBase ne respecte une date choisie que par là. Sans ça, trois lots
+// écrits dans la même milliseconde sortiraient dans un ordre que rien ne fixe.
+func dateLeLot(t *testing.T, app core.App, lot *core.Record, quand time.Time) *core.Record {
+	t.Helper()
+
+	date, err := types.ParseDateTime(quand)
+	if err != nil {
+		t.Fatalf("date %v : %v", quand, err)
+	}
+	lot.SetRaw("created", date)
+	if err := app.Save(lot); err != nil {
+		t.Fatalf("datation du lot %s : %v", lot.Id, err)
+	}
+	return lot
 }
