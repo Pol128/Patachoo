@@ -240,7 +240,7 @@ func seConnecteDepuis(t *testing.T, mux http.Handler, ip, courriel, motDePasse s
 // dans la chaîne de requête : le contrôle le lit par valeursSoumises, qui rend
 // PostForm et ignore donc l'URL. Sans lui, la requête serait refusée en 403
 // avant la route, et ce test ne dirait plus rien de ce qu'elle lit — seulement
-// qu'un POST sans jeton ne passe pas, ce que TestLesOnzeRoutesPostRefusentUnePostSansJeton
+// qu'un POST sans jeton ne passe pas, ce que TestLesDouzeRoutesPostRefusentUnePostSansJeton
 // couvre déjà.
 func seConnecteParLaChaineDeRequete(t *testing.T, mux http.Handler, ip, courriel, motDePasse string) *httptest.ResponseRecorder {
 	t.Helper()
