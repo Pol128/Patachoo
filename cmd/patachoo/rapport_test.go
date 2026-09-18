@@ -842,8 +842,14 @@ func TestLaRepriseExigeLeJetonAntiRejeu(t *testing.T) {
 	}
 }
 
-// Sans session, la bascule n'écrit rien : c'est le premier contrôle, avant même
-// la lecture du lot.
+// Sans session, la bascule n'écrit rien : un visiteur est renvoyé vers la
+// connexion, comme sur le suivi.
+//
+// Le statut est exigé, et non « tout sauf 200 » : sans la session, e.Auth est
+// nil et la lecture du lot paniquerait, ce qu'un middleware de PocketBase
+// rattrape en 500. Un test qui se contenterait d'un refus prendrait donc cette
+// panique pour la règle — c'est ce que la passe de sabotages de la DoD a
+// relevé.
 func TestLaRepriseExigeUneSession(t *testing.T) {
 	app, mux, _ := atelierDeLot(t)
 	lot := clot(t, app, lotEnBase(t, app, leCompteDeLaSession(t, app),
@@ -853,8 +859,12 @@ func TestLaRepriseExigeUneSession(t *testing.T) {
 
 	rec := bascule(t, mux, nil, lot.Id, ligne.Id, enHTMX)
 
-	if rec.Code == http.StatusOK {
-		t.Errorf("la bascule a été servie à un visiteur :\n%s", rec.Body.String())
+	if rec.Code != http.StatusSeeOther {
+		t.Errorf("statut %d pour un visiteur, attendu %d — corps :\n%s",
+			rec.Code, http.StatusSeeOther, rec.Body.String())
+	}
+	if destination := rec.Header().Get("Location"); destination != "/connexion" {
+		t.Errorf("redirection vers %q, attendu %q", destination, "/connexion")
 	}
 	if repriseEnBase(t, app, ligne) {
 		t.Errorf("la ligne a été cochée par un visiteur")
