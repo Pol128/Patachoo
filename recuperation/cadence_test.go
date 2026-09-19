@@ -392,3 +392,43 @@ func TestSansBorneLAttenteDeCadenceNEstPasInterrompue(t *testing.T) {
 		}
 	}
 }
+
+// TestLaBorneDeCadenceEstCelleDeLAppelEntier : ce que l'appelant accepte
+// d'attendre son tour vaut pour l'appel entier — robots.txt et page confondus
+// —, et non pour chacun de ses deux échanges.
+//
+// C'est le même raisonnement que pour le budget de temps réseau, et la doc de
+// echange l'écrit déjà pour lui : une borne par échange double le pire cas, et
+// c'est l'utilisateur de l'import unitaire qui le paie, devant un écran qui
+// tourne. Ici, chaque échange part avec ce qu'il reste de la borne, et non avec
+// la borne entière.
+//
+// Deux attentes de trois millisecondes sous une borne de cinq : chacune passe
+// prise isolément, et c'est leur somme que la borne refuse.
+func TestLaBorneDeCadenceEstCelleDeLAppelEntier(t *testing.T) {
+	const attenteParEchange = 3 * time.Millisecond
+	const borne = 5 * time.Millisecond
+
+	srv := serveurRobots(t, "User-agent: *\nDisallow: /prive\n", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, "page")
+	})
+	rythme := &cadenceOccupee{attente: attenteParEchange}
+
+	_, err := recupere(t, srv.URL+"/recettes/tarte", autorise(srv),
+		AvecCadence(rythme), AvecAttenteMaxDeCadence(borne))
+
+	if cause := echec(t, err).Cause; cause != AttenteDeCadence {
+		t.Errorf("cause %q, attendu %q", cause, AttenteDeCadence)
+	}
+	bornes := rythme.bornesRecues()
+	if len(bornes) != 2 {
+		t.Fatalf("%d tours demandés, attendu 2 — le robots.txt, puis la page : %v", len(bornes), bornes)
+	}
+	if bornes[0] != borne {
+		t.Errorf("borne du premier échange %v, attendu %v : l'appel n'a encore rien attendu", bornes[0], borne)
+	}
+	if reste := borne - attenteParEchange; bornes[1] != reste {
+		t.Errorf("borne du second échange %v, attendu %v — ce qu'il reste de la borne après le premier échange, "+
+			"faute de quoi le pire cas de l'appel vaut deux fois la borne", bornes[1], reste)
+	}
+}

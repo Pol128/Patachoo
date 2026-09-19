@@ -375,3 +375,82 @@ func TestLeCrawlDelayPlusLongQueLaBorneNeCoutePasLaRecette(t *testing.T) {
 		t.Errorf("image %q enregistrée, attendue aucune : la borne n'a pas tenu sur le Crawl-delay de l'hôte", image)
 	}
 }
+
+// --- La borne, sur l'appel entier ------------------------------------------
+
+// attenteParEchange est ce que chacun des deux échanges d'un appel attendra
+// dans le test qui suit : sous la borne pris isolément, au-dessus une fois
+// additionnés. C'est exactement la configuration qui distingue une borne par
+// échange d'une borne par appel — et la seule où les deux se lisent.
+const attenteParEchange = 4 * time.Second
+
+// tourReserveDans pousse la file de l'hôte jusqu'à ce que son prochain tour
+// soit à d, sans faire avancer l'horloge : c'est l'état d'un hôte devant lequel
+// une fournée a déjà réservé ses créneaux.
+//
+// Chaque prise part sur un contexte déjà coupé — attendSonTour réserve avant
+// d'attendre, donc le créneau est posé et personne ne patiente — et avance la
+// file d'une politesse. Aucune annonce n'est retenue : ce que l'hôte réclame
+// pour lui-même arrivera ensuite, par son robots.txt, et c'est là tout le
+// sujet.
+func tourReserveDans(t *testing.T, partagee *cadence, adresse string, d time.Duration) {
+	t.Helper()
+
+	hote := hoteDe(adresse)
+	coupe, arrete := context.WithCancel(context.Background())
+	arrete()
+
+	for reste := d; reste > 0; reste -= delaiEntreRequetes {
+		if err := partagee.attendSonTour(coupe, hote, 0); !errors.Is(err, context.Canceled) {
+			t.Fatalf("réservation du tour de %q : %v, attendu %v", hote, err, context.Canceled)
+		}
+	}
+}
+
+// La borne de l'unitaire est celle de l'appel, et non celle d'un échange : un
+// import n'attend pas deux fois la borne parce qu'il émet deux requêtes.
+//
+// Un appel de recuperation, ce sont deux échanges — le robots.txt de l'hôte,
+// puis la page —, et chacun attend son tour. Si chacun part avec la borne
+// entière, le pire cas de l'appel vaut son double : dix secondes d'écran qui
+// tourne là où la tâche a tranché cinq. C'est le raisonnement que la doc de
+// echange tient déjà pour le budget de temps réseau, et qui vaut ici mot pour
+// mot.
+//
+// Le montage sépare les deux attentes, et c'est ce qui les rend lisibles : une
+// fournée a réservé le tour de l'hôte quatre secondes devant — le robots.txt
+// les attend —, puis l'hôte annonce un Crawl-delay de quatre secondes, que la
+// page attendrait à son tour. Chacune passe sous la borne ; leur somme, non.
+func TestLaBorneUnitaireEstCelleDeLAppelEtNonDeChaqueEchange(t *testing.T) {
+	_, mux, cookie, _, horloge, _ := atelierPartage(t)
+
+	const unitaire = "https://poli.example/unitaire"
+	reseau := avecReseau(t, horloge, siteServi(robotsQuiDemande(attenteParEchange), unitaire))
+	tourReserveDans(t, cadenceDeLInstance, unitaire, attenteParEchange)
+
+	depart := horloge.Maintenant()
+	rec := importeLURL(mux, cookie, unitaire, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("statut %d, attendu %d :\n%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	// Mesuré sur l'horloge virtuelle : la borne se lit en quelques
+	// microsecondes, et aucun test n'attend cinq secondes.
+	if ecoule := horloge.Maintenant().Sub(depart); ecoule > attenteUnitaireAttendue {
+		t.Errorf("l'appel a passé %v en attente de cadence, attendu au plus %v : la borne est celle d'un "+
+			"échange, et le pire cas de l'import unitaire vaut son double", ecoule, attenteUnitaireAttendue)
+	}
+
+	corps := rec.Body.String()
+	if estLeFormulaireDeRecette(corps) {
+		t.Fatalf("la fiche pré-remplie est rendue alors que la borne de l'appel était dépassée :\n%s", corps)
+	}
+	if message := html.UnescapeString(messageDErreur(t, corps)); message != messageTourTropLoin {
+		t.Errorf("message %q, attendu %q", message, messageTourTropLoin)
+	}
+	// Le robots.txt est parti — il a consommé la première part de la borne et
+	// rapporté l'annonce —, la page non : il ne restait pas de quoi l'attendre.
+	if appels := reseau.appels(); len(appels) != 1 {
+		t.Errorf("%d requêtes émises, attendu 1 — le robots.txt seul :\n%v", len(appels), appels)
+	}
+}
