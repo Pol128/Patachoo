@@ -21,6 +21,20 @@ diverger.
 
 _Rien pour l'instant._
 
+## v0.2.0 — 2026-09-19
+
+- La page « Importer un lot » liste désormais vos vingt dernières fournées, avec leur date, leur tag et leur état : le rapport d'un import se retrouve après coup, et plus seulement au moment où il s'affiche.
+- Dans le rapport d'une fournée, chaque adresse qui n'a pas abouti porte une case à cocher. Elle reste cochée quand vous revenez sur la page, et l'en-tête dit combien d'adresses vous avez reprises sur le total des échecs.
+- Sur la fiche d'une recette, l'aliment s'accorde désormais à sa quantité : « 3 tomates » là où la ligne affichait « 3 tomate » depuis que l'aliment est enregistré sous sa forme du dictionnaire. Une quantité de un, une quantité à virgule — « 1,5 » — ou une quantité absente laissent le singulier, et un aliment que le dictionnaire ne connaît pas s'affiche tel quel, sans pluriel inventé.
+- Les ingrédients des recettes importées sont désormais mieux lus : la préparation qui suit une virgule — « 2 oignons, hachés finement » — part en note au lieu de rester collée à l'aliment, la quantité écrite après l'aliment — « Aubergines : 500 g » — n'est plus perdue, la contenance d'un contenant — « 1 boîte de 796 ml de tomates broyées » — sort de l'aliment, et « 250 gramme(s) + 200 gramme(s) » compte bien 450 g. Les recettes déjà en base ne sont pas reprises : seuls les imports suivants en profitent.
+- `INSTALL.md` explique enfin comment ouvrir un compte à quelqu'un, et pas
+  seulement comment créer le superutilisateur : les deux chemins — créer le
+  compte depuis `/_/`, ou ouvrir l'inscription le temps qu'il s'inscrive puis la
+  refermer —, ce que ce compte donne, et ce qu'il faut savoir avant d'ouvrir
+  (mot de passe d'au moins 8 caractères, pas de vérification de courriel,
+  dix inscriptions par heure et par adresse IP).
+- Le README renvoie vers le guide d'installation dès sa section « Démarrer » : installer une instance — image Docker, adresse et port, TLS, sauvegarde et restauration — ne se confond plus avec faire tourner le dépôt depuis les sources.
+
 ## v0.1.0 — 2026-09-17
 
 - Chaque version publiée a désormais sa page sur GitHub. Le numéro affiché dans
