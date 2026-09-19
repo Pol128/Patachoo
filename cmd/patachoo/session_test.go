@@ -34,7 +34,8 @@ const (
 // le cookie est lu avant que pbLoadAuthToken ne cherche l'en-tête.
 func serveurDeTest(t *testing.T, routesEnPlus ...func(*router.Router[*core.RequestEvent])) (core.App, http.Handler) {
 	t.Helper()
-	return monteLeServeur(t, baseNeuveAvec(t, analyseurDeTest(t)), routesEnPlus...)
+	a := analyseurDeTest(t)
+	return monteLeServeur(t, baseNeuveAvec(t, a), a, routesEnPlus...)
 }
 
 // serveurDeTestAuCoutBcryptReel est le même serveur, sur une base qui garde le
@@ -42,17 +43,22 @@ func serveurDeTest(t *testing.T, routesEnPlus ...func(*router.Router[*core.Reque
 // lui-même le sujet du test — il coûte ~200 ms de plus par compte connecté.
 func serveurDeTestAuCoutBcryptReel(t *testing.T, routesEnPlus ...func(*router.Router[*core.RequestEvent])) (core.App, http.Handler) {
 	t.Helper()
-	return monteLeServeur(t, baseNeuveAuCoutBcryptReel(t, analyseurDeTest(t)), routesEnPlus...)
+	a := analyseurDeTest(t)
+	return monteLeServeur(t, baseNeuveAuCoutBcryptReel(t, a), a, routesEnPlus...)
 }
 
-func monteLeServeur(t *testing.T, app core.App, routesEnPlus ...func(*router.Router[*core.RequestEvent])) (core.App, http.Handler) {
+// monteLeServeur prend l'analyseur à part de l'app : main() le passe aussi aux
+// routes, qui accordent l'aliment de la fiche à sa quantité. C'est le même que
+// celui branché sur les hooks — deux analyseurs liraient le même pack, mais
+// tiendraient deux décomptes de lignes non lues.
+func monteLeServeur(t *testing.T, app core.App, a *analyseur, routesEnPlus ...func(*router.Router[*core.RequestEvent])) (core.App, http.Handler) {
 	t.Helper()
 
 	routeur, err := apis.NewRouter(app)
 	if err != nil {
 		t.Fatalf("routeur : %v", err)
 	}
-	brancheLesRoutes(routeur)
+	brancheLesRoutes(routeur, a)
 	for _, ajoute := range routesEnPlus {
 		ajoute(routeur)
 	}

@@ -101,41 +101,47 @@ type ligneDIngredient struct {
 // la différence entre un 404 et une redirection dirait à un visiteur quels
 // identifiants existent. Cette route étant servie par notre code, les règles de
 // collection ne la gardent pas — c'est à elle de vérifier la session.
-func pageRecette(e *core.RequestEvent) error {
-	if e.Auth == nil {
-		// La page de connexion de PATA-36, telle que main() la déclare et que
-		// la mise en page la propose déjà au visiteur.
-		return e.Redirect(http.StatusSeeOther, "/connexion")
-	}
-
-	recette, err := e.App.FindRecordById("recipes", e.Request.PathValue("id"))
-	if err != nil {
-		// Seul l'identifiant inconnu devient un 404 : une base injoignable
-		// remonte comme erreur, sinon la page annoncerait une recette
-		// supprimée à chaque incident.
-		if errors.Is(err, sql.ErrNoRows) {
-			return pageRecetteIntrouvable(e)
+//
+// L'analyseur voyage par fermeture, depuis main() : la fiche accorde l'aliment
+// à la quantité, et le pack comme le lexique sont chargés une fois au
+// démarrage. Les relire ici les relirait à chaque page servie.
+func pageRecette(a *analyseur) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
+		if e.Auth == nil {
+			// La page de connexion de PATA-36, telle que main() la déclare et que
+			// la mise en page la propose déjà au visiteur.
+			return e.Redirect(http.StatusSeeOther, "/connexion")
 		}
-		return err
-	}
 
-	donnees, err := ficheDeLaRecette(e.App, recette, e.Auth.Id)
-	if err != nil {
-		return err
-	}
+		recette, err := e.App.FindRecordById("recipes", e.Request.PathValue("id"))
+		if err != nil {
+			// Seul l'identifiant inconnu devient un 404 : une base injoignable
+			// remonte comme erreur, sinon la page annoncerait une recette
+			// supprimée à chaque incident.
+			if errors.Is(err, sql.ErrNoRows) {
+				return pageRecetteIntrouvable(e)
+			}
+			return err
+		}
 
-	// Les notes sont un bloc de la fiche : elles se lisent avec elle, et les
-	// quatre routes de PATA-22 renvoient ce même bloc seul.
-	notes, err := blocDesNotes(e, recette, "")
-	if err != nil {
-		return err
-	}
+		donnees, err := ficheDeLaRecette(e.App, recette, e.Auth.Id, a)
+		if err != nil {
+			return err
+		}
 
-	return rendre(e, "recette.html", "recette-corps.html", &donneesPage{
-		Titre:        recette.GetString("title") + " — Patachoo",
-		Recette:      donnees,
-		Commentaires: notes,
-	}, "commentaires.html")
+		// Les notes sont un bloc de la fiche : elles se lisent avec elle, et les
+		// quatre routes de PATA-22 renvoient ce même bloc seul.
+		notes, err := blocDesNotes(e, recette, "")
+		if err != nil {
+			return err
+		}
+
+		return rendre(e, "recette.html", "recette-corps.html", &donneesPage{
+			Titre:        recette.GetString("title") + " — Patachoo",
+			Recette:      donnees,
+			Commentaires: notes,
+		}, "commentaires.html")
+	}
 }
 
 // pageRecetteIntrouvable répond par une page lisible, et non par une 500 ni une
@@ -153,7 +159,7 @@ func pageRecetteIntrouvable(e *core.RequestEvent) error {
 // conditionnel de la fiche. Un paramètre plutôt qu'un champ rempli chez les
 // appelants, qui sont deux — pageRecette et rendLeBloc : la même règle posée
 // deux fois finit par diverger.
-func ficheDeLaRecette(app core.App, recette *core.Record, compte string) (*donneesRecette, error) {
+func ficheDeLaRecette(app core.App, recette *core.Record, compte string, a *analyseur) (*donneesRecette, error) {
 	lignes, err := app.FindRecordsByFilter(
 		"ingredients",
 		"recipe = {:recette}",
@@ -177,7 +183,7 @@ func ficheDeLaRecette(app core.App, recette *core.Record, compte string) (*donne
 		Image:       urlDeLaMiniature(recette),
 		Faits:       faitsDeLaRecette(recette),
 		Source:      sourceDeLaRecette(recette),
-		Ingredients: ingredientsDeLaRecette(lignes),
+		Ingredients: ingredientsDeLaRecette(lignes, a),
 		Etapes:      etapes(recette.GetString("instructions")),
 	}
 	return donnees, nil
@@ -304,14 +310,18 @@ func libelleSource(nom, adresse string) string {
 }
 
 // ingredientsDeLaRecette met chaque ligne en forme, dans l'ordre reçu.
-func ingredientsDeLaRecette(lignes []*core.Record) []ligneDIngredient {
+//
+// Aliment n'est pas food tel quel : la colonne porte la forme canonique du
+// lexique, donc le singulier, et la fiche l'accorde à la quantité (PATA-116).
+func ingredientsDeLaRecette(lignes []*core.Record, a *analyseur) []ligneDIngredient {
 	rendues := make([]ligneDIngredient, 0, len(lignes))
 	for _, ligne := range lignes {
+		quantite := ligne.GetFloat("quantity")
 		rendues = append(rendues, ligneDIngredient{
 			Brut:       ligne.GetString("raw"),
-			Quantite:   quantiteLisible(ligne.GetFloat("quantity")),
+			Quantite:   quantiteLisible(quantite),
 			Unite:      strings.TrimSpace(ligne.GetString("unit")),
-			Aliment:    strings.TrimSpace(ligne.GetString("food")),
+			Aliment:    a.accorde(strings.TrimSpace(ligne.GetString("food")), quantite),
 			Note:       strings.TrimSpace(ligne.GetString("note")),
 			Facultatif: ligne.GetBool("optional"),
 		})
