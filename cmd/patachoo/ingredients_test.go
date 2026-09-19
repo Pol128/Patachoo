@@ -275,28 +275,114 @@ func TestLaConversionRendLesCinqChamps(t *testing.T) {
 	}
 	for _, c := range cas {
 		t.Run(c.brut, func(t *testing.T) {
-			obtenus := champsLus(a.lit(c.brut))
+			verifieLesCinqChamps(t, champsLus(a.lit(c.brut)), champsIngredient{
+				quantite:  c.quantite,
+				unite:     c.unite,
+				aliment:   c.aliment,
+				note:      c.note,
+				optionnel: c.optionnel,
+			})
+		})
+	}
+}
 
-			switch {
-			case c.quantite == nil && obtenus.quantite != nil:
-				t.Errorf("quantity = %v, attendu vide", *obtenus.quantite)
-			case c.quantite != nil && obtenus.quantite == nil:
-				t.Errorf("quantity vide, attendu %v", *c.quantite)
-			case c.quantite != nil && *obtenus.quantite != *c.quantite:
-				t.Errorf("quantity = %v, attendu %v", *obtenus.quantite, *c.quantite)
-			}
-			if obtenus.unite != c.unite {
-				t.Errorf("unit = %q, attendu %q", obtenus.unite, c.unite)
-			}
-			if obtenus.aliment != c.aliment {
-				t.Errorf("food = %q, attendu %q", obtenus.aliment, c.aliment)
-			}
-			if obtenus.note != c.note {
-				t.Errorf("note = %q, attendu %q", obtenus.note, c.note)
-			}
-			if obtenus.optionnel != c.optionnel {
-				t.Errorf("optional = %v, attendu %v", obtenus.optionnel, c.optionnel)
-			}
+// verifieLesCinqChamps compare une lecture aux cinq champs attendus, et les
+// signale tous les cinq plutôt que de s'arrêter au premier : un motif qui
+// change en fait bouger plusieurs à la fois, et les voir ensemble dit lequel
+// des deux a régressé.
+func verifieLesCinqChamps(t *testing.T, obtenus, attendus champsIngredient) {
+	t.Helper()
+
+	switch {
+	case attendus.quantite == nil && obtenus.quantite != nil:
+		t.Errorf("quantity = %v, attendu vide", *obtenus.quantite)
+	case attendus.quantite != nil && obtenus.quantite == nil:
+		t.Errorf("quantity vide, attendu %v", *attendus.quantite)
+	case attendus.quantite != nil && *obtenus.quantite != *attendus.quantite:
+		t.Errorf("quantity = %v, attendu %v", *obtenus.quantite, *attendus.quantite)
+	}
+	if obtenus.unite != attendus.unite {
+		t.Errorf("unit = %q, attendu %q", obtenus.unite, attendus.unite)
+	}
+	if obtenus.aliment != attendus.aliment {
+		t.Errorf("food = %q, attendu %q", obtenus.aliment, attendus.aliment)
+	}
+	if obtenus.note != attendus.note {
+		t.Errorf("note = %q, attendu %q", obtenus.note, attendus.note)
+	}
+	if obtenus.optionnel != attendus.optionnel {
+		t.Errorf("optional = %v, attendu %v", obtenus.optionnel, attendus.optionnel)
+	}
+}
+
+// TestLesQuatreMotifsCorrigesArriventJusquAuxCinqChamps prouve que les quatre
+// correctifs du pack de langue traversent Patachoo, et pas seulement les tests
+// du module qui les porte.
+//
+// Une montée de version est un changement que rien ne vérifie tant qu'il n'a
+// pas de test de ce côté-ci : le pack et le lexique sont embarqués dans
+// moteur, et ce qu'ils lisent n'arrive à la base qu'à travers champsLus.
+// D'où le chemin réel — analyseurFR() puis champsLus(a.lit(brut)) —, et les
+// cinq champs vérifiés à chaque fois plutôt que le seul food.
+//
+// Les quatre lignes viennent du corpus de l'instance, pas d'un exemple
+// inventé : ce sont elles qui ont motivé les quatre sous-tâches de PATA-108.
+func TestLesQuatreMotifsCorrigesArriventJusquAuxCinqChamps(t *testing.T) {
+	a := analyseurDeTest(t)
+
+	nombre := func(v float64) *float64 { return &v }
+
+	cas := []struct {
+		motif    string
+		brut     string
+		attendus champsIngredient
+	}{
+		// La préparation qui suit la virgule terminale part en note, au lieu
+		// de rester collée à l'aliment.
+		{
+			motif: "préparation après une virgule finale",
+			brut:  "2 oignons, hachés finement",
+			attendus: champsIngredient{
+				quantite: nombre(2), aliment: "oignons", note: "hachés finement",
+			},
+		},
+		// Le motif inversé « Aliment : quantité » se lisait entièrement de
+		// travers : la ligne entière restait dans food, sans quantité ni
+		// unité. L'aliment ressort au singulier parce que le lexique rend
+		// désormais la forme canonique de l'entrée qu'il a reconnue.
+		{
+			motif: "motif inversé « Aliment : quantité »",
+			brut:  "Aubergines : 500 g",
+			attendus: champsIngredient{
+				quantite: nombre(500), unite: "g", aliment: "aubergine",
+			},
+		},
+		// La contenance placée entre le contenant et l'aliment part en note :
+		// quantity et unit sont déjà pris par « 1 boîte », et le schéma ne
+		// porte qu'une mesure.
+		{
+			motif: "contenance après le contenant",
+			brut:  "1 boîte de 796 ml (28 oz) de tomates broyées",
+			attendus: champsIngredient{
+				quantite: nombre(1), unite: "boîte", aliment: "tomates broyées",
+				note: "796 ml ; 28 oz",
+			},
+		},
+		// Deux défauts sur la même ligne : la marque de pluriel « (s) » n'est
+		// plus prise pour une note, et le second terme de l'addition n'est
+		// plus perdu — 250 + 200 font 450 parce que les deux termes portent
+		// la même unité.
+		{
+			motif: "marque de pluriel et second terme d'une addition",
+			brut:  "250 gramme(s) + 200 gramme(s) de Coulis de framboises",
+			attendus: champsIngredient{
+				quantite: nombre(450), unite: "g", aliment: "Coulis de framboises",
+			},
+		},
+	}
+	for _, c := range cas {
+		t.Run(c.motif, func(t *testing.T) {
+			verifieLesCinqChamps(t, champsLus(a.lit(c.brut)), c.attendus)
 		})
 	}
 }
