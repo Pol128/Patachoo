@@ -68,7 +68,7 @@ func main() {
 	commandeAEchoue := brancheLesCommandes(app, app.RootCmd)
 
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
-		brancheLesRoutes(se.Router)
+		brancheLesRoutes(se.Router, analyseur)
 
 		// se.Next() laisse la main aux routes de PocketBase : sans lui,
 		// l'interface d'administration et l'API REST ne répondent plus.
@@ -91,14 +91,18 @@ func main() {
 // À part de OnServe pour être montable dans un test : c'est l'ordre des
 // middlewares qui fait tenir la session, et un test qui rebâtirait son propre
 // montage ne vérifierait que lui-même.
-func brancheLesRoutes(routeur *router.Router[*core.RequestEvent]) {
+//
+// L'analyseur descend jusqu'aux routes qui rendent la fiche : elle accorde
+// l'aliment à la quantité, et le pack comme le lexique sont ceux chargés une
+// fois au démarrage.
+func brancheLesRoutes(routeur *router.Router[*core.RequestEvent], a *analyseur) {
 	routeur.Bind(poseLesEntetesDeReponse())
 	brancheLaSession(routeur)
 	brancheLAntiRejeu(routeur)
 
 	routeur.GET("/", pageAccueil)
 	routeur.GET("/recettes", pageListeRecettes)
-	routeur.GET("/recettes/{id}", pageRecette)
+	routeur.GET("/recettes/{id}", pageRecette(a))
 	routeur.GET("/connexion", pageConnexion)
 	routeur.POST("/connexion", connexion).
 		Bind(exigeLeJetonAntiRejeu(),
@@ -110,7 +114,7 @@ func brancheLesRoutes(routeur *router.Router[*core.RequestEvent]) {
 			rendLeDepassementEnHTML("patachooDepassementInscription", rendLeDepassementDInscription))
 	brancheLesRecettes(routeur)
 	brancheLesTags(routeur)
-	brancheLesCommentaires(routeur)
+	brancheLesCommentaires(routeur, a)
 	brancheLImport(routeur)
 	brancheLImportEnLot(routeur)
 

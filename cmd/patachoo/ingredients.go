@@ -190,3 +190,29 @@ func (a *analyseur) litLaLigne(e *core.RecordEvent) error {
 
 	return e.Next()
 }
+
+// accorde rend l'aliment tel qu'il s'affiche pour cette quantité : « tomate »
+// seul, « tomates » à partir de deux.
+//
+// Ce qui est stocké est canonique, ce qui est affiché est accordé. La colonne
+// food porte la forme du lexique — c'est elle qui fera se regrouper deux
+// écritures du même aliment —, et la fiche lirait sinon « 2 oignon ».
+//
+// Le seuil vient du pack, comme pour les unités (Pack.Accorde) : l'anglais
+// accorde dès un, le français à partir de deux, et une quantité fractionnaire
+// reste donc au singulier. Une quantité absente vaut zéro dans le schéma —
+// quantity n'est pas nullable — et passe par le même chemin.
+//
+// Un aliment que le lexique ne résout pas ressort tel quel, et un aliment dont
+// l'entrée ne porte pas de pluriel aussi : la marque ne se déduit pas, « cœurs
+// d'artichaut » la met sur le premier mot.
+func (a *analyseur) accorde(aliment string, quantite float64) string {
+	if quantite < a.pack.SeuilPluriel {
+		return aliment
+	}
+	entree, trouvee := a.lexique.Resout(a.pack.Normalise(aliment))
+	if !trouvee || entree.Pluriel == "" {
+		return aliment
+	}
+	return entree.Pluriel
+}

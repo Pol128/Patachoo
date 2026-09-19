@@ -89,12 +89,12 @@ type noteAffichee struct {
 // Toutes en POST plutôt qu'en PUT ou DELETE, comme le reste du produit : un
 // formulaire HTML ne sait pas émettre autre chose, et l'interface doit
 // fonctionner sans JavaScript.
-func brancheLesCommentaires(routeur *router.Router[*core.RequestEvent]) {
+func brancheLesCommentaires(routeur *router.Router[*core.RequestEvent], a *analyseur) {
 	notes := "/recettes/{id}/commentaires"
-	routeur.POST(notes, laRouteDUneNote(ajouteUneNote)).Bind(exigeLeJetonAntiRejeu(), exigeUneSession())
-	routeur.GET(notes+"/{idc}/modifier", laRouteDUneNote(pageModifierUneNote)).Bind(exigeUneSession())
-	routeur.POST(notes+"/{idc}", laRouteDUneNote(metAJourUneNote)).Bind(exigeLeJetonAntiRejeu(), exigeUneSession())
-	routeur.POST(notes+"/{idc}/supprimer", laRouteDUneNote(supprimeUneNote)).Bind(exigeLeJetonAntiRejeu(), exigeUneSession())
+	routeur.POST(notes, laRouteDUneNote(a, ajouteUneNote)).Bind(exigeLeJetonAntiRejeu(), exigeUneSession())
+	routeur.GET(notes+"/{idc}/modifier", laRouteDUneNote(a, pageModifierUneNote)).Bind(exigeUneSession())
+	routeur.POST(notes+"/{idc}", laRouteDUneNote(a, metAJourUneNote)).Bind(exigeLeJetonAntiRejeu(), exigeUneSession())
+	routeur.POST(notes+"/{idc}/supprimer", laRouteDUneNote(a, supprimeUneNote)).Bind(exigeLeJetonAntiRejeu(), exigeUneSession())
 }
 
 // laRouteDUneNote traduit erreurIntrouvable en la 404 de la fiche.
@@ -102,9 +102,13 @@ func brancheLesCommentaires(routeur *router.Router[*core.RequestEvent]) {
 // Un compte connecté qui vise la note d'un autre obtient donc un 404, et non un
 // 403 : l'existence d'une note d'autrui n'est pas une information à donner par
 // un code de statut.
-func laRouteDUneNote(traite func(*core.RequestEvent) error) func(*core.RequestEvent) error {
+//
+// L'analyseur passe par ici plutôt que par une fermeture chez chacune des
+// quatre : les quatre finissent par rendre la fiche au navigateur, qui accorde
+// l'aliment à la quantité, et un seul point de passage ne se contourne pas.
+func laRouteDUneNote(a *analyseur, traite func(*core.RequestEvent, *analyseur) error) func(*core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
-		err := traite(e)
+		err := traite(e, a)
 		if errors.Is(err, erreurIntrouvable) {
 			return pageRecetteIntrouvable(e)
 		}
@@ -113,7 +117,7 @@ func laRouteDUneNote(traite func(*core.RequestEvent) error) func(*core.RequestEv
 }
 
 // ajouteUneNote enregistre une note signée du compte de la session.
-func ajouteUneNote(e *core.RequestEvent) error {
+func ajouteUneNote(e *core.RequestEvent, a *analyseur) error {
 	recette, err := laRecetteCommentee(e)
 	if err != nil {
 		return err
@@ -127,7 +131,7 @@ func ajouteUneNote(e *core.RequestEvent) error {
 		}
 		bloc.Message = message
 		bloc.Brouillon = saisi
-		return rendLeBloc(e, recette, bloc)
+		return rendLeBloc(e, recette, bloc, a)
 	}
 
 	collection, err := e.App.FindCollectionByNameOrId("comments")
@@ -146,12 +150,12 @@ func ajouteUneNote(e *core.RequestEvent) error {
 		return err
 	}
 
-	return repondApresEcriture(e, recette)
+	return repondApresEcriture(e, recette, a)
 }
 
 // pageModifierUneNote rend la liste avec cette note-là remplacée par son
 // formulaire d'édition.
-func pageModifierUneNote(e *core.RequestEvent) error {
+func pageModifierUneNote(e *core.RequestEvent, a *analyseur) error {
 	recette, note, err := laNoteDemandee(e)
 	if err != nil {
 		return err
@@ -161,13 +165,13 @@ func pageModifierUneNote(e *core.RequestEvent) error {
 	if err != nil {
 		return err
 	}
-	return rendLeBloc(e, recette, bloc)
+	return rendLeBloc(e, recette, bloc, a)
 }
 
 // metAJourUneNote réécrit le texte, et lui seul : author, recipe et created ne
 // sont pas touchés — une note qui changerait d'auteur en se corrigeant ne
 // serait plus signée.
-func metAJourUneNote(e *core.RequestEvent) error {
+func metAJourUneNote(e *core.RequestEvent, a *analyseur) error {
 	recette, note, err := laNoteDemandee(e)
 	if err != nil {
 		return err
@@ -181,7 +185,7 @@ func metAJourUneNote(e *core.RequestEvent) error {
 		}
 		bloc.Message = message
 		bloc.reproposeLeTexte(note.Id, saisi)
-		return rendLeBloc(e, recette, bloc)
+		return rendLeBloc(e, recette, bloc, a)
 	}
 
 	note.Set("body", corps)
@@ -189,11 +193,11 @@ func metAJourUneNote(e *core.RequestEvent) error {
 		return err
 	}
 
-	return repondApresEcriture(e, recette)
+	return repondApresEcriture(e, recette, a)
 }
 
 // supprimeUneNote retire la note du compte connecté.
-func supprimeUneNote(e *core.RequestEvent) error {
+func supprimeUneNote(e *core.RequestEvent, a *analyseur) error {
 	recette, note, err := laNoteDemandee(e)
 	if err != nil {
 		return err
@@ -202,7 +206,7 @@ func supprimeUneNote(e *core.RequestEvent) error {
 	if err := e.App.Delete(note); err != nil {
 		return err
 	}
-	return repondApresEcriture(e, recette)
+	return repondApresEcriture(e, recette, a)
 }
 
 // --- Ce que les quatre routes ont en commun --------------------------------
@@ -270,7 +274,7 @@ func corpsSoumis(e *core.RequestEvent) (saisi, corps, message string) {
 // rechargement de page rejoue l'écriture. L'ajout, la modification et la
 // suppression fonctionnent donc sans JavaScript, HTMX ne faisant qu'éviter le
 // rechargement.
-func repondApresEcriture(e *core.RequestEvent, recette *core.Record) error {
+func repondApresEcriture(e *core.RequestEvent, recette *core.Record, a *analyseur) error {
 	if !estHTMX(e) {
 		return e.Redirect(http.StatusSeeOther, "/recettes/"+recette.Id)
 	}
@@ -279,18 +283,18 @@ func repondApresEcriture(e *core.RequestEvent, recette *core.Record) error {
 	if err != nil {
 		return err
 	}
-	return rendLeBloc(e, recette, bloc)
+	return rendLeBloc(e, recette, bloc, a)
 }
 
 // rendLeBloc écrit le bloc seul à HTMX, ou la fiche entière au navigateur.
 //
 // La fiche n'est reconstruite que dans le second cas : une réponse à HTMX n'en
 // affiche rien, et la bâtir coûterait deux requêtes pour du HTML jeté.
-func rendLeBloc(e *core.RequestEvent, recette *core.Record, bloc *donneesCommentaires) error {
+func rendLeBloc(e *core.RequestEvent, recette *core.Record, bloc *donneesCommentaires, a *analyseur) error {
 	donnees := &donneesPage{Commentaires: bloc}
 
 	if !estHTMX(e) {
-		fiche, err := ficheDeLaRecette(e.App, recette, e.Auth.Id)
+		fiche, err := ficheDeLaRecette(e.App, recette, e.Auth.Id, a)
 		if err != nil {
 			return err
 		}
