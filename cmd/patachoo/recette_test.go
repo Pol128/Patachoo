@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Pol128/moteur"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/filesystem"
 )
@@ -480,6 +481,146 @@ func TestUnIngredientFacultatifPorteLaMention(t *testing.T) {
 	}
 	if strings.Contains(lignes[1], "(facultatif)") {
 		t.Errorf("ingrédient obligatoire portant la mention « (facultatif) » : %q", lignes[1])
+	}
+}
+
+// --- L'accord de l'aliment (PATA-116) -------------------------------------
+
+// alimentRendu rend le contenu du <span class="aliment"> d'une ligne rendue.
+//
+// C'est le seul endroit de la fiche où l'aliment sort seul : le reste du <li>
+// porte la quantité, l'unité et la note, et une recherche de sous-chaîne sur
+// la ligne entière confondrait « tomate » avec le « tomates » de l'attribut
+// title.
+func alimentRendu(t *testing.T, ligne string) string {
+	t.Helper()
+	return entreBalises(ligne, `<span class="aliment">`, "</span>")
+}
+
+// Ce qui est stocké est canonique, ce qui est affiché est accordé : food garde
+// le singulier du lexique, et la fiche écrit le pluriel à partir de la
+// quantité.
+func TestLAlimentSAccordeAuPlurielDepuisLaQuantite(t *testing.T) {
+	const brut = "3 tomates"
+
+	app, mux, cookie := serveurConnecte(t)
+	recette := recetteEnBase(t, app, nil)
+	ligne := ligneEnBase(t, app, recette, map[string]any{
+		"raw":      brut,
+		"position": 1,
+		"quantity": 3,
+		"food":     "tomate",
+	})
+
+	rendue := ingredientsRendus(t, fiche(mux, cookie, recette.Id).Body.String())[0]
+
+	if got := alimentRendu(t, rendue); got != "tomates" {
+		t.Errorf("aliment rendu %q, attendu « tomates » : %q", got, rendue)
+	}
+	// L'accord est un fait d'affichage : la colonne ne bouge pas, sans quoi
+	// deux écritures du même aliment cesseraient de se regrouper.
+	if got := relit(t, app, ligne.Id).GetString("food"); got != "tomate" {
+		t.Errorf("food en base = %q, attendu « tomate » : l'accord a été écrit", got)
+	}
+	// Le titre de survol montre toujours la ligne d'origine, accord ou pas.
+	if !strings.Contains(rendue, `title="`+brut+`"`) {
+		t.Errorf("ligne brute perdue de l'attribut title : %q", rendue)
+	}
+}
+
+// Sous le seuil, le singulier — y compris pour une quantité fractionnaire, que
+// le français ne met pas au pluriel, et pour une quantité absente.
+func TestLAlimentResteAuSingulierSousLeSeuilDuPluriel(t *testing.T) {
+	cas := []struct {
+		nom      string
+		quantite any
+	}{
+		{"un", 1},
+		{"une et demie", 1.5},
+		{"absente", nil},
+	}
+
+	for _, c := range cas {
+		t.Run(c.nom, func(t *testing.T) {
+			app, mux, cookie := serveurConnecte(t)
+			recette := recetteEnBase(t, app, nil)
+			ligneEnBase(t, app, recette, map[string]any{
+				"raw":      "une tomate",
+				"position": 1,
+				"quantity": c.quantite,
+				"food":     "tomate",
+			})
+
+			rendue := ingredientsRendus(t, fiche(mux, cookie, recette.Id).Body.String())[0]
+
+			if got := alimentRendu(t, rendue); got != "tomate" {
+				t.Errorf("aliment rendu %q, attendu « tomate » : %q", got, rendue)
+			}
+		})
+	}
+}
+
+// Un aliment que le lexique ne connaît pas ressort tel quel : la marque du
+// pluriel ne se devine pas — « cœurs d'artichaut » la met sur le premier mot —
+// et un « s » ajouté par règle serait faux une fois sur deux.
+func TestUnAlimentInconnuDuLexiqueSAfficheTelQuel(t *testing.T) {
+	const inconnu = "chicon de Bruxelles"
+
+	app, mux, cookie := serveurConnecte(t)
+	recette := recetteEnBase(t, app, nil)
+	ligneEnBase(t, app, recette, map[string]any{
+		"raw":      "3 chicons de Bruxelles",
+		"position": 1,
+		"quantity": 3,
+		"food":     inconnu,
+	})
+
+	rendue := ingredientsRendus(t, fiche(mux, cookie, recette.Id).Body.String())[0]
+
+	if got := alimentRendu(t, rendue); got != inconnu {
+		t.Errorf("aliment rendu %q, attendu %q : un accord a été inventé", got, inconnu)
+	}
+}
+
+// Le seuil vient du pack, pas d'une constante Go : l'anglais met 1 là où le
+// français met 2, et une comparaison à 2 écrite en dur ne suivrait pas le pack
+// qu'on lui donne.
+func TestLeSeuilDuPlurielVientDuPack(t *testing.T) {
+	pack, lexique, err := moteur.FR()
+	if err != nil {
+		t.Fatalf("pack français : %v", err)
+	}
+
+	if got := (&analyseur{pack: pack, lexique: lexique}).accorde("tomate", 1); got != "tomate" {
+		t.Errorf("au seuil 2, accorde(tomate, 1) = %q, attendu « tomate »", got)
+	}
+
+	// Le même lexique, un pack qui accorde dès un.
+	pack.SeuilPluriel = 1
+	if got := (&analyseur{pack: pack, lexique: lexique}).accorde("tomate", 1); got != "tomates" {
+		t.Errorf("au seuil 1, accorde(tomate, 1) = %q, attendu « tomates »", got)
+	}
+}
+
+// L'aliment traverse désormais le lexique avant d'être écrit : ce qui n'y est
+// pas ressort tel quel, et doit ressortir échappé (DoD §3).
+func TestUnAlimentAccordeSortEchappe(t *testing.T) {
+	app, mux, cookie := serveurConnecte(t)
+	recette := recetteEnBase(t, app, nil)
+	ligneEnBase(t, app, recette, map[string]any{
+		"raw":      "3 <script>alert(1)</script>",
+		"position": 1,
+		"quantity": 3,
+		"food":     `<script>alert(1)</script>`,
+	})
+
+	corps := fiche(mux, cookie, recette.Id).Body.String()
+
+	if strings.Contains(corps, "<script>") {
+		t.Errorf("l'aliment ressort exécutable dans la page :\n%s", corps)
+	}
+	if !strings.Contains(corps, "&lt;script&gt;alert(1)&lt;/script&gt;") {
+		t.Errorf("l'aliment a disparu au lieu d'être échappé :\n%s", corps)
 	}
 }
 
