@@ -83,8 +83,14 @@ type ouvrier struct {
 	creation sync.Mutex
 }
 
-func nouvelOuvrier(app core.App, h horlogeDuLot) *ouvrier {
-	return &ouvrier{app: app, horloge: h, cadence: nouvelleCadence(h)}
+// nouvelOuvrier monte l'ouvrier sur l'horloge et la cadence qu'on lui donne.
+//
+// La cadence est reçue et non fabriquée : c'est celle de l'instance, et les
+// chemins unitaires la partagent. Un ouvrier qui se fabriquerait la sienne
+// laisserait l'import d'une URL et le téléchargement d'une image partir sans
+// tour de rôle, sur un hôte que la fournée est peut-être en train de visiter.
+func nouvelOuvrier(app core.App, h horlogeDuLot, rythme *cadence) *ouvrier {
+	return &ouvrier{app: app, horloge: h, cadence: rythme}
 }
 
 // brancheLOuvrier démarre l'ouvrier avec le serveur et l'arrête avec lui.
@@ -94,7 +100,7 @@ func nouvelOuvrier(app core.App, h horlogeDuLot) *ouvrier {
 // du démarrage suivant retrouve un état cohérent, et elles ont besoin d'une
 // base encore ouverte.
 func brancheLOuvrier(app core.App) {
-	o := nouvelOuvrier(app, horlogeSysteme{})
+	o := nouvelOuvrier(app, horlogeSysteme{}, cadenceDeLInstance)
 	ctx, arrete := context.WithCancel(context.Background())
 	fini := make(chan struct{})
 	// Un booléen nu ne suffit pas : OnServe est déclenché par la commande
