@@ -31,12 +31,12 @@ type cadenceNotee struct {
 	annonce time.Duration
 }
 
-func (c *cadenceNotee) AttendSonTour(_ context.Context, hote string, _ time.Duration) error {
+func (c *cadenceNotee) AttendSonTour(_ context.Context, hote string, _ time.Duration) (time.Duration, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	c.tours = append(c.tours, hote)
-	return nil
+	return 0, nil
 }
 
 func (c *cadenceNotee) Retiens(_ string, annonce time.Duration) {
@@ -66,12 +66,12 @@ func (c *cadenceNotee) delaiRapporte() time.Duration {
 // vérifier que l'attente ne se prend pas sur le compte d'une borne.
 type cadenceLente struct{ attente time.Duration }
 
-func (c cadenceLente) AttendSonTour(ctx context.Context, _ string, _ time.Duration) error {
+func (c cadenceLente) AttendSonTour(ctx context.Context, _ string, _ time.Duration) (time.Duration, error) {
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return 0, ctx.Err()
 	case <-time.After(c.attente):
-		return nil
+		return c.attente, nil
 	}
 }
 
@@ -321,20 +321,20 @@ type cadenceOccupee struct {
 	bornes []time.Duration
 }
 
-func (c *cadenceOccupee) AttendSonTour(ctx context.Context, _ string, attenteMax time.Duration) error {
+func (c *cadenceOccupee) AttendSonTour(ctx context.Context, _ string, attenteMax time.Duration) (time.Duration, error) {
 	c.mu.Lock()
 	c.bornes = append(c.bornes, attenteMax)
 	c.mu.Unlock()
 
 	if attenteMax > 0 && c.attente > attenteMax {
-		return ErrAttenteTropLongue
+		return 0, ErrAttenteTropLongue
 	}
 
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return 0, ctx.Err()
 	case <-time.After(c.attente):
-		return nil
+		return c.attente, nil
 	}
 }
 

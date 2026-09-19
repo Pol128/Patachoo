@@ -141,6 +141,11 @@ func nouvelleCadence(h horlogeDuLot) *cadence {
 // pour une requête qui ne partira pas, et suffirait à affamer un lot en cours
 // en renonçant en boucle.
 //
+// Ce qui a été attendu est rendu à l'appelant : c'est ainsi qu'un appel de
+// recuperation, qui émet deux requêtes, tient une borne valant pour lui entier
+// et non pour chacune. L'attente se lit ici et nulle part ailleurs — sur
+// l'horloge injectée, qui est virtuelle en test.
+//
 // L'attente entière, et non la seule part qui vient d'un autre appel : ce que
 // l'hôte réclame pour lui-même compte dedans. Autrement, c'est le site visé qui
 // décide combien de temps un gestionnaire HTTP reste immobilisé — le
@@ -155,7 +160,7 @@ func nouvelleCadence(h horlogeDuLot) *cadence {
 // borne n'est pas importable à la main. L'import en lot, lui, l'attend sans
 // limite — personne n'est devant son écran —, et c'est ce que le message du
 // renoncement dit à l'utilisateur.
-func (c *cadence) attendSonTour(ctx context.Context, hote string, attenteMax time.Duration) error {
+func (c *cadence) attendSonTour(ctx context.Context, hote string, attenteMax time.Duration) (time.Duration, error) {
 	c.mu.Lock()
 	maintenant := c.horloge.Maintenant()
 	creneau := maintenant
@@ -169,12 +174,17 @@ func (c *cadence) attendSonTour(ctx context.Context, hote string, attenteMax tim
 	attente := creneau.Sub(maintenant)
 	if attenteMax > 0 && attente > attenteMax {
 		c.mu.Unlock()
-		return recuperation.ErrAttenteTropLongue
+		return 0, recuperation.ErrAttenteTropLongue
 	}
 	c.dernier[hote] = creneau
 	c.mu.Unlock()
 
-	return c.horloge.Attends(ctx, attente)
+	if err := c.horloge.Attends(ctx, attente); err != nil {
+		// L'attente a été coupée en chemin : ce qu'elle a duré n'a plus
+		// d'appelant à qui le rendre, l'appel s'arrête ici.
+		return 0, err
+	}
+	return attente, nil
 }
 
 // retiens garde le Crawl-delay qu'un hôte annonce, quand il dépasse le nôtre.
@@ -198,7 +208,7 @@ func (c *cadence) retiens(hote string, annonce time.Duration) {
 // le sien.
 type cadenceDeRecuperation struct{ *cadence }
 
-func (c cadenceDeRecuperation) AttendSonTour(ctx context.Context, hote string, attenteMax time.Duration) error {
+func (c cadenceDeRecuperation) AttendSonTour(ctx context.Context, hote string, attenteMax time.Duration) (time.Duration, error) {
 	return c.attendSonTour(ctx, hote, attenteMax)
 }
 

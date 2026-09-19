@@ -156,13 +156,13 @@ func hoteOccupePour(t *testing.T, partagee *cadence, adresse string) {
 
 	hote := hoteDe(adresse)
 	partagee.retiens(hote, attenteUnitaireAttendue+time.Second)
-	if err := partagee.attendSonTour(context.Background(), hote, 0); err != nil {
+	if _, err := partagee.attendSonTour(context.Background(), hote, 0); err != nil {
 		t.Fatalf("prise du tour de %q : %v", hote, err)
 	}
 
 	coupe, arrete := context.WithCancel(context.Background())
 	arrete()
-	if err := partagee.attendSonTour(coupe, hote, 0); !errors.Is(err, context.Canceled) {
+	if _, err := partagee.attendSonTour(coupe, hote, 0); !errors.Is(err, context.Canceled) {
 		t.Fatalf("réservation du tour suivant de %q : %v, attendu %v", hote, err, context.Canceled)
 	}
 }
@@ -401,7 +401,7 @@ func tourReserveDans(t *testing.T, partagee *cadence, adresse string, d time.Dur
 	arrete()
 
 	for reste := d; reste > 0; reste -= delaiEntreRequetes {
-		if err := partagee.attendSonTour(coupe, hote, 0); !errors.Is(err, context.Canceled) {
+		if _, err := partagee.attendSonTour(coupe, hote, 0); !errors.Is(err, context.Canceled) {
 			t.Fatalf("réservation du tour de %q : %v, attendu %v", hote, err, context.Canceled)
 		}
 	}
