@@ -26,6 +26,9 @@ func brancheLAcces(app core.App) {
 	// enregistrée, donc avant le changement. Une ligne de sa propre recette
 	// passe le contrôle, puis atterrit sous celle d'un autre.
 	app.OnRecordUpdateRequest("ingredients").BindFunc(fige("recipe"))
+	// Le droit d'entrer dans l'établi (curateur.go) : figé contre l'API REST,
+	// sauf pour le superuser — c'est par /_/ qu'il s'accorde.
+	app.OnRecordUpdateRequest("users").BindFunc(figeLeCurateurSaufPourLeSuperuser)
 }
 
 // attribueALAppelant pose l'auteur d'une recette créée par l'API.
