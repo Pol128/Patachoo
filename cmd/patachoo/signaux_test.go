@@ -35,6 +35,10 @@ func TestLesSignauxDUneLigne(t *testing.T) {
 		// normalisation du pack, il sortirait en mot perdu — et c'est la
 		// régression qui rend le signal inutilisable.
 		{"1 pincée(s) Sel", []string{}},
+		// Le sac des champs se construit sur AlimentTexte et non sur Aliment :
+		// « tomates » est écrit sur la ligne, « tomate » est la forme du
+		// lexique. Prendre le canonique inventerait ici un mot perdu.
+		{"2 tomates", []string{}},
 
 		// Un simple trou de lexique n'allume que lui : c'est le cas qui dit
 		// que les quatre autres signaux ne suivent pas.
@@ -76,6 +80,33 @@ func TestLesSignauxDUneLigne(t *testing.T) {
 			}
 			if !slices.Equal(obtenus, c.attendus) {
 				t.Errorf("signaux = %q, attendu %q", obtenus, c.attendus)
+			}
+		})
+	}
+}
+
+// La coupe aux soudures chiffre/lettre, dans les deux sens, testée sur le sac
+// de mots lui-même.
+//
+// Le sens chiffre → lettre se voit de bout en bout — « 100g » est une quantité
+// et une unité, donc deux champs, et la table le dit. Le sens inverse, lui, ne
+// se voit sur aucune ligne : « T55 » tient entier dans l'aliment, et un
+// découpage qui le laisserait soudé donnerait le même sac des deux côtés. Sans
+// ce test, la moitié de la règle ne serait pas couverte.
+func TestLesMotsSeCoupentAuxSouduresDansLesDeuxSens(t *testing.T) {
+	a := analyseurDeTest(t)
+
+	cas := []struct {
+		texte    string
+		attendus []string
+	}{
+		{"100g", []string{"100", "g"}},
+		{"farine T55", []string{"farine", "t", "55"}},
+	}
+	for _, c := range cas {
+		t.Run(c.texte, func(t *testing.T) {
+			if obtenus := a.mots(c.texte); !slices.Equal(obtenus, c.attendus) {
+				t.Errorf("mots = %q, attendu %q", obtenus, c.attendus)
 			}
 		})
 	}
