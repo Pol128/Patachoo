@@ -638,3 +638,120 @@ func TestLAvancementSeBorneParLaDureeEtNonParLesLignes(t *testing.T) {
 			obtenues, lignes)
 	}
 }
+
+// --- Le démarrage et l'arrêt ------------------------------------------------
+
+// TestLOuvrierDAnalyseDemarreAvecLeServeurEtSArreteAvecLui :
+// brancheLOuvrierDAnalyse est le seul chemin par lequel l'ouvrier tourne en
+// production. Sans ce test, retirer son appel de main(), ou vider le corps de
+// tourne, laisserait la suite entièrement verte — le même argument que
+// TestLOuvrierDemarreAvecLeServeurEtSArreteAvecLui pour l'ouvrier d'import.
+//
+// Les trois temps que lui seul prouve : la reprise en échec passe bien par le
+// démarrage — les autres tests appellent rendLesAnalysesInterrompues à la
+// main —, une passe déposée dans la file est menée à son terme — c'est le seul
+// chemin que la page de PATA-124 empruntera —, et l'arrêt attend l'ouvrier.
+// Cette attente est ce qui garantit que la dernière écriture, la passe en
+// cours qui passe en échec, se fait sur une base encore ouverte : c'est l'état
+// que la reprise du démarrage suivant attend.
+func TestLOuvrierDAnalyseDemarreAvecLeServeurEtSArreteAvecLui(t *testing.T) {
+	a := analyseurDeTest(t)
+	app := baseNeuveAvec(t, a)
+
+	interrompue := passeEnCours(t, app)
+
+	o := brancheLOuvrierDAnalyse(app, a)
+	// Un test qui échoue avant l'arrêt laisserait l'ouvrier tourner sur une
+	// base que le nettoyage referme. Arrêter deux fois est sans effet.
+	t.Cleanup(func() { _ = app.OnTerminate().Trigger(&core.TerminateEvent{App: app}) })
+
+	if err := app.OnServe().Trigger(&core.ServeEvent{App: app}); err != nil {
+		t.Fatalf("démarrage du serveur : %v", err)
+	}
+
+	// Le démarrage : la passe qu'un arrêt a laissée en cours est rendue à
+	// l'échec sans que personne ne l'ait demandé.
+	attendLeStatut(t, app, interrompue, statutEchec,
+		"la passe laissée en cours n'a pas été reprise au démarrage")
+
+	// La file : une passe déposée est menée, avec ses formes écrites.
+	deposee, err := o.metEnFile(sourceFournie,
+		corpus("100 g de farine", "1 pincée de sel", "100 g de farine"))
+	if err != nil {
+		t.Fatalf("mise en file refusée : %v", err)
+	}
+	menee := attendLeStatut(t, app, deposee, statutTermine,
+		"la passe déposée dans la file n'a pas été menée : l'ouvrier ne la consomme pas")
+	if formes := menee.GetInt("forms"); formes != 2 {
+		t.Errorf("forms = %d, attendu 2 — « 100 g de farine » est déposée deux fois", formes)
+	}
+	if ecrites := formesDe(t, app, deposee); len(ecrites) != 2 {
+		t.Errorf("%d forme(s) écrite(s), attendu 2 : la passe a été close sans être analysée",
+			len(ecrites))
+	}
+
+	// L'arrêt : OnTerminate ne rend la main qu'une fois la passe en cours
+	// close, sur une base encore ouverte.
+	partie := make(chan struct{}, 1)
+	interminable, err := o.metEnFile(sourceFournie, corpusQuiTraine(partie))
+	if err != nil {
+		t.Fatalf("mise en file de la passe interminable refusée : %v", err)
+	}
+	select {
+	case <-partie:
+	case <-time.After(10 * time.Second):
+		t.Fatal("aucune ligne n'a été lue : l'ouvrier n'a pas pris la passe")
+	}
+
+	if err := app.OnTerminate().Trigger(&core.TerminateEvent{App: app}); err != nil {
+		t.Fatalf("arrêt du serveur : %v", err)
+	}
+	if statut := passeRelue(t, app, interminable).GetString("status"); statut != statutEchec {
+		t.Errorf("passe en %q quand OnTerminate a rendu la main, attendu %q : "+
+			"l'arrêt n'a pas attendu l'ouvrier", statut, statutEchec)
+	}
+}
+
+// corpusQuiTraine rend des lignes sans jamais s'arrêter, en signalant la
+// première : c'est ce qui laisse au test le temps de déclencher l'arrêt
+// pendant qu'une passe tourne.
+//
+// La pause entre deux lignes est ce qui rend l'attente d'OnTerminate visible :
+// l'annulation du contexte tombe pendant l'une d'elles, et l'ouvrier ne clôt
+// donc la passe qu'après. Sans attente, le test lirait la base avant cette
+// écriture-là.
+func corpusQuiTraine(partie chan<- struct{}) sourceDeLignes {
+	return func(yield func(string, error) bool) {
+		for {
+			if !yield("1 pincée de sel", nil) {
+				return
+			}
+			select {
+			case partie <- struct{}{}:
+			default:
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+}
+
+// attendLeStatut attend que la passe porte le statut voulu, et la rend relue.
+// L'ouvrier tourne sur sa propre goroutine : un test qui lirait la base
+// aussitôt y lirait l'état d'avant.
+func attendLeStatut(t *testing.T, app core.App, passe *core.Record,
+	statut, plainte string) *core.Record {
+	t.Helper()
+
+	limite := time.Now().Add(10 * time.Second)
+	for {
+		relue := passeRelue(t, app, passe)
+		obtenu := relue.GetString("status")
+		if obtenu == statut {
+			return relue
+		}
+		if time.Now().After(limite) {
+			t.Fatalf("status = %q après dix secondes, attendu %q : %s", obtenu, statut, plainte)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
