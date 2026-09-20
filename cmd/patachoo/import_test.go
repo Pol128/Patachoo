@@ -960,6 +960,31 @@ func TestLeDepassementDeLImportRendLaPageEnHTML(t *testing.T) {
 	}
 }
 
+// La page de dépassement rend une saisie que le gestionnaire n'a jamais lue :
+// le rattrapage tombe avant importe, et l'adresse reprise dans le champ n'a
+// donc traversé ni refusDeLAdresse ni le gestionnaire. C'est une chaîne
+// arbitraire du client qui ressort dans une page, et DOD.md §3 lui demande son
+// test d'échappement : le gabarit ne dispense pas du test, puisque rien ne
+// garantit de l'extérieur que le rattrapage emprunte le même que le refus
+// ordinaire. Le pendant du lot est TestLaSaisieRepriseAuDepassementEstEchappee.
+func TestLaSaisieRepriseAuDepassementDeLImportEstEchappee(t *testing.T) {
+	_, mux, cookie := carnetDeTest(t)
+	// Une saisie que refusDeLAdresse écarte : rien ne doit partir, ni avant le
+	// plafond ni au dépassement.
+	reseauPiege(t)
+
+	const injection = `<script>alert(1)</script>`
+
+	corps := epuiseLePlafondDeLImport(t, mux, cookie, "203.0.113.35", injection).Body.String()
+
+	if strings.Contains(corps, injection) {
+		t.Errorf("la saisie reprise ressort telle quelle :\n%s", corps)
+	}
+	if !strings.Contains(corps, "&lt;script&gt;alert(1)&lt;/script&gt;") {
+		t.Errorf("la saisie reprise n'apparaît pas échappée :\n%s", corps)
+	}
+}
+
 // L'étiquette de la règle porte la méthode, et pas seulement le chemin : la
 // page « coller l'URL » n'envoie rien sur le réseau, et la plafonner mettrait
 // le formulaire hors de portée de celui qui vient de dépasser son quota —
