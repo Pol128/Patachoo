@@ -223,25 +223,30 @@ func TestLIndexDeLEtabliEtSesDeclencheursSontCrees(t *testing.T) {
 func TestLIndexDeLEtabliSuitLInsertionDUneForme(t *testing.T) {
 	app := baseNeuve(t)
 
-	formeNeuve(t, app, passeNeuve(t, app), "2 gousses d'ail", "ail")
+	// L'aliment canonique n'apparaît nulle part dans la ligne qui l'a produit :
+	// c'est le cas qui distingue les deux colonnes de l'index l'une de l'autre.
+	formeNeuve(t, app, passeNeuve(t, app), "1 CS de maïzena", "fécule de maïs")
 
-	exigeFormeTrouvee(t, app, "gousses", "2 gousses d'ail")
-	// L'aliment canonique est indexé lui aussi : il n'apparaît pas forcément
-	// dans le brut, et c'est par lui que la page agrégée cherchera.
-	exigeFormeTrouvee(t, app, "ail", "2 gousses d'ail")
+	exigeFormeTrouvee(t, app, "maizena", "1 CS de maïzena")
+	// L'aliment est indexé lui aussi, et c'est par lui que la vue agrégée
+	// cherchera.
+	exigeFormeTrouvee(t, app, "fecule", "1 CS de maïzena")
 }
 
 func TestLIndexDeLEtabliSuitLaModificationDUneForme(t *testing.T) {
 	app := baseNeuve(t)
 	forme := formeNeuve(t, app, passeNeuve(t, app), "200 g de farine", "farine")
 
-	forme.Set("raw", "200 g de sucre")
-	forme.Set("food", "sucre")
+	forme.Set("raw", "20 cl de lait")
+	forme.Set("food", "lait entier")
 	if err := app.Save(forme); err != nil {
 		t.Fatalf("modification de la forme : %v", err)
 	}
 
-	exigeFormeTrouvee(t, app, "sucre", "200 g de sucre")
+	exigeFormeTrouvee(t, app, "lait", "20 cl de lait")
+	// L'aliment suit la modification comme le brut : lui seul porte
+	// « entier ».
+	exigeFormeTrouvee(t, app, "entier", "20 cl de lait")
 	exigeFormeIntrouvable(t, app, "farine")
 }
 
