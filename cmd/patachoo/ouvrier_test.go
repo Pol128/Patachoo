@@ -419,7 +419,7 @@ func atelierDeLOuvrier(t *testing.T) (core.App, *core.Record, *horlogeVirtuelle,
 	app := baseNeuveAvec(t, analyseurDeTest(t))
 	titulaire := compteParDefaut(t, app)
 	h := nouvelleHorlogeVirtuelle()
-	return app, titulaire, h, nouvelOuvrier(app, h)
+	return app, titulaire, h, nouvelOuvrier(app, h, nouvelleCadence(h))
 }
 
 // lotDe écrit la fournée que la page de saisie écrirait.
@@ -1285,7 +1285,7 @@ func TestUnePanneDeLectureDonneUnSortDefinitifALaLigne(t *testing.T) {
 			avecSite(t, horloge, map[string]reponseDuSite{
 				soumise: sertLaRecette("Tarte", finale, "200 g de farine"),
 			})
-			o := nouvelOuvrier(baseQuiRefuseUneSource{App: app, adresse: c.refusee}, horloge)
+			o := nouvelOuvrier(baseQuiRefuseUneSource{App: app, adresse: c.refusee}, horloge, nouvelleCadence(horloge))
 
 			lot := lotDe(t, app, titulaire, soumise)
 			traite(t, o, lot)

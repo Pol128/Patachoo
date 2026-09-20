@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/Pol128/Patachoo/recuperation"
 )
 
 // Le rythme des requêtes sortantes de l'import en lot, hôte par hôte.
@@ -21,6 +23,21 @@ import (
 // un site qui nous autorise dix requêtes par seconde ne nous oblige pas à les
 // faire.
 const delaiEntreRequetes = time.Second
+
+// attenteMaxUnitaire est ce qu'un chemin interactif accepte d'attendre son tour
+// avant d'y renoncer, quelle que soit l'origine de l'attente.
+//
+// Le lot, lui, attend sans limite : il est asynchrone, personne n'est devant
+// lui, et attendre est la politesse. L'unitaire part d'une session qui attend
+// sa réponse, et cinq secondes d'écran qui tourne sont déjà beaucoup — un hôte
+// qu'une fournée parcourt à un Crawl-delay de cinq minutes en ferait des
+// minutes. Laisser du travail de fond bloquer sans plafond du travail
+// interactif est la mauvaise priorité.
+//
+// Et une attente synchrone non bornée est en soi un levier bon marché : cent
+// adresses d'un site qu'on fait parcourir par ailleurs immobiliseraient cent
+// gestionnaires pendant des minutes.
+const attenteMaxUnitaire = 5 * time.Second
 
 // horlogeDuLot est le temps que l'ouvrier lit et attend.
 //
@@ -89,6 +106,21 @@ type cadence struct {
 	delais map[string]time.Duration
 }
 
+// cadenceDeLInstance est le tour de rôle unique du service : l'ouvrier du lot
+// et les chemins unitaires — l'import d'une URL, l'image que le formulaire fait
+// télécharger — y passent tous.
+//
+// Une variable de paquet, et non un champ de l'ouvrier, parce que les
+// gestionnaires de routes sont des fonctions de paquet sans dépendance
+// injectée (brancheLesRoutes) : c'est le seul porteur qu'ils atteignent, et
+// c'est aussi le seul point où un test peut en substituer une autre — la
+// sienne, bâtie sur l'horloge virtuelle.
+//
+// Deux cadences, une par chemin, reviendraient à deux requêtes par seconde vers
+// un même hôte, et le cadencement ne voudrait plus rien dire : c'est le même
+// argument qui veut qu'il n'y ait qu'un ouvrier.
+var cadenceDeLInstance = nouvelleCadence(horlogeSysteme{})
+
 func nouvelleCadence(h horlogeDuLot) *cadence {
 	return &cadence{
 		horloge: h,
@@ -103,7 +135,32 @@ func nouvelleCadence(h horlogeDuLot) *cadence {
 // les hôtes de front : le verrou n'est tenu que le temps du calcul, jamais
 // pendant l'attente. Un créneau réservé puis abandonné — contexte annulé — est
 // perdu, et c'est sans conséquence : il ne fait qu'espacer un peu plus.
-func (c *cadence) attendSonTour(ctx context.Context, hote string) error {
+//
+// attenteMax borne l'attente entière, et zéro ne borne rien. Au-delà, le tour
+// n'est pas pris : renoncer après l'avoir réservé pousserait la file de l'hôte
+// pour une requête qui ne partira pas, et suffirait à affamer un lot en cours
+// en renonçant en boucle.
+//
+// Ce qui a été attendu est rendu à l'appelant : c'est ainsi qu'un appel de
+// recuperation, qui émet deux requêtes, tient une borne valant pour lui entier
+// et non pour chacune. L'attente se lit ici et nulle part ailleurs — sur
+// l'horloge injectée, qui est virtuelle en test.
+//
+// L'attente entière, et non la seule part qui vient d'un autre appel : ce que
+// l'hôte réclame pour lui-même compte dedans. Autrement, c'est le site visé qui
+// décide combien de temps un gestionnaire HTTP reste immobilisé — le
+// Crawl-delay est rapporté avant la requête de page du même appel,
+// delaiAnnonceMax en accepte cinq minutes, et cette attente est prise hors du
+// budget delaiMax de echange : plus rien ne la borne. Un serveur hostile
+// annoncerait « Crawl-delay: 300 » et immobiliserait un gestionnaire par hôte
+// importé, le plafond de dix imports par minute n'y changeant rien puisqu'un
+// sous-domaine par import suffit à en changer.
+//
+// Ce que ce refus coûte, et qui est assumé : un site annonçant plus que la
+// borne n'est pas importable à la main. L'import en lot, lui, l'attend sans
+// limite — personne n'est devant son écran —, et c'est ce que le message du
+// renoncement dit à l'utilisateur.
+func (c *cadence) attendSonTour(ctx context.Context, hote string, attenteMax time.Duration) (time.Duration, error) {
 	c.mu.Lock()
 	maintenant := c.horloge.Maintenant()
 	creneau := maintenant
@@ -114,10 +171,20 @@ func (c *cadence) attendSonTour(ctx context.Context, hote string) error {
 			creneau = prochain
 		}
 	}
+	attente := creneau.Sub(maintenant)
+	if attenteMax > 0 && attente > attenteMax {
+		c.mu.Unlock()
+		return 0, recuperation.ErrAttenteTropLongue
+	}
 	c.dernier[hote] = creneau
 	c.mu.Unlock()
 
-	return c.horloge.Attends(ctx, creneau.Sub(maintenant))
+	if err := c.horloge.Attends(ctx, attente); err != nil {
+		// L'attente a été coupée en chemin : ce qu'elle a duré n'a plus
+		// d'appelant à qui le rendre, l'appel s'arrête ici.
+		return 0, err
+	}
+	return attente, nil
 }
 
 // retiens garde le Crawl-delay qu'un hôte annonce, quand il dépasse le nôtre.
@@ -141,8 +208,8 @@ func (c *cadence) retiens(hote string, annonce time.Duration) {
 // le sien.
 type cadenceDeRecuperation struct{ *cadence }
 
-func (c cadenceDeRecuperation) AttendSonTour(ctx context.Context, hote string) error {
-	return c.attendSonTour(ctx, hote)
+func (c cadenceDeRecuperation) AttendSonTour(ctx context.Context, hote string, attenteMax time.Duration) (time.Duration, error) {
+	return c.attendSonTour(ctx, hote, attenteMax)
 }
 
 func (c cadenceDeRecuperation) Retiens(hote string, annonce time.Duration) {

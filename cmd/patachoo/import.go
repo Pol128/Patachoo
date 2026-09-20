@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -48,7 +49,8 @@ var recuperePage = func(ctx context.Context, adresse string, choix ...recuperati
 // champ, avant le moindre appel.
 func brancheLImport(routeur *router.Router[*core.RequestEvent]) {
 	routeur.GET("/recettes/importer", pageImport).Bind(exigeUneSession())
-	routeur.POST("/recettes/importer", importe).Bind(exigeLeJetonAntiRejeu(), exigeUneSession())
+	routeur.POST("/recettes/importer", importe).Bind(exigeLeJetonAntiRejeu(), exigeUneSession(),
+		rendLeDepassementEnHTML("patachooDepassementImport", rendLeDepassementDeLImport))
 }
 
 // donneesImport est ce que la page « coller l'URL » donne à son gabarit. URL
@@ -78,7 +80,13 @@ func importe(e *core.RequestEvent) error {
 		return rendLaPageDImport(e, adresse, refus)
 	}
 
-	trouve, message := ceQuiAEteTrouve(e.Request.Context(), adresse)
+	trouve, message, renonce := ceQuiAEteTrouve(e.Request.Context(), adresse)
+	if renonce {
+		// Rien n'a été lu, et il n'y a pas de fiche à proposer : le champ se
+		// re-rend avec l'adresse et le message, comme après un refus de saisie.
+		// Un formulaire vide donnerait à croire que le site n'a rien publié.
+		return rendLaPageDImport(e, adresse, message)
+	}
 
 	saisie, err := formulaireVide(e.App)
 	if err != nil {
@@ -104,10 +112,40 @@ func importe(e *core.RequestEvent) error {
 // rendLaPageDImport rend le champ « coller l'URL », avec un message s'il y en
 // a un.
 func rendLaPageDImport(e *core.RequestEvent, adresse, message string) error {
-	return rendre(e, "import.html", "import-corps.html", &donneesImport{
+	return rendLaPageDImportAvecStatut(e, http.StatusOK, adresse, message)
+}
+
+// rendLaPageDImportAvecStatut rend la même page sous un autre code de retour.
+//
+// Le dépassement du plafond en a besoin : un refus du limiteur rendu 200 ferait
+// passer pour une page valide ce que le protocole doit signaler comme un refus.
+func rendLaPageDImportAvecStatut(e *core.RequestEvent, statut int, adresse, message string) error {
+	return rendreAvecStatut(e, statut, "import.html", "import-corps.html", &donneesImport{
 		donneesPage: donneesPage{Titre: "Importer une recette — Patachoo", Message: message},
 		URL:         adresse,
 	})
+}
+
+// messageDebitDeLImportDepasse est ce que voit celui qui a dépassé le plafond
+// de débit posé par la migration 1789660000_debit_import.
+//
+// Il parle de l'adresse, et non du compte : le limiteur compte par e.RealIP()
+// quelle que soit l'audience de la règle, et promettre un plafond par compte
+// serait promettre ce que le code ne fait pas.
+const messageDebitDeLImportDepasse = "Trop d'imports lancés depuis cette adresse. Réessayez dans une minute."
+
+// rendLeDepassementDeLImport est ce que rendLeDepassementEnHTML rend quand le
+// plafond de POST /recettes/importer tombe : le champ « coller l'URL »
+// lui-même, sous un 429.
+//
+// L'adresse est reprise de la requête refusée : « le champ se re-rend avec ce
+// que l'utilisateur a tapé » vaut aussi quand c'est le plafond qui refuse, et
+// importe n'a jamais été appelé pour la lire. Au-delà de borneDuCorpsRattrape
+// la lecture échoue et le champ revient vide — le refus reste lisible, c'est ce
+// qui compte.
+func rendLeDepassementDeLImport(e *core.RequestEvent) error {
+	return rendLaPageDImportAvecStatut(e, http.StatusTooManyRequests,
+		e.Request.PostFormValue("url"), messageDebitDeLImportDepasse)
 }
 
 // refusDeLAdresse dit pourquoi une adresse ne mérite pas qu'on aille la
@@ -172,12 +210,23 @@ type preRemplissage struct {
 // Elle rend toujours de quoi remplir le formulaire — au pire l'adresse seule —
 // et le message qui nomme la cause quand quelque chose a manqué. Jamais
 // d'erreur : un import raté n'est pas une panne, c'est le parcours d'échec.
-func ceQuiAEteTrouve(ctx context.Context, adresse string) (preRemplissage, string) {
-	page, err := recuperePage(ctx, adresse)
+//
+// Le troisième retour distingue le seul échec qui ne soit pas un parcours
+// d'échec : l'appel a renoncé à attendre le tour de l'hôte, rien n'est parti,
+// et il n'y a donc aucune fiche à proposer — pas même une fiche vide, qui
+// donnerait à croire que le site a été lu et n'a rien publié.
+func ceQuiAEteTrouve(ctx context.Context, adresse string) (preRemplissage, string, bool) {
+	// La cadence de l'instance, celle-là même que l'ouvrier du lot emprunte :
+	// l'import unitaire sort sur le réseau sous notre adresse et sous notre
+	// nom, et le rythme que le lot promet ne vaudrait rien s'il suffisait de
+	// coller une URL en boucle pour en sortir.
+	page, err := recuperePage(ctx, adresse,
+		recuperation.AvecCadence(cadenceDeRecuperation{cadenceDeLInstance}),
+		recuperation.AvecAttenteMaxDeCadence(attenteMaxUnitaire))
 	if err != nil {
 		// La page n'a pas été atteinte : il n'y a rien à lire, pas même ses
 		// balises Open Graph. Reste l'adresse collée.
-		return preRemplissage{SourceURL: adresse}, messageDeLEchec(err)
+		return preRemplissage{SourceURL: adresse}, messageDeLEchec(err), estUneAttenteAbandonnee(err)
 	}
 
 	ouverture := litOpenGraph(page.Corps)
@@ -194,13 +243,20 @@ func ceQuiAEteTrouve(ctx context.Context, adresse string) (preRemplissage, strin
 		// qui devrait sinon tout retaper.
 		trouve.Titre = ouverture.Titre
 		trouve.ImageDistante = ouverture.Image
-		return trouve, messageDeLEchec(err)
+		return trouve, messageDeLEchec(err), false
 	}
 
 	champs := preRemplissageDe(recette)
 	champs.SourceURL = trouve.SourceURL
 	champs.SourceNom = trouve.SourceNom
-	return champs, ""
+	return champs, "", false
+}
+
+// estUneAttenteAbandonnee dit si l'échec est un renoncement à attendre le tour
+// de l'hôte. C'est la cause nommée qui le dit, jamais le texte de l'erreur.
+func estUneAttenteAbandonnee(err error) bool {
+	var refus *recuperation.Erreur
+	return errors.As(err, &refus) && refus.Cause == recuperation.AttenteDeCadence
 }
 
 // preRemplissageDe rend, d'une recette extraite, les champs qu'elle garnit.
@@ -279,6 +335,19 @@ const (
 	messageAucunBalisage   = "Ce site ne publie pas ses recettes dans un format exploitable."
 	messageJSONInvalide    = "Ce site publie des données structurées illisibles : son balisage est cassé."
 	messageTitreAbsent     = "La recette publiée par ce site n'a pas de titre, et une fiche sans titre n'en est pas une."
+	// messageTourTropLoin n'est pas un échec du site : c'est nous qui avons
+	// renoncé à attendre notre tour vers lui. Nommé d'après ce que le code sait
+	// — le tour est trop loin — et non d'après une occupation de l'hôte, qu'il
+	// ne sait pas constater.
+	//
+	// Il ne nomme pas ce qui éloigne ce tour, parce que le code ne le sait pas :
+	// recuperation.AttenteDeCadence ne distingue pas un import en lot qui
+	// parcourt l'hôte de l'hôte qui réclame lui-même de longs délais. Et il ne
+	// promet pas qu'un nouvel essai aboutira — sur un Crawl-delay long, rien ne
+	// périme l'annonce et tous les essais suivants renonceront au même endroit.
+	// Ce qu'il offre à la place est la seule sortie qui existe vraiment :
+	// l'import en lot, qui attend son tour sans limite.
+	messageTourTropLoin = "Nous espaçons nos visites à un même site, et notre prochain tour vers celui-ci est plus loin que ce qu'un import à la main accepte d'attendre : rien n'a été lu. Un import en lot, lui, patientera le temps qu'il faudra."
 )
 
 // messageDeLEchec nomme la cause dans les mots de l'utilisateur.
@@ -319,6 +388,8 @@ func messageDuRefus(refus *recuperation.Erreur) string {
 		return messagePolitique
 	case recuperation.TailleMax:
 		return messageTropVolumineuse
+	case recuperation.AttenteDeCadence:
+		return messageTourTropLoin
 	default:
 		return messageInjoignable
 	}

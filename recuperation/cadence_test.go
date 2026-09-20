@@ -31,12 +31,12 @@ type cadenceNotee struct {
 	annonce time.Duration
 }
 
-func (c *cadenceNotee) AttendSonTour(_ context.Context, hote string) error {
+func (c *cadenceNotee) AttendSonTour(_ context.Context, hote string, _ time.Duration) (time.Duration, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	c.tours = append(c.tours, hote)
-	return nil
+	return 0, nil
 }
 
 func (c *cadenceNotee) Retiens(_ string, annonce time.Duration) {
@@ -66,12 +66,12 @@ func (c *cadenceNotee) delaiRapporte() time.Duration {
 // vérifier que l'attente ne se prend pas sur le compte d'une borne.
 type cadenceLente struct{ attente time.Duration }
 
-func (c cadenceLente) AttendSonTour(ctx context.Context, _ string) error {
+func (c cadenceLente) AttendSonTour(ctx context.Context, _ string, _ time.Duration) (time.Duration, error) {
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return 0, ctx.Err()
 	case <-time.After(c.attente):
-		return nil
+		return c.attente, nil
 	}
 }
 
@@ -305,5 +305,130 @@ func TestUnRobotsEnPanneNEntrePasDansLeCache(t *testing.T) {
 	}
 	if lues := demandes.Load(); lues != 2 {
 		t.Errorf("%d robots.txt demandés, attendu 2 : le refus né d'un 5xx ne se garde pas", lues)
+	}
+}
+
+// --- La borne de l'attente --------------------------------------------------
+
+// cadenceOccupee tient le rôle d'un hôte déjà pris : le tour qu'elle donne est
+// à `attente` d'ici, et elle renonce d'elle-même quand l'appelant a dit ne pas
+// vouloir attendre autant. C'est le contrat que AvecAttenteMaxDeCadence pose,
+// et que la cadence de production honore.
+type cadenceOccupee struct {
+	attente time.Duration
+
+	mu     sync.Mutex
+	bornes []time.Duration
+}
+
+func (c *cadenceOccupee) AttendSonTour(ctx context.Context, _ string, attenteMax time.Duration) (time.Duration, error) {
+	c.mu.Lock()
+	c.bornes = append(c.bornes, attenteMax)
+	c.mu.Unlock()
+
+	if attenteMax > 0 && c.attente > attenteMax {
+		return 0, ErrAttenteTropLongue
+	}
+
+	select {
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	case <-time.After(c.attente):
+		return c.attente, nil
+	}
+}
+
+func (c *cadenceOccupee) Retiens(string, time.Duration) {}
+
+// bornesRecues rend ce que chaque échange a annoncé comme attente maximale.
+func (c *cadenceOccupee) bornesRecues() []time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return append([]time.Duration(nil), c.bornes...)
+}
+
+// TestLAttenteTropLongueAbandonneLAppel : l'appelant qui a dit combien de temps
+// il acceptait d'attendre son tour n'attend pas davantage.
+//
+// La cause est la sienne, et non delai_depasse : « ce site est occupé » et « ce
+// site ne répond pas » n'appellent pas la même réaction, et les confondre
+// enverrait chercher la panne au mauvais endroit. Rien ne part : le tour n'a pas
+// été pris, donc aucune requête n'a été émise.
+func TestLAttenteTropLongueAbandonneLAppel(t *testing.T) {
+	rythme := &cadenceOccupee{attente: time.Hour}
+
+	_, err := recupere(t, "https://exemple.test/recettes/tarte",
+		AvecTransport(transportPiege{t}),
+		AvecCadence(rythme),
+		AvecAttenteMaxDeCadence(time.Millisecond))
+
+	if cause := echec(t, err).Cause; cause != AttenteDeCadence {
+		t.Errorf("cause %q, attendu %q", cause, AttenteDeCadence)
+	}
+	if bornes := rythme.bornesRecues(); !slices.Equal(bornes, []time.Duration{time.Millisecond}) {
+		t.Errorf("bornes annoncées %v, attendu une seule d'une milliseconde — l'appel s'arrête au premier tour refusé", bornes)
+	}
+}
+
+// TestSansBorneLAttenteDeCadenceNEstPasInterrompue : l'option est la seule
+// chose qui borne le tour de rôle, et sans elle rien ne le borne.
+//
+// C'est ce qui laisse l'ouvrier du lot inchangé : il attend le temps qu'il
+// faut, personne n'est devant son écran, et attendre est la politesse.
+func TestSansBorneLAttenteDeCadenceNEstPasInterrompue(t *testing.T) {
+	srv := serveurRobots(t, "User-agent: *\nDisallow: /prive\n", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, "page")
+	})
+	rythme := &cadenceOccupee{attente: 20 * time.Millisecond}
+
+	if _, err := recupere(t, srv.URL+"/recettes/tarte", autorise(srv), AvecCadence(rythme)); err != nil {
+		t.Fatalf("la page devait être récupérée : %v", err)
+	}
+
+	for _, borne := range rythme.bornesRecues() {
+		if borne != 0 {
+			t.Errorf("borne annoncée %v, attendu aucune : une attente maximale s'est invitée sans être demandée", borne)
+		}
+	}
+}
+
+// TestLaBorneDeCadenceEstCelleDeLAppelEntier : ce que l'appelant accepte
+// d'attendre son tour vaut pour l'appel entier — robots.txt et page confondus
+// —, et non pour chacun de ses deux échanges.
+//
+// C'est le même raisonnement que pour le budget de temps réseau, et la doc de
+// echange l'écrit déjà pour lui : une borne par échange double le pire cas, et
+// c'est l'utilisateur de l'import unitaire qui le paie, devant un écran qui
+// tourne. Ici, chaque échange part avec ce qu'il reste de la borne, et non avec
+// la borne entière.
+//
+// Deux attentes de trois millisecondes sous une borne de cinq : chacune passe
+// prise isolément, et c'est leur somme que la borne refuse.
+func TestLaBorneDeCadenceEstCelleDeLAppelEntier(t *testing.T) {
+	const attenteParEchange = 3 * time.Millisecond
+	const borne = 5 * time.Millisecond
+
+	srv := serveurRobots(t, "User-agent: *\nDisallow: /prive\n", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, "page")
+	})
+	rythme := &cadenceOccupee{attente: attenteParEchange}
+
+	_, err := recupere(t, srv.URL+"/recettes/tarte", autorise(srv),
+		AvecCadence(rythme), AvecAttenteMaxDeCadence(borne))
+
+	if cause := echec(t, err).Cause; cause != AttenteDeCadence {
+		t.Errorf("cause %q, attendu %q", cause, AttenteDeCadence)
+	}
+	bornes := rythme.bornesRecues()
+	if len(bornes) != 2 {
+		t.Fatalf("%d tours demandés, attendu 2 — le robots.txt, puis la page : %v", len(bornes), bornes)
+	}
+	if bornes[0] != borne {
+		t.Errorf("borne du premier échange %v, attendu %v : l'appel n'a encore rien attendu", bornes[0], borne)
+	}
+	if reste := borne - attenteParEchange; bornes[1] != reste {
+		t.Errorf("borne du second échange %v, attendu %v — ce qu'il reste de la borne après le premier échange, "+
+			"faute de quoi le pire cas de l'appel vaut deux fois la borne", bornes[1], reste)
 	}
 }

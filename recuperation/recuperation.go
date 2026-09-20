@@ -7,7 +7,7 @@
 // (DOD.md §3). Le refus des adresses non routables se fait donc sur l'adresse
 // résolue, juste avant le connect, et non sur le nom d'hôte — voir controle.
 //
-// L'échec est l'une des six causes nommées, jamais un message libre : PATA-9
+// L'échec est l'une des sept causes nommées, jamais un message libre : PATA-9
 // les traduit pour l'utilisateur sans avoir à les analyser.
 package recuperation
 
@@ -24,7 +24,7 @@ import (
 	"time"
 )
 
-// Les six causes d'échec. Ce sont des chaînes stables : elles font partie du
+// Les sept causes d'échec. Ce sont des chaînes stables : elles font partie du
 // contrat que lit l'appelant.
 const (
 	// Injoignable : DNS muet, connexion refusée, ou trop de redirections.
@@ -44,7 +44,19 @@ const (
 	DelaiDepasse = "delai_depasse"
 	// TailleMax : la page dépasse le plafond ; la lecture s'est arrêtée là.
 	TailleMax = "taille_max"
+	// AttenteDeCadence : le tour de l'hôte était plus loin que ce que
+	// l'appelant a dit accepter d'attendre, et l'appel y a renoncé. Rien n'est
+	// parti. Distincte de DelaiDepasse, et pas par scrupule : ici le site n'a
+	// rien refusé et n'a même rien vu, là il a été interrogé et n'a pas répondu
+	// — ce ne sont pas les mêmes suites, ni pour l'utilisateur ni pour nous.
+	AttenteDeCadence = "attente_de_cadence"
 )
+
+// ErrAttenteTropLongue est ce qu'une Cadence rend quand le tour de l'hôte est
+// plus loin que l'attente maximale qu'on lui a annoncée. C'est le seul mot que
+// ce paquet-ci attend d'elle : il le traduit en AttenteDeCadence, et l'appel
+// s'arrête là.
+var ErrAttenteTropLongue = errors.New("tour de rôle plus loin que l'attente acceptée")
 
 // Agent nous nomme auprès des sites visités, et donne où écrire si l'un d'eux
 // veut nous en empêcher. C'est aussi le jeton que robots.txt peut viser.
@@ -105,6 +117,9 @@ type options struct {
 	// cadence espace les requêtes sortantes, hôte par hôte. Nil : elles
 	// partent dès qu'on les fait.
 	cadence Cadence
+	// attenteMaxDeCadence borne l'attente du tour de rôle. Nul : elle n'est
+	// pas bornée, et l'appel attend le temps qu'il faut.
+	attenteMaxDeCadence time.Duration
 	// robots garde le robots.txt déjà lu de chaque hôte. Nil : il est
 	// redemandé à chaque appel.
 	robots *RobotsRetenus
@@ -137,8 +152,26 @@ func AvecTailleMax(octets int64) Option {
 // Retiens rapporte le Crawl-delay lu dans le robots.txt. Il est rapporté avant
 // la requête de page, et non après l'appel : c'est ce qui le fait valoir dès
 // cette page-là.
+//
+// attenteMax est ce que l'appelant accepte d'attendre son tour, et zéro ne
+// borne rien. L'attente entière y entre, Crawl-delay annoncé compris : sans
+// cela, l'hôte visé décide de la durée de l'appel, puisque cette attente est
+// prise hors du budget delaiMax et que Retiens rapporte avant la page.
+//
+// Une implémentation qui ne peut pas tenir cette borne rend
+// ErrAttenteTropLongue sans rien attendre — et sans prendre le tour, qu'elle
+// n'utilisera pas. C'est la cadence qui en décide plutôt que ce paquet-ci,
+// parce qu'elle seule sait, avant d'attendre, à quelle distance est le tour :
+// une échéance posée ici interromprait l'attente au lieu d'y renoncer, et se
+// lirait sur l'horloge du système là où la sienne peut être virtuelle.
+//
+// Elle rend ce qu'elle a réellement attendu, pour que l'échange suivant parte
+// avec ce qu'il en reste — la borne est celle de l'appel, et non celle d'un
+// échange (voir echange). C'est elle qui le rapporte, et non ce paquet-ci qui
+// le mesure, pour la raison qui précède : son horloge peut être virtuelle, et
+// une durée lue ici sur celle du système ne vaudrait rien.
 type Cadence interface {
-	AttendSonTour(ctx context.Context, hote string) error
+	AttendSonTour(ctx context.Context, hote string, attenteMax time.Duration) (time.Duration, error)
 	Retiens(hote string, annonce time.Duration)
 }
 
@@ -149,6 +182,27 @@ type Cadence interface {
 // echange.
 func AvecCadence(c Cadence) Option {
 	return func(o *options) { o.cadence = c }
+}
+
+// AvecAttenteMaxDeCadence borne le temps que l'appel accepte de passer à
+// attendre son tour vers l'hôte, et rend AttenteDeCadence au-delà. Ce que
+// l'hôte réclame pour lui-même entre dans cette borne : voir Cadence.
+//
+// L'appel entier, et non chacun de ses deux échanges : le robots.txt et la
+// page se partagent cette borne comme ils se partagent le budget de temps
+// réseau, faute de quoi le pire cas vaudrait son double — voir echange.
+//
+// Sans elle, rien ne borne cette attente : c'est le cas de l'import en lot, qui
+// est asynchrone et que personne ne regarde. Un chemin interactif, lui, a
+// quelqu'un devant son écran — et une attente synchrone sans plafond est un
+// levier bon marché : autant d'adresses d'un hôte occupé que de gestionnaires
+// immobilisés.
+//
+// Distincte de AvecDelaiMax, qui borne le temps de réseau : l'attente d'un tour
+// de rôle n'entre dans aucune borne de temps (voir echange), et la compter
+// dedans rendrait injouable tout Crawl-delay plus long qu'elle.
+func AvecAttenteMaxDeCadence(d time.Duration) Option {
+	return func(o *options) { o.attenteMaxDeCadence = d }
 }
 
 // AvecRobotsRetenus garde le robots.txt de chaque hôte au lieu de le redemander
@@ -221,7 +275,7 @@ func Recupere(ctx context.Context, adresse string, choix ...Option) (Page, error
 		return Page{}, &Erreur{Cause: RefuseeParPolitique, URL: adresse}
 	}
 
-	r := &recuperateur{o: o, restant: o.delaiMax}
+	r := &recuperateur{o: o, restant: o.delaiMax, resteACadencer: o.attenteMaxDeCadence}
 	r.client = &http.Client{Transport: r.pile(), CheckRedirect: r.verifieRedirection}
 	// Le transport est propre à l'appel et rien ne le partage : passé ce
 	// retour, plus personne ne peut réutiliser ses connexions inactives, mais
@@ -256,9 +310,15 @@ func Recupere(ctx context.Context, adresse string, choix ...Option) (Page, error
 //
 // Un budget épuisé donne un contexte déjà échu : la requête ne part pas, et
 // l'échec se nomme comme un dépassement de délai, ce qu'il est.
+//
+// L'attente de cadence a son propre budget, tenu de la même façon et pour la
+// même raison : deux échanges qui partiraient chacun avec la borne entière
+// feraient attendre l'appel deux fois ce que l'appelant a dit accepter. Ce
+// budget-là ne se lit pas sur l'horloge d'ici — celle de la cadence peut être
+// virtuelle —, c'est elle qui rapporte ce qu'elle a fait attendre.
 func (r *recuperateur) echange(ctx context.Context, hote string) (context.Context, context.CancelFunc, error) {
 	if r.o.cadence != nil {
-		if err := r.o.cadence.AttendSonTour(ctx, hote); err != nil {
+		if err := r.attendSonTour(ctx, hote); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -269,6 +329,34 @@ func (r *recuperateur) echange(ctx context.Context, hote string) (context.Contex
 		r.restant -= time.Since(debut)
 		arrete()
 	}, nil
+}
+
+// attendSonTour prend le tour de l'hôte sur ce qu'il reste à l'appel d'attente
+// de cadence, et retranche du reste ce que la cadence a fait attendre.
+//
+// Sans borne — le cas de l'import en lot —, il n'y a rien à tenir : le zéro
+// qu'attend la cadence traverse tel quel, et rien ne se décompte.
+//
+// Un reste épuisé renonce sans demander son tour. C'est plus strict d'un
+// cheveu que de demander un tour immédiat, et c'est voulu : une cadence ne sait
+// dire « aucune borne » que par zéro, et un reste nul passé tel quel rouvrirait
+// l'attente entière. La cadence de l'instance, elle, ne rend de toute façon
+// jamais un tour immédiat au second échange — elle espace d'au moins sa
+// politesse.
+func (r *recuperateur) attendSonTour(ctx context.Context, hote string) error {
+	bornee := r.o.attenteMaxDeCadence > 0
+	if bornee && r.resteACadencer <= 0 {
+		return ErrAttenteTropLongue
+	}
+
+	attendu, err := r.o.cadence.AttendSonTour(ctx, hote, r.resteACadencer)
+	if err != nil {
+		return err
+	}
+	if bornee {
+		r.resteACadencer -= attendu
+	}
+	return nil
 }
 
 // analyseURL n'accepte qu'une URL absolue de schéma http ou https, avec un hôte.
@@ -296,6 +384,10 @@ type recuperateur struct {
 	// récupérateur par appel, et un seul appel à la fois dessus : rien ne le
 	// partage entre goroutines.
 	restant time.Duration
+	// resteACadencer est ce qu'il reste à cet appel d'attente de tour de rôle,
+	// tenu comme restant et pour la même raison. Nul quand aucune borne n'a
+	// été demandée : il n'y a alors rien à décompter.
+	resteACadencer time.Duration
 }
 
 // pile monte le transport HTTP. Le proxy est retiré : un proxy déclaré dans
@@ -492,6 +584,10 @@ func (r *recuperateur) echec(err error, adresse, siDelai string) *Erreur {
 	}
 
 	switch {
+	case errors.Is(err, ErrAttenteTropLongue):
+		// Avant le dépassement de délai, et distincte de lui : l'appel a
+		// renoncé à attendre son tour, il n'a pas attendu une réponse en vain.
+		return &Erreur{Cause: AttenteDeCadence, URL: adresse}
 	case errors.Is(err, errAdresseRefusee):
 		return &Erreur{Cause: RefuseeParPolitique, URL: adresse}
 	case errors.Is(err, context.DeadlineExceeded), estDelai(err):
