@@ -63,9 +63,16 @@ func main() {
 	// lui-même.
 	brancheLOuvrier(app)
 
+	// L'ouvrier de l'établi, lui aussi, ne vit que le temps du service : il
+	// reprend au démarrage les passes qu'un arrêt a laissées en cours, et mène
+	// celles qu'on lui dépose. L'analyseur est celui d'au-dessus — une passe
+	// lit un corpus entier, et recharger le pack pour elle serait le payer
+	// deux fois.
+	brancheLOuvrierDAnalyse(app, analyseur)
+
 	// Avant app.Start() : c'est Execute() qui amorce l'application puis exécute
 	// la sous-commande demandée, laquelle dispose donc d'une base ouverte.
-	commandeAEchoue := brancheLesCommandes(app, app.RootCmd)
+	commandeAEchoue := brancheLesCommandes(app, app.RootCmd, analyseur)
 
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
 		brancheLesRoutes(se.Router, analyseur)

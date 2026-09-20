@@ -129,7 +129,7 @@ func executeLaCommande(t *testing.T, app core.App, args ...string) (sortie strin
 	t.Helper()
 
 	racine := &cobra.Command{Use: "patachoo"}
-	echoue := brancheLesCommandes(app, racine)
+	echoue := brancheLesCommandes(app, racine, analyseurDeTest(t))
 
 	var tampon bytes.Buffer
 	racine.SetOut(&tampon)

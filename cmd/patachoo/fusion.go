@@ -14,6 +14,10 @@ import (
 // brancheLesCommandes ajoute nos sous-commandes à la racine du binaire et rend
 // un témoin : interrogé après l'exécution, il dit si une commande a échoué.
 //
+// L'analyseur est celui que main charge une fois : une commande qui le
+// rechargerait paierait le pack de langue et le lexique pour rien, et l'établi
+// (PATA-123) en fait tourner un sur un corpus entier.
+//
 // PocketBase amorce l'application avant d'exécuter la commande : une
 // sous-commande dispose donc d'un core.App complet, base ouverte, sans rien
 // monter de plus. En revanche, Execute() ignore délibérément l'erreur rendue
@@ -21,7 +25,7 @@ import (
 // their error » — et app.Start() ne rend donc rien à main(). Sans ce témoin,
 // une fusion refusée s'arrêterait sur un code de retour nul, et le script qui
 // l'appelle la croirait passée.
-func brancheLesCommandes(app core.App, racine *cobra.Command) (aEchoue func() bool) {
+func brancheLesCommandes(app core.App, racine *cobra.Command, a *analyseur) (aEchoue func() bool) {
 	echec := false
 	retient := func(err error) error {
 		if err != nil {
@@ -38,6 +42,7 @@ func brancheLesCommandes(app core.App, racine *cobra.Command) (aEchoue func() bo
 
 	racine.AddCommand(commandeVersion())
 	racine.AddCommand(commandeTags(app, retient))
+	racine.AddCommand(commandeAnalyse(app, a, retient))
 
 	return func() bool { return echec }
 }

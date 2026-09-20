@@ -110,7 +110,7 @@ func TestLaCommandeLancerLitUnFichierSansLeDeposerDansPbData(t *testing.T) {
 		t.Errorf("le corpus a été réécrit : %q", relu)
 	}
 	// Et rien à son nom n'est apparu dans le répertoire de données.
-	for _, entree := range entreesDe(t, app.DataDir()) {
+	for entree := range entreesDe(t, app.DataDir()) {
 		if avant[entree] {
 			continue
 		}
