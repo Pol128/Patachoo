@@ -376,6 +376,40 @@ func TestLeCrawlDelayPlusLongQueLaBorneNeCoutePasLaRecette(t *testing.T) {
 	}
 }
 
+// Et le pendant sur POST /recettes/{id}, l'autre route d'enregistrement : le
+// critère porte sur les deux, et une borne qui ne tiendrait qu'à la création
+// perdrait l'édition sans qu'aucun test ne le dise. L'image déjà stockée reste
+// celle d'avant — renoncer à aller chercher la remplaçante ne l'efface pas.
+func TestLeCrawlDelayPlusLongQueLaBorneNeCoutePasLEdition(t *testing.T) {
+	app, mux, cookie := carnetDeTest(t)
+
+	poste(t, mux, "/recettes", cookie, champsValides(), fichierPoste{nom: "tarte.png", contenu: pngDeTest(t)})
+	recette := laRecette(t, app)
+	avant := recette.GetString("image")
+	if avant == "" {
+		t.Fatal("aucune image enregistrée à la création")
+	}
+
+	serveur := serveurDImagesRobots(t, robotsQuiDemande(crawlDelayAnnonce), sertLesOctets(pngDeTaille(t, 7, 7), "image/png"))
+	avecTelechargement(t, autoriseLesServeurs(serveur))
+
+	const titreEdite = "Tarte aux poires"
+	champs := champsValides()
+	champs.Set("titre", titreEdite)
+	champs.Set("image_url", serveur.URL+"/remplacante.png")
+	if rec := poste(t, mux, "/recettes/"+recette.Id, cookie, champs); rec.Code != http.StatusSeeOther {
+		t.Fatalf("statut %d, attendu %d :\n%s", rec.Code, http.StatusSeeOther, rec.Body.String())
+	}
+
+	relue := relitLaRecette(t, app, recette.Id)
+	if titre := relue.GetString("title"); titre != titreEdite {
+		t.Errorf("titre %q après l'édition, attendu %q : le renoncement a coûté la saisie", titre, titreEdite)
+	}
+	if image := relue.GetString("image"); image != avant {
+		t.Errorf("image %q après l'édition, %q attendue : la borne n'a pas tenu sur le Crawl-delay de l'hôte", image, avant)
+	}
+}
+
 // --- La borne, sur l'appel entier ------------------------------------------
 
 // attenteParEchange est ce que chacun des deux échanges d'un appel attendra
