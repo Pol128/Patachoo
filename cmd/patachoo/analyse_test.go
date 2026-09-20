@@ -399,11 +399,18 @@ func TestLePlafondDeLignesRefuseLeCorpus(t *testing.T) {
 // Le plafond de taille est borné sur les octets lus, avant tout découpage en
 // lignes : une seule ligne démesurée n'atteindrait jamais le compteur de
 // lignes.
+//
+// Et la borne porte sur la lecture elle-même, pas sur ce qui en ressort : un
+// corpus refusé n'est pas d'abord lu en entier. C'est ce qui borne la mémoire
+// que le découpage peut demander — sans quoi une ligne de cent mégaoctets
+// serait rassemblée avant d'être refusée.
 func TestLePlafondDOctetsRefuseUneLigneDemesuree(t *testing.T) {
 	app, _, o := atelierDAnalyse(t, horlogeFigee())
 
-	demesuree := io.LimitReader(octetsInfinis{}, plafondDOctetsDUneAnalyse+1)
-	passe, err := o.lance(context.Background(), sourceFournie, lignesDUnReader(demesuree))
+	// Bien plus que le plafond : ce qui compte est qu'il n'en soit pas lu
+	// autant.
+	compteur := &lecteurCompte{flux: io.LimitReader(octetsInfinis{}, plafondDOctetsDUneAnalyse+8<<20)}
+	passe, err := o.lance(context.Background(), sourceFournie, lignesDUnReader(compteur))
 	if err == nil {
 		t.Fatal("corpus accepté, attendu un refus au-delà du plafond de taille")
 	}
@@ -417,6 +424,34 @@ func TestLePlafondDOctetsRefuseUneLigneDemesuree(t *testing.T) {
 	if formes := formesDe(t, app, passe); len(formes) != 0 {
 		t.Errorf("%d forme(s) écrite(s), attendu aucune : le corpus n'a jamais été découpé", len(formes))
 	}
+	if lus := compteur.lus.Load(); lus > plafondDOctetsDUneAnalyse+1 {
+		t.Errorf("%d octets lus pour refuser le corpus, attendu au plus %d : la lecture ne s'arrête pas au plafond",
+			lus, plafondDOctetsDUneAnalyse+1)
+	}
+}
+
+// Le même plafond vaut quand les octets arrivent ligne à ligne, d'une source
+// qui n'est pas un flux — celle de la base de l'instance : c'est le nombre
+// d'octets lus qui est borné, pas la longueur d'une ligne.
+func TestLePlafondDOctetsRefuseUnCorpusTropGros(t *testing.T) {
+	app, _, o := atelierDAnalyse(t, horlogeFigee())
+
+	// Mille octets par ligne, et de quoi dépasser le plafond bien avant le
+	// demi-million de lignes.
+	ligne := strings.Repeat("a", 1_000)
+	lignes := plafondDOctetsDUneAnalyse/len(ligne) + 1
+
+	passe, err := o.lance(context.Background(), sourceFournie, corpusRepete(ligne, lignes))
+	if err == nil {
+		t.Fatal("corpus accepté, attendu un refus au-delà du plafond de taille")
+	}
+	if !strings.Contains(err.Error(), fmt.Sprint(plafondDOctetsDUneAnalyse)) {
+		t.Errorf("message = %q, attendu qu'il donne le plafond %d octets",
+			err, plafondDOctetsDUneAnalyse)
+	}
+	if statut := passeRelue(t, app, passe).GetString("status"); statut != statutEchec {
+		t.Errorf("status = %q, attendu %q", statut, statutEchec)
+	}
 }
 
 // octetsInfinis rend des octets sans jamais de fin de ligne : c'est la ligne
@@ -428,6 +463,18 @@ func (octetsInfinis) Read(p []byte) (int, error) {
 		p[i] = 'a'
 	}
 	return len(p), nil
+}
+
+// lecteurCompte note combien d'octets ont vraiment été demandés au corpus.
+type lecteurCompte struct {
+	flux io.Reader
+	lus  atomic.Int64
+}
+
+func (l *lecteurCompte) Read(p []byte) (int, error) {
+	n, err := l.flux.Read(p)
+	l.lus.Add(int64(n))
+	return n, err
 }
 
 // Le plafond de durée arrête une passe qui déborde : le travail passe en

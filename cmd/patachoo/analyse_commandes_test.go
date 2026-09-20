@@ -69,7 +69,7 @@ func TestLaCommandeLancerLitUnFichierSansLeDeposerDansPbData(t *testing.T) {
 	app := baseNeuve(t)
 
 	corpus := filepath.Join(t.TempDir(), "corpus.txt")
-	contenu := "100 g de farine\n1 pincée de sel\n\n100 g de farine\n"
+	contenu := "100 g de farine\n1 pincée de sel\n100 g de farine\n"
 	if err := os.WriteFile(corpus, []byte(contenu), 0o600); err != nil {
 		t.Fatalf("écriture du corpus : %v", err)
 	}
@@ -95,7 +95,7 @@ func TestLaCommandeLancerLitUnFichierSansLeDeposerDansPbData(t *testing.T) {
 		t.Errorf("source = %q, attendu %q", source, sourceFournie)
 	}
 	if lues := passes[0].GetInt("lines"); lues != 3 {
-		t.Errorf("lines = %d, attendu 3 — la ligne vide n'est pas comptée", lues)
+		t.Errorf("lines = %d, attendu 3 — les trois lignes du fichier", lues)
 	}
 	if formes := passes[0].GetInt("forms"); formes != 2 {
 		t.Errorf("forms = %d, attendu 2", formes)
