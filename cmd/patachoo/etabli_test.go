@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -345,15 +346,16 @@ func TestLesLignesVidesNeSontNiLuesNiComptees(t *testing.T) {
 // avec un message, plutôt que d'en préférer une en silence.
 func TestLesDeuxSourcesSontExclusives(t *testing.T) {
 	cas := []struct {
-		nom    string
-		champs url.Values
+		nom     string
+		champs  url.Values
+		message string
 	}{
-		{nom: "l'instance et un corpus collé", champs: url.Values{
+		{nom: "l'instance et un corpus collé", message: messageSourcesMelees, champs: url.Values{
 			champSourceDeLEtabli: {sourceInstance},
 			champCorpusColle:     {"100 g de farine"},
 		}},
-		{nom: "aucune source choisie", champs: url.Values{}},
-		{nom: "un corpus fourni, mais vide", champs: url.Values{
+		{nom: "aucune source choisie", message: messageSourceAbsente, champs: url.Values{}},
+		{nom: "un corpus fourni, mais vide", message: messageCorpusAbsent, champs: url.Values{
 			champSourceDeLEtabli: {sourceFournie},
 			champCorpusColle:     {"   \n\n"},
 		}},
@@ -368,7 +370,12 @@ func TestLesDeuxSourcesSontExclusives(t *testing.T) {
 				t.Fatalf("statut %d, attendu %d : le refus doit rendre la page de lancement",
 					rec.Code, http.StatusOK)
 			}
-			exigeContient(t, rec.Body.String(), `<form`, `name="`+champSourceDeLEtabli+`"`)
+			// Le message attendu, et non un refus quelconque : sans lui, le
+			// cas mixte passerait pour refusé alors que c'est la base vide qui
+			// l'aurait arrêté, et la règle d'exclusivité ne serait plus tenue
+			// par rien.
+			exigeContient(t, rec.Body.String(), html.EscapeString(c.message),
+				`<form`, `name="`+champSourceDeLEtabli+`"`)
 
 			if compte, err := app.CountRecords("analyses"); err != nil || compte != 0 {
 				t.Errorf("%d analyse(s) en base après le refus, attendu 0 (erreur : %v)", compte, err)
@@ -403,6 +410,7 @@ func TestUnCorpusColleEtTeleverseALaFoisEstRefuse(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("statut %d, attendu %d — corps :\n%s", rec.Code, http.StatusOK, rec.Body.String())
 	}
+	exigeContient(t, rec.Body.String(), html.EscapeString(messageSourcesMelees))
 	if compte, err := app.CountRecords("analyses"); err != nil || compte != 0 {
 		t.Errorf("%d analyse(s) en base après le refus, attendu 0 (erreur : %v)", compte, err)
 	}
@@ -503,6 +511,7 @@ func TestUnLancementSurUneInstanceVideEstRefuse(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("statut %d, attendu %d — corps :\n%s", rec.Code, http.StatusOK, rec.Body.String())
 	}
+	exigeContient(t, rec.Body.String(), html.EscapeString(messageInstanceVide))
 
 	if compte, err := app.CountRecords("analyses"); err != nil || compte != 0 {
 		t.Errorf("%d analyse(s) en base, attendu 0 : un travail a été déposé sur une base vide (erreur : %v)",
@@ -755,6 +764,7 @@ func TestUnSecondLancementEstRefuseParLaPage(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("statut %d, attendu %d — corps :\n%s", rec.Code, http.StatusOK, rec.Body.String())
 	}
+	exigeContient(t, rec.Body.String(), html.EscapeString(errAnalyseDejaEnCours.Error()))
 
 	passes, err := app.CountRecords("analyses", dbx.HashExp{"status": statutEnCours})
 	if err != nil {
