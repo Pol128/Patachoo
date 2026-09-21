@@ -355,6 +355,50 @@ func TestUnAlimentNonResoluFormeSonPropreTasSansCategorie(t *testing.T) {
 	}
 }
 
+// Le tas des non résolus ne se contente pas d'être séparé sur un écran : il
+// l'est d'une page à l'autre. Sans ce premier terme dans l'ordre, un non
+// résolu très vu remonterait sur la première page — au-dessous des résolus
+// puisque la page les sépare, mais en prenant leur place.
+//
+// Le jeu est construit pour ça : les trois non résolus sont les plus vus de
+// tous, et l'ordre par défaut classe par occurrences décroissantes.
+func TestLeTasDesNonResolusRestePleinAPartirDeLaPageOuIlCommence(t *testing.T) {
+	app, mux, cookie := atelierDeLEtabli(t)
+
+	formes := make([]formeDeTest, 0, parPage+3)
+	for i := range parPage {
+		formes = append(formes, formeResolue(
+			fmt.Sprintf("%d aliment %02d", i, i),
+			fmt.Sprintf("aliment %02d", i),
+			"Légumes",
+			parPage-i,
+			SignalMotsPerdus))
+	}
+	for i := range 3 {
+		formes = append(formes, formeNonResolue(
+			fmt.Sprintf("1 kg de inconnu %d", i),
+			fmt.Sprintf("inconnu %d", i),
+			1000-i))
+	}
+	passeTermineeDeTest(t, app, formes...)
+
+	premiere := groupesAffiches(laVueAgregee(t, mux, cookie, nil))
+	if len(premiere) != parPage {
+		t.Fatalf("%d groupe(s) sur la première page, attendu %d", len(premiere), parPage)
+	}
+	for _, groupe := range premiere {
+		if groupe.Categorie == "" {
+			t.Errorf("%q, sans catégorie, occupe la première page : les deux tas se mêlent",
+				groupe.Aliment)
+		}
+	}
+
+	seconde := alimentsAffiches(laVueAgregee(t, mux, cookie, url.Values{parametreDeLaPage: {"2"}}))
+	if strings.Join(seconde, "|") != "inconnu 0|inconnu 1|inconnu 2" {
+		t.Errorf("seconde page %v, attendu les trois non résolus", seconde)
+	}
+}
+
 // Le texte d'un aliment non résolu vient du corpus : il s'affiche
 // littéralement et n'exécute rien (DoD §3).
 func TestUnAlimentNonResoluPorteurDeBalisageRessortLitteralement(t *testing.T) {
