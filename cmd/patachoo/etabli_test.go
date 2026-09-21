@@ -119,8 +119,26 @@ func ecritLesChamps(t *testing.T, ecrivain *multipart.Writer, champs url.Values)
 // davantage que ce que la machine a de mémoire ne le justifierait, et il le
 // fabrique au fil de la lecture.
 func joueLeMultipart(mux http.Handler, cookie *http.Cookie, typeDeContenu string, corps io.Reader) *httptest.ResponseRecorder {
+	return joueLeMultipartAnnonce(mux, cookie, typeDeContenu, corps, tailleTue)
+}
+
+// tailleTue est le Content-Length d'une requête qui n'en annonce aucun, tel
+// que net/http le représente.
+const tailleTue int64 = -1
+
+// joueLeMultipartAnnonce joue la même requête en annonçant la taille du corps.
+//
+// C'est un chemin distinct, et non un détail de montage : httptest.NewRequest
+// ne renseigne ContentLength que pour les lecteurs qu'il sait mesurer —
+// *bytes.Buffer, *bytes.Reader, *strings.Reader — et le laisse à -1 pour tout
+// le reste, dont le io.MultiReader qui fabrique un corps hors plafond. Un
+// navigateur, lui, annonce toujours la taille de ce qu'il téléverse. Les deux
+// chemins doivent tenir, et seul celui-ci passe par le contrôle optimiste des
+// bornes de taille.
+func joueLeMultipartAnnonce(mux http.Handler, cookie *http.Cookie, typeDeContenu string, corps io.Reader, taille int64) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodPost, cheminDeLEtabli, corps)
 	req.Header.Set("Content-Type", typeDeContenu)
+	req.ContentLength = taille
 	req.AddCookie(cookieDuJetonDeTest())
 	if cookie != nil {
 		req.AddCookie(cookie)
@@ -556,18 +574,108 @@ func TestLePlafondAfficheEstCeluiQueLeCodeApplique(t *testing.T) {
 func TestUnCorpusPlusGrosQueLePlafondEstRefuseAvecLePlafond(t *testing.T) {
 	_, mux, cookie := atelierDeLEtabli(t)
 
+	corps, typeDeContenu, _ := corpsHorsPlafond(t)
+	rec := joueLeMultipart(mux, cookie, typeDeContenu, corps)
+
+	exigeLeRefusDeTailleEnPage(t, rec)
+}
+
+// Le même refus quand la requête annonce sa taille, c'est-à-dire sur le chemin
+// du navigateur.
+//
+// Il est distinct du précédent, et c'est PocketBase qui le rend distinct : son
+// BodyLimit est posé sur le routeur racine, très en amont de la borne de
+// l'établi, et son contrôle optimiste rend l'erreur sur le seul Content-Length,
+// sans passer la main. Une borne posée après lui n'est jamais atteinte, et le
+// curateur qui téléverse un corpus hors plafond reçoit du JSON — ce que le
+// critère d'acceptation exclut nommément.
+func TestUnCorpusHorsPlafondQuiAnnonceSaTailleEstRefuseEnPage(t *testing.T) {
+	_, mux, cookie := atelierDeLEtabli(t)
+
+	corps, typeDeContenu, taille := corpsHorsPlafond(t)
+	rec := joueLeMultipartAnnonce(mux, cookie, typeDeContenu, corps, taille)
+
+	exigeLeRefusDeTailleEnPage(t, rec)
+}
+
+// Le refus de taille n'ouvre pas l'établi à qui n'y a pas droit.
+//
+// La page que ce refus rend est la page réservée : elle porte le formulaire de
+// lancement et le bloc de la dernière passe — sa source, son statut, sa date,
+// ses compteurs. La rendre avant d'avoir contrôlé le droit donnerait tout cela
+// à un client anonyme, qui n'aurait qu'à poster plus que le plafond pour
+// l'obtenir. Le critère d'acceptation dit qu'un visiteur n'atteint ni la page
+// ni la route, et il ne connaît pas d'exception pour les corps trop gros.
+//
+// Les deux chemins de la borne sont éprouvés : celui du contrôle optimiste,
+// quand la taille est annoncée, et celui de la lecture, quand elle ne l'est
+// pas — un envoi en Transfer-Encoding: chunked.
+func TestUnCorpsHorsPlafondNOuvrePasLEtabliAQuiNYAPasDroit(t *testing.T) {
+	app, mux := serveurDeLEtabli(t)
+	compteParDefaut(t, app)
+	ordinaire := cookieDe(t, seConnecte(t, mux, courrielDeTest, motDePasseDeTest))
+
+	// Une passe en base : sans elle, la page réservée ne rendrait pas son bloc
+	// d'avancement et le test ne dirait rien de ce qui fuit.
+	passeEnCours(t, app)
+
+	for nom, attendu := range map[string]struct {
+		cookie *http.Cookie
+		statut int
+	}{
+		"visiteur":         {nil, http.StatusSeeOther},
+		"compte ordinaire": {ordinaire, http.StatusForbidden},
+	} {
+		for annonce, taille := range map[string]bool{"taille annoncée": true, "taille tue": false} {
+			t.Run(nom+", "+annonce, func(t *testing.T) {
+				corps, typeDeContenu, mesure := corpsHorsPlafond(t)
+				if !taille {
+					mesure = tailleTue
+				}
+				rec := joueLeMultipartAnnonce(mux, attendu.cookie, typeDeContenu, corps, mesure)
+
+				if rec.Code != attendu.statut {
+					t.Fatalf("statut %d, attendu %d — corps :\n%s",
+						rec.Code, attendu.statut, rec.Body.String())
+				}
+				if attendu.statut == http.StatusSeeOther {
+					if lieu := rec.Header().Get("Location"); lieu != "/connexion" {
+						t.Errorf("Location = %q, attendu %q", lieu, "/connexion")
+					}
+				}
+				exigeSansAucun(t, rec.Body.String(),
+					`id="avancement-de-l-etabli"`,
+					`name="`+champSourceDeLEtabli+`"`)
+			})
+		}
+	}
+}
+
+// corpsHorsPlafond bâtit un corps de lancement multipart plus gros que le
+// plafond, et dit la taille qu'il aurait à annoncer.
+//
+// Le rembourrage est produit au fil de la lecture, et jamais matérialisé :
+// c'est ce qui permet de dépasser un plafond de plusieurs dizaines de Mio sans
+// les écrire en mémoire.
+func corpsHorsPlafond(t *testing.T) (io.Reader, string, int64) {
+	t.Helper()
+
 	entete := &bytes.Buffer{}
 	ecrivain := multipart.NewWriter(entete)
 	ecritLesChamps(t, ecrivain, url.Values{champSourceDeLEtabli: {sourceFournie}})
 	if _, err := ecrivain.CreateFormFile(champCorpusTeleverse, "corpus.txt"); err != nil {
 		t.Fatalf("partie fichier : %v", err)
 	}
-	// Le rembourrage est produit au fil de la lecture, et jamais matérialisé :
-	// c'est ce qui permet de dépasser un plafond de plusieurs dizaines de Mio
-	// sans les écrire en mémoire.
-	corps := io.MultiReader(entete, remplissage(plafondDuCorpsDeLEtabli+1))
 
-	rec := joueLeMultipart(mux, cookie, ecrivain.FormDataContentType(), corps)
+	var rembourrage int64 = plafondDuCorpsDeLEtabli + 1
+	taille := int64(entete.Len()) + rembourrage
+	return io.MultiReader(entete, remplissage(rembourrage)), ecrivain.FormDataContentType(), taille
+}
+
+// exigeLeRefusDeTailleEnPage relit le refus attendu : une page, sous un statut
+// de refus, avec le plafond en toutes lettres.
+func exigeLeRefusDeTailleEnPage(t *testing.T, rec *httptest.ResponseRecorder) {
+	t.Helper()
 
 	if rec.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("statut %d, attendu %d — corps :\n%s",
