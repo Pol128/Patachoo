@@ -61,7 +61,7 @@ var champHiddenDuJeton = regexp.MustCompile(
 
 // --- Le montage des requêtes ----------------------------------------------
 
-// postDeTest décrit l'une des douze routes POST du produit : son chemin, la
+// postDeTest décrit l'une des treize routes POST du produit : son chemin, la
 // saisie qu'un navigateur y enverrait, et l'encodage du formulaire qui la sert.
 type postDeTest struct {
 	nom       string
@@ -125,13 +125,13 @@ func joueLePost(t *testing.T, mux http.Handler, p postDeTest, session *http.Cook
 	return rec
 }
 
-// lesDouzePost rend les douze routes POST du produit, nommément, dans l'ordre
-// où brancheLesRoutes les pose.
+// lesTreizePost rend les treize routes POST du produit, nommément, dans
+// l'ordre où brancheLesRoutes les pose.
 //
 // Nommément, et non par une lecture du routeur : une route ajoutée demain
 // n'apparaîtrait pas ici, et c'est précisément ce que le relevé doit faire
 // remarquer à celui qui l'ajoute.
-func lesDouzePost(recette, note, ligne *core.Record) []postDeTest {
+func lesTreizePost(recette, note, ligne *core.Record) []postDeTest {
 	notes := "/recettes/" + recette.Id + "/commentaires"
 	return []postDeTest{
 		{nom: "connexion", cible: "/connexion", sansSession: true,
@@ -156,20 +156,33 @@ func lesDouzePost(recette, note, ligne *core.Record) []postDeTest {
 		{nom: "ajout d'une note", cible: notes, champs: corpsDe("Trop cuit de dix minutes.")},
 		{nom: "modification d'une note", cible: notes + "/" + note.Id, champs: corpsDe("Finalement, très bien.")},
 		{nom: "suppression d'une note", cible: notes + "/" + note.Id + "/supprimer"},
+		// Le compte de la session porte le droit de curateur, posé par
+		// atelierAntiRejeu : la garde de l'établi passe désormais avant le
+		// contrôle anti-rejeu, et sans le droit ces deux relevés éprouveraient
+		// la garde au lieu du jeton.
+		{nom: "lancement d'une analyse", cible: cheminDeLEtabli,
+			champs: url.Values{champSourceDeLEtabli: {sourceInstance}}},
 	}
 }
 
 // atelierAntiRejeu monte le carnet, une recette signée du compte de la session,
-// une note à lui et une fournée à lui dont une adresse a échoué : les douze
+// une note à lui et une fournée à lui dont une adresse a échoué : les treize
 // routes ont ainsi toutes une cible réelle, et un refus qui viendrait d'un
 // identifiant inconnu ne pourrait pas se confondre avec celui du jeton.
 //
-// Le réseau est piégé : aucune des douze ne doit sortir, et l'import est la
+// Le réseau est piégé : aucune des treize ne doit sortir, et l'import est la
 // seule qui le ferait si le gestionnaire s'exécutait.
+//
+// Le compte de la session est fait curateur : la garde de l'établi s'exécute
+// avant le contrôle anti-rejeu — le droit se contrôle avant qu'on lise le corps
+// du client —, si bien qu'un compte ordinaire recevrait son refus de la garde
+// et ne dirait rien du jeton. Les douze autres routes n'en sont pas affectées :
+// ce droit ne garde qu'elle.
 func atelierAntiRejeu(t *testing.T) (core.App, http.Handler, *http.Cookie, *core.Record, *core.Record, *core.Record) {
 	t.Helper()
 
 	app, mux, cookie := atelierDeLot(t)
+	faisCurateur(t, app, leCompteDeLaSession(t, app), true)
 	ouvreLInscription(t, app)
 	recette := laSienne(t, app, nil)
 	note := noteEnBase(t, app, recette, compteDeLaSession(t, app), "Une note.")
@@ -183,10 +196,10 @@ func atelierAntiRejeu(t *testing.T) (core.App, http.Handler, *http.Cookie, *core
 // Un POST sans champ _antirejeu est refusé par un 403, quelle que soit la
 // route : c'est la page tierce qui soumet toute seule un formulaire qu'elle a
 // écrit, et qui n'a aucun moyen de connaître le jeton.
-func TestLesDouzeRoutesPostRefusentUnePostSansJeton(t *testing.T) {
+func TestLesTreizeRoutesPostRefusentUnePostSansJeton(t *testing.T) {
 	app, mux, session, recette, note, ligne := atelierAntiRejeu(t)
 
-	for _, p := range lesDouzePost(recette, note, ligne) {
+	for _, p := range lesTreizePost(recette, note, ligne) {
 		t.Run(p.nom, func(t *testing.T) {
 			rec := joueLePost(t, mux, p, session, "", jetonDeTest)
 
@@ -214,10 +227,10 @@ func TestLesDouzeRoutesPostRefusentUnePostSansJeton(t *testing.T) {
 // façon : c'est le jeton d'une autre session, ou celui qu'un voisin same-site
 // aurait fourni sans pouvoir fournir le cookie que le préfixe __Host- lui
 // interdit.
-func TestLesDouzeRoutesPostRefusentUnJetonQuiNeCorrespondPas(t *testing.T) {
+func TestLesTreizeRoutesPostRefusentUnJetonQuiNeCorrespondPas(t *testing.T) {
 	_, mux, session, recette, note, ligne := atelierAntiRejeu(t)
 
-	for _, p := range lesDouzePost(recette, note, ligne) {
+	for _, p := range lesTreizePost(recette, note, ligne) {
 		t.Run(p.nom, func(t *testing.T) {
 			rec := joueLePost(t, mux, p, session, "le-jeton-d-une-autre-session", jetonDeTest)
 
@@ -417,10 +430,12 @@ func jetonDuFormulaire(t *testing.T, corps string) string {
 // Le décompte se fait sur le système de fichiers embarqué, celui qui part dans
 // le binaire : un gabarit oublié de l'embed ne serait pas servi.
 func TestChaqueFormulaireEnPostPorteLeChampAntiRejeu(t *testing.T) {
-	// Onze depuis PATA-119 : la bascule de reprise ajoute un formulaire au
-	// gabarit du suivi. Un seul, bien que le rapport le rende une fois par
-	// adresse en échec — le décompte porte sur les gabarits, pas sur le rendu.
-	const attendus = 11
+	// Douze depuis PATA-124 : la page de lancement de l'établi ajoute le
+	// sien. Onze depuis PATA-119, où la bascule de reprise avait ajouté un
+	// formulaire au gabarit du suivi — un seul, bien que le rapport le rende
+	// une fois par adresse en échec : le décompte porte sur les gabarits, pas
+	// sur le rendu.
+	const attendus = 12
 
 	var formulaires, champs int
 	err := fs.WalkDir(vues, ".", func(chemin string, entree fs.DirEntry, err error) error {
@@ -609,7 +624,7 @@ func TestLAPIRestNexigeAucunJeton(t *testing.T) {
 //
 // Ce n'est pas un état que le produit atteint : brancheLesRoutes pose les deux
 // middlewares ensemble. C'est celui qu'un branchement futur pourrait
-// atteindre, et il s'ouvrirait alors sans bruit sur les douze routes — la
+// atteindre, et il s'ouvrirait alors sans bruit sur les treize routes — la
 // comparaison de deux chaînes vides est vraie. La route témoin reproduit
 // exactement ce cas sur le montage réel, en écartant d'elle le seul middleware
 // de pose.

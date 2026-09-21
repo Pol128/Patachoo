@@ -1,0 +1,25 @@
+<h1>L'établi</h1>
+{{if .Message}}<p class="erreur" role="alert">{{.Message}}</p>{{end}}
+<form class="formulaire-etabli" method="post" action="/etabli" enctype="multipart/form-data">
+<input type="hidden" name="_antirejeu" value="{{$.JetonAntiRejeu}}">
+
+<fieldset class="sources">
+<legend>Ce qu'il faut analyser</legend>
+<p class="case"><input type="radio" id="source-instance" name="source" value="instance"><label for="source-instance">La base de l'instance — ses lignes d'ingrédients, lues et jamais modifiées.</label></p>
+<p class="case"><input type="radio" id="source-fournie" name="source" value="fourni"><label for="source-fournie">Un corpus fourni — une ligne d'ingrédient par ligne.</label></p>
+</fieldset>
+
+<label for="corpus">Le corpus, collé — une ligne d'ingrédient par ligne</label>
+<textarea id="corpus" name="corpus" rows="12">{{.Corpus}}</textarea>
+
+<label for="fichier">…ou le même, dans un fichier</label>
+<input type="file" id="fichier" name="fichier">
+
+<p class="avertissement">Une seule source à la fois : la base de l'instance, ou un corpus fourni.
+Le corpus fourni n'est pas conservé — il est lu, analysé, et seules les formes qu'il donne sont écrites.
+{{.PlafondEnMio}} Mio au plus.</p>
+
+<button id="lancer-l-analyse" type="submit">Lancer l'analyse</button>
+</form>
+
+{{with .Avancement}}{{template "etabli-avancement-corps.html" .}}{{end}}
