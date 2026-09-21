@@ -111,14 +111,32 @@ func laPolitiqueSApplique(chemin string) bool {
 	return !strings.HasPrefix(chemin, prefixePanneau) && !strings.HasPrefix(chemin, prefixeAPI)
 }
 
+// prioriteDesEntetesDeReponse fait passer nos en-têtes avant nos propres
+// couches, et non plus seulement avant les gestionnaires.
+//
+// La priorité par défaut a suffi tant qu'aucune couche à nous n'en déclarait :
+// les middlewares de PocketBase portent toutes des priorités négatives
+// (apis/middlewares.go), celle-ci passait donc après elles, et un middleware
+// s'exécute de toute façon avant le gestionnaire qui écrit le corps — une
+// redirection comprise, qui n'en écrit aucun.
+//
+// Elle ne suffit plus depuis que la garde de l'établi porte la sienne. Le
+// crochet est trié par priorité croissante (tools/hook/hook.go), et une couche
+// qui rend sa réponse sans appeler e.Next() court-circuite tout ce qui la suit :
+// une couche à nous, passée avant celle-ci, rendrait ses refus sans nos
+// en-têtes. Un cran avant la première d'entre elles, donc, et lu sur sa
+// constante — le jour où elle bouge, celle-ci suit.
+//
+// Reste très en aval des en-têtes de PocketBase
+// (DefaultSecurityHeadersMiddlewarePriority, -1010), qui passent donc toujours
+// avant : les nôtres s'ajoutent aux leurs, elles ne les remplacent pas.
+const prioriteDesEntetesDeReponse = prioriteDuDroitDeCurateur - 1
+
 // poseLesEntetesDeReponse ajoute nos en-têtes de sécurité à toute réponse.
 //
 // Lié par routeur.Bind, il atteint toute réponse sans qu'aucune route ait à
-// être énumérée. La priorité par défaut suffit : les middlewares de PocketBase
-// portent toutes des priorités négatives (apis/middlewares.go), celui-ci passe
-// donc après eux — et un middleware s'exécute de toute façon avant le
-// gestionnaire qui écrit le corps, une redirection comprise, qui n'en écrit
-// aucun.
+// être énumérée, et sa priorité le fait passer avant celles de nos couches qui
+// rendent sans passer la main.
 //
 // Il s'ajoute à pbSecurityHeaders, il ne le remplace pas : les trois en-têtes
 // que PocketBase pose restent sur la réponse.
@@ -146,7 +164,8 @@ func laPolitiqueSApplique(chemin string) bool {
 // pour les fichiers servis, et l'écraser serait un recul.
 func poseLesEntetesDeReponse() *hook.Handler[*core.RequestEvent] {
 	return &hook.Handler[*core.RequestEvent]{
-		Id: "patachooEntetesDeReponse",
+		Id:       "patachooEntetesDeReponse",
+		Priority: prioriteDesEntetesDeReponse,
 		Func: func(e *core.RequestEvent) error {
 			e.Response.Header().Set("Referrer-Policy", "no-referrer")
 			if porteLeCacheControl(e.Request.URL.Path) {
