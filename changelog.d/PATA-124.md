@@ -5,4 +5,5 @@
   corpus fourni n'est conservé nulle part : il est lu en mémoire, analysé, et
   seules les formes qu'il donne sont écrites. La page annonce la taille acceptée
   avant l'envoi et refuse ce qui la dépasse en le disant, montre l'avancement de
-  la passe en cours et le résultat de la dernière.
+  la passe en cours et le résultat de la dernière. Les lancements sont plafonnés
+  à cinq par minute et par adresse.
