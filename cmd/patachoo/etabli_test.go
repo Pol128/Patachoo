@@ -78,7 +78,7 @@ func soumetLEtabli(mux http.Handler, cookie *http.Cookie, champs url.Values) *ht
 
 // soumetLeCorpusTeleverse poste le même formulaire en multipart, le corpus
 // dans un fichier joint : c'est l'autre moitié de « deux entrées, un seul
-// travail », et le seul chemin où le corps part dans un fichier temporaire.
+// travail », et le seul chemin qui passe par une partie fichier.
 func soumetLeCorpusTeleverse(t *testing.T, mux http.Handler, cookie *http.Cookie, contenu string) *httptest.ResponseRecorder {
 	t.Helper()
 

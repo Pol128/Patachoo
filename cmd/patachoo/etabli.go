@@ -68,8 +68,9 @@ const (
 // Il se pose sur le corps, et non dans le gestionnaire : exigeLeJetonAntiRejeu
 // appelle valeursSoumises, donc ParseMultipartForm, et lit le corps entier
 // avant que le gestionnaire ne commence. Un contrôle posé plus loin arriverait
-// après que tout est lu, et après que ce qui dépasse la mémoire du formulaire
-// est parti dans un fichier temporaire.
+// après que tout est lu. C'est aussi pourquoi la lecture elle-même est faite
+// ici, par litLeFormulaireDeLEtabli : la borne ne vaut que si celui qui lit le
+// premier lit sous elle.
 const plafondDuCorpsDeLEtabli = plafondDOctetsDUneAnalyse
 
 // prioriteBorneDuCorpsDeLEtabli place la borne de taille avant celle de
@@ -217,14 +218,59 @@ func borneLeCorpsDeLEtabli() *hook.Handler[*core.RequestEvent] {
 			// ci-dessus ne peut pas voir venir.
 			e.Request.Body = http.MaxBytesReader(e.Response, e.Request.Body, plafondDuCorpsDeLEtabli)
 
-			err := e.Next()
-			var trop *http.MaxBytesError
-			if !errors.As(err, &trop) {
-				return err
+			// Le corps est lu ici, et non laissé à valeursSoumises : la
+			// mémoire des autres formulaires n'est pas le plafond de
+			// l'établi, et c'est cette couche-ci qui sait rendre un refus de
+			// taille en page.
+			if err := litLeFormulaireDeLEtabli(e); err != nil {
+				var trop *http.MaxBytesError
+				if !errors.As(err, &trop) {
+					return err
+				}
+				return refuseLeCorpsTropGros(e)
 			}
-			return refuseLeCorpsTropGros(e)
+			return e.Next()
 		},
 	}
+}
+
+// litLeFormulaireDeLEtabli lit le corps du lancement, sous la mémoire du
+// plafond plutôt que sous celle des autres formulaires.
+//
+// C'est la lecture que valeursSoumises ferait de toute façon un cran plus
+// loin — ParseMultipartForm ne relit pas ce qu'elle a déjà lu, si bien que
+// celle-ci la remplace sans la doubler. Ce qui change est le maxMemory, et il
+// fallait le changer.
+//
+// ParseMultipartForm(n) borne deux choses à la fois : ce qu'un fichier joint
+// garde en mémoire avant de partir sur le disque, et — à n plus une marge — le
+// total des parties qui ne sont pas des fichiers. Or le corpus collé est une
+// partie non-fichier : lu sous memoireMaxFormulaire, il était refusé très en
+// deçà du plafond annoncé, par un multipart.ErrMessageTooLarge que la borne du
+// corps ne reconnaît pas et qui ressortait en JSON. Le corpus joint, lui,
+// tenait le plafond. Le formulaire promettait donc deux tailles selon le champ
+// rempli, et n'en affichait qu'une.
+//
+// À n égal au plafond, la marge ne peut plus mordre : le corps entier est déjà
+// borné au plafond juste au-dessus, donc le total de ses parties l'est aussi.
+// Le raisonnement ne tient pas à la valeur de la marge — il tiendrait encore
+// si la bibliothèque la ramenait à zéro —, et c'est ce qui permet de ne pas
+// recopier ici un chiffre qui ne nous appartient pas.
+//
+// Ce que cela coûte, et c'est assumé : un fichier joint tient désormais en
+// mémoire au lieu de partir dans un fichier temporaire. Le plafond le borne,
+// l'ouvrier le lit de toute façon en mémoire entière (analyse.go), et le
+// disque n'en garde plus rien — ce qui est la lecture la plus simple de « le
+// fichier fourni n'est jamais conservé ».
+func litLeFormulaireDeLEtabli(e *core.RequestEvent) error {
+	err := e.Request.ParseMultipartForm(plafondDuCorpsDeLEtabli)
+	// Un lancement sans fichier se poste urlencodé, et ParseMultipartForm le
+	// dit ainsi après avoir tout de même lu les champs : ce n'est pas une
+	// panne, et valeursSoumises l'ignore déjà de la même façon.
+	if errors.Is(err, http.ErrNotMultipart) {
+		return nil
+	}
+	return err
 }
 
 // refuseLeCorpsTropGros rend le refus de taille en page — après avoir
@@ -441,10 +487,10 @@ func lanceSurLInstance(e *core.RequestEvent, ouvrier *ouvrierDAnalyse) error {
 
 // lanceSurLeCorpusFourni dépose une passe sur ce que le formulaire a apporté.
 //
-// Le corpus est lu en mémoire, et c'est la conséquence directe de « le fichier
-// fourni n'est jamais conservé » : le fichier temporaire du téléversement est
-// effacé par le serveur dès que la requête est rendue, bien avant que
-// l'ouvrier n'ait fini. Lui passer ce fichier reviendrait à lui passer un flux
+// Le corpus est recopié en mémoire, et c'est la conséquence directe de « le
+// fichier fourni n'est jamais conservé » : la partie téléversée appartient au
+// formulaire, que le serveur referme dès que la requête est rendue, bien avant
+// que l'ouvrier n'ait fini. Lui passer ce flux reviendrait à lui en passer un
 // qui se ferme sous lui.
 //
 // La lecture est bornée par la borne du corps, déjà posée en amont : ce qui
