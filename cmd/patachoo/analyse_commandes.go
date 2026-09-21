@@ -38,6 +38,7 @@ func commandeAnalyse(app core.App, a *analyseur, retient func(error) error) *cob
 	}
 	analyse.AddCommand(commandeAnalyseLancer(app, a, retient))
 	analyse.AddCommand(commandeAnalyseResume(app, retient))
+	analyse.AddCommand(commandeAnalyseComparer(app, retient))
 	return analyse
 }
 
@@ -105,16 +106,29 @@ func commandeAnalyseResume(app core.App, retient func(error) error) *cobra.Comma
 	}
 }
 
+// trouveLaPasse lit l'analyse que porte un identifiant.
+//
+// Extraite parce que deux sous-commandes la cherchent, et qu'un identifiant
+// inconnu doit se dire de la même façon des deux côtés : une sortie vide
+// passerait pour une analyse sans forme.
+func trouveLaPasse(app core.App, id string) (*core.Record, error) {
+	passe, err := app.FindRecordById("analyses", id)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return nil, fmt.Errorf("analyse %q : aucune analyse ne porte cet identifiant", id)
+	case err != nil:
+		return nil, fmt.Errorf("recherche de l'analyse %q : %w", id, err)
+	}
+	return passe, nil
+}
+
 // rendLeResumeDeLAnalyse écrit les mesures d'une passe sur la sortie de la
 // commande — et non dans le journal : c'est un résultat qu'on lit, qu'on
 // redirige et qu'on compare, pas une trace d'exploitation.
 func rendLeResumeDeLAnalyse(app core.App, sortie io.Writer, id string) error {
-	passe, err := app.FindRecordById("analyses", id)
-	switch {
-	case errors.Is(err, sql.ErrNoRows):
-		return fmt.Errorf("analyse %q : aucune analyse ne porte cet identifiant", id)
-	case err != nil:
-		return fmt.Errorf("recherche de l'analyse %q : %w", id, err)
+	passe, err := trouveLaPasse(app, id)
+	if err != nil {
+		return err
 	}
 
 	mesures, err := resumeDe(app, passe)
@@ -126,6 +140,7 @@ func rendLeResumeDeLAnalyse(app core.App, sortie io.Writer, id string) error {
 		passe.Id, passe.GetString("source"), passe.GetString("status"))
 	fmt.Fprintf(sortie, "lignes : %d\n", passe.GetInt("lines"))
 	fmt.Fprintf(sortie, "formes : %d\n", mesures.formes)
+	fmt.Fprintf(sortie, "formes sans signal : %d\n", mesures.sansSignal)
 	fmt.Fprintf(sortie, "résolus : %d\n", mesures.resolus)
 	fmt.Fprintf(sortie, "non résolus : %d\n", mesures.formes-mesures.resolus)
 	for _, signal := range triees(mesures.parSignal) {
@@ -141,8 +156,16 @@ func rendLeResumeDeLAnalyse(app core.App, sortie io.Writer, id string) error {
 // formes et non sur les occurrences : ce qu'un relecteur regarde est une ligne
 // distincte, qu'elle ait été vue une fois ou mille.
 type mesuresDUneAnalyse struct {
-	formes       int
-	resolus      int
+	formes  int
+	resolus int
+	// sansSignal est le chiffre principal d'une comparaison, et le seul qui
+	// résume : il monte, ou il ne monte pas. Les comptes par signal ne le
+	// donnent pas — une forme peut en allumer deux.
+	//
+	// avecSignal est son complément, compté et non déduit : c'est ce qui rend
+	// l'invariant vérifiable plutôt que vrai par construction.
+	sansSignal   int
+	avecSignal   int
 	parSignal    map[string]int
 	parCategorie map[string]int
 }
@@ -178,6 +201,11 @@ func resumeDe(app core.App, passe *core.Record) (mesuresDUneAnalyse, error) {
 		var signaux []string
 		if err := forme.UnmarshalJSONField("signals", &signaux); err != nil {
 			return mesuresDUneAnalyse{}, fmt.Errorf("signaux de la forme %q : %w", forme.Id, err)
+		}
+		if len(signaux) == 0 {
+			mesures.sansSignal++
+		} else {
+			mesures.avecSignal++
 		}
 		for _, signal := range signaux {
 			mesures.parSignal[signal]++
