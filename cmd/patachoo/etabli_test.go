@@ -834,6 +834,39 @@ func corpsHorsPlafond(t *testing.T) (io.Reader, string, int64) {
 	return io.MultiReader(entete, remplissage(rembourrage)), ecrivain.FormDataContentType(), taille
 }
 
+// Un lancement urlencodé hors plafond reçoit le refus de taille, et non celui
+// du jeton.
+//
+// ParseMultipartForm appelle ParseForm, puis écrase son erreur par
+// ErrNotMultipart dès que le corps n'est pas multipart. Avaler ErrNotMultipart
+// — ce que fait valeursSoumises, et ce que la borne faisait à sa suite —
+// avalait donc avec elle le dépassement que ParseForm venait de rencontrer sur
+// le corps borné. Le lancement perdait tous ses champs, jeton anti-rejeu
+// compris, et ressortait en « Formulaire expiré » : la page qui invite à
+// recommencer, là où rien ne peut réussir, et la réponse que le critère
+// d'acceptation exclut nommément.
+//
+// Le corps ne dit pas sa taille, sinon le contrôle optimiste le refuserait
+// avant toute lecture : c'est bien le chemin de la lecture qu'il faut éprouver,
+// et il n'est pas couvert par le corps multipart du test voisin.
+func TestUnLancementUrlencodeHorsPlafondEstRefusePourSaTaille(t *testing.T) {
+	_, mux, cookie := atelierDeLEtabli(t)
+
+	corps := io.MultiReader(
+		strings.NewReader(champSourceDeLEtabli+"="+sourceFournie+"&"+champCorpusColle+"="),
+		remplissage(plafondDuCorpsDeLEtabli+1))
+	req := httptest.NewRequest(http.MethodPost, cheminDeLEtabli, corps)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.ContentLength = tailleTue
+	req.AddCookie(cookieDuJetonDeTest())
+	req.AddCookie(cookie)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	exigeLeRefusDeTailleEnPage(t, rec)
+}
+
 // corpsColleJusteSousLePlafond bâtit un lancement dont le corpus est collé
 // dans le champ de texte, et dont le corps pèse tout juste le plafond.
 //
