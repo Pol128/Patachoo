@@ -598,6 +598,31 @@ func TestUnCorpusHorsPlafondQuiAnnonceSaTailleEstRefuseEnPage(t *testing.T) {
 	exigeLeRefusDeTailleEnPage(t, rec)
 }
 
+// Un corpus collé qui tient sous le plafond est accepté, comme le même corpus
+// joint.
+//
+// Le formulaire poste en multipart, donc le corpus collé y est une partie
+// non-fichier — et ParseMultipartForm ne borne pas ces parties-là comme il
+// borne un fichier : il les borne à la mémoire qu'on lui donne, plus une
+// marge, très en deçà du plafond que la page annonce. Ce qui dépasse ressort
+// en multipart.ErrMessageTooLarge, que la borne du corps ne reconnaît pas :
+// le curateur recevait du JSON pour un corpus que la page lui disait
+// recevable, et le champ rempli décidait seul de la taille acceptée.
+//
+// Le corps vise le plafond de très peu en dessous, et non un chiffre à lui :
+// c'est le plafond affiché qui est en cause, et lui seul.
+func TestUnCorpusColleJusteSousLePlafondEstAccepte(t *testing.T) {
+	app, mux, cookie := atelierDeLEtabli(t)
+
+	corps, typeDeContenu, taille := corpsColleJusteSousLePlafond(t)
+	rec := joueLeMultipartAnnonce(mux, cookie, typeDeContenu, corps, taille)
+
+	exigeLaRedirectionVersLEtabli(t, rec)
+	if source := laDernierePasse(t, app).GetString("source"); source != sourceFournie {
+		t.Errorf("source de la passe = %q, attendue %q", source, sourceFournie)
+	}
+}
+
 // Le refus de taille n'ouvre pas l'établi à qui n'y a pas droit.
 //
 // La page que ce refus rend est la page réservée : elle porte le formulaire de
@@ -670,6 +695,32 @@ func corpsHorsPlafond(t *testing.T) (io.Reader, string, int64) {
 	var rembourrage int64 = plafondDuCorpsDeLEtabli + 1
 	taille := int64(entete.Len()) + rembourrage
 	return io.MultiReader(entete, remplissage(rembourrage)), ecrivain.FormDataContentType(), taille
+}
+
+// corpsColleJusteSousLePlafond bâtit un lancement dont le corpus est collé
+// dans le champ de texte, et dont le corps pèse tout juste le plafond.
+//
+// Collé et non joint : c'est la seule différence avec corpsHorsPlafond, et
+// c'est tout le sujet — une partie non-fichier n'est pas bornée comme un
+// fichier.
+//
+// La frontière de fin est écrite à la main parce que le rembourrage ne passe
+// pas par le Writer : il est produit au fil de la lecture, entre l'en-tête que
+// le Writer a écrit et cette frontière-là, et n'est jamais matérialisé.
+func corpsColleJusteSousLePlafond(t *testing.T) (io.Reader, string, int64) {
+	t.Helper()
+
+	entete := &bytes.Buffer{}
+	ecrivain := multipart.NewWriter(entete)
+	ecritLesChamps(t, ecrivain, url.Values{champSourceDeLEtabli: {sourceFournie}})
+	if _, err := ecrivain.CreateFormField(champCorpusColle); err != nil {
+		t.Fatalf("partie du corpus collé : %v", err)
+	}
+	pied := "\r\n--" + ecrivain.Boundary() + "--\r\n"
+
+	rembourrage := int64(plafondDuCorpsDeLEtabli) - int64(entete.Len()) - int64(len(pied))
+	corps := io.MultiReader(entete, remplissage(rembourrage), strings.NewReader(pied))
+	return corps, ecrivain.FormDataContentType(), plafondDuCorpsDeLEtabli
 }
 
 // exigeLeRefusDeTailleEnPage relit le refus attendu : une page, sous un statut
