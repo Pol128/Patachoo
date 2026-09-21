@@ -82,9 +82,23 @@ func soumetLEtabli(mux http.Handler, cookie *http.Cookie, champs url.Values) *ht
 func soumetLeCorpusTeleverse(t *testing.T, mux http.Handler, cookie *http.Cookie, contenu string) *httptest.ResponseRecorder {
 	t.Helper()
 
+	return soumetAvecFichierJoint(t, mux, cookie,
+		url.Values{champSourceDeLEtabli: {sourceFournie}}, contenu)
+}
+
+// soumetAvecFichierJoint poste la saisie avec un fichier en plus.
+//
+// Les champs sont donnés à part du fichier parce que c'est leur combinaison
+// qui est en cause : un fichier joint compte comme une source, et il la compte
+// quelle que soit la case cochée. Les cas mixtes ne se posent que par ce
+// chemin — un corps urlencodé ne porte pas de fichier.
+func soumetAvecFichierJoint(t *testing.T, mux http.Handler, cookie *http.Cookie,
+	champs url.Values, contenu string) *httptest.ResponseRecorder {
+	t.Helper()
+
 	corps := &bytes.Buffer{}
 	ecrivain := multipart.NewWriter(corps)
-	ecritLesChamps(t, ecrivain, url.Values{champSourceDeLEtabli: {sourceFournie}})
+	ecritLesChamps(t, ecrivain, champs)
 	partie, err := ecrivain.CreateFormFile(champCorpusTeleverse, "corpus.txt")
 	if err != nil {
 		t.Fatalf("partie fichier : %v", err)
@@ -407,24 +421,36 @@ func TestLesDeuxSourcesSontExclusives(t *testing.T) {
 func TestUnCorpusColleEtTeleverseALaFoisEstRefuse(t *testing.T) {
 	app, mux, cookie := atelierDeLEtabli(t)
 
-	corps := &bytes.Buffer{}
-	ecrivain := multipart.NewWriter(corps)
-	ecritLesChamps(t, ecrivain, url.Values{
+	rec := soumetAvecFichierJoint(t, mux, cookie, url.Values{
 		champSourceDeLEtabli: {sourceFournie},
 		champCorpusColle:     {"100 g de farine"},
-	})
-	partie, err := ecrivain.CreateFormFile(champCorpusTeleverse, "corpus.txt")
-	if err != nil {
-		t.Fatalf("partie fichier : %v", err)
-	}
-	if _, err := io.WriteString(partie, "1 pincée de sel\n"); err != nil {
-		t.Fatalf("écriture du corpus : %v", err)
-	}
-	if err := ecrivain.Close(); err != nil {
-		t.Fatalf("clôture du corps multipart : %v", err)
-	}
+	}, "1 pincée de sel\n")
 
-	rec := joueLeMultipart(mux, cookie, ecrivain.FormDataContentType(), corps)
+	exigeLeRefusDeSourcesMelees(t, app, rec)
+}
+
+// La base de l'instance et un fichier joint sont deux sources, elles aussi.
+//
+// C'est l'autre moitié de l'exclusivité, et la seule que la case cochée ne
+// suffit pas à décider : le curateur choisit « la base de l'instance », puis
+// laisse un fichier dans le champ d'à côté — d'un formulaire rouvert, d'un
+// essai précédent. Rien dans la saisie ne dit laquelle des deux il voulait, et
+// c'est pourquoi le lancement est refusé plutôt qu'arbitré : préférer
+// l'instance en silence analyserait autre chose que ce que l'écran montrait.
+func TestLInstanceEtUnFichierJointALaFoisSontRefuses(t *testing.T) {
+	app, mux, cookie := atelierDeLEtabli(t)
+
+	rec := soumetAvecFichierJoint(t, mux, cookie,
+		url.Values{champSourceDeLEtabli: {sourceInstance}}, "1 pincée de sel\n")
+
+	exigeLeRefusDeSourcesMelees(t, app, rec)
+}
+
+// exigeLeRefusDeSourcesMelees relit le refus des deux cas mixtes : la page de
+// lancement, le message d'exclusivité, et rien de déposé en base.
+func exigeLeRefusDeSourcesMelees(t *testing.T, app core.App, rec *httptest.ResponseRecorder) {
+	t.Helper()
+
 	if rec.Code != http.StatusOK {
 		t.Fatalf("statut %d, attendu %d — corps :\n%s", rec.Code, http.StatusOK, rec.Body.String())
 	}
