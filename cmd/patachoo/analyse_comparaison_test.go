@@ -334,6 +334,189 @@ func TestUneCanonisationDeLAlimentEstCompteeAPart(t *testing.T) {
 	}
 }
 
+// Un changement du seul champ food n'est pas une canonisation pour autant. La
+// famille ne vaut que pour ce qu'elle nomme — MOTEUR-5 réécrit l'aliment avec
+// la forme canonique du lexique sur une ligne qui se résout, « sans qu'aucune
+// erreur soit réparée ». Une ligne dont l'aliment se vide, cesse de se
+// résoudre, ou allume un signal de plus a bien changé de la seule colonne
+// food, et n'en est pas moins une dégradation : la ranger en canonisation la
+// tiendrait hors du verdict sans jamais la lister, ce que l'invariant 4 de la
+// tâche interdit.
+//
+// Trois gardes, donc, et une forme par garde — chacune ne tombe que sur celle
+// qu'elle éprouve, pour qu'en retirer une fasse rougir un cas et un seul. La
+// quatrième forme est le témoin : une vraie canonisation reste comptée comme
+// telle.
+func TestUnAlimentQuiSeDegradeNEstPasUneCanonisation(t *testing.T) {
+	app := baseNeuve(t)
+
+	avant := passeConstruite(t, app,
+		// Le témoin.
+		formeVoulue{
+			brut:    "3 tomates",
+			lecture: lectureDUneForme{Quantite: quantiteDe(3), Aliment: "tomates"},
+			motif:   "quantite_aliment",
+			resolu:  true,
+		},
+		// La garde des signaux : l'aliment d'après est non vide et résolu, mais
+		// la lecture allume un signal de plus qu'avant.
+		formeVoulue{
+			brut:    "100 g de farine de blé",
+			lecture: lectureDUneForme{Quantite: quantiteDe(100), Unite: "g", Partitif: "de", Aliment: "farine de blé"},
+			signaux: []string{SignalMotsPerdus},
+			motif:   "quantite_unite_partitif",
+			resolu:  true,
+		},
+		// La garde de l'aliment vide : rien d'autre ne bouge, signaux compris.
+		formeVoulue{
+			brut:    "20 cl de crème",
+			lecture: lectureDUneForme{Quantite: quantiteDe(20), Unite: "cl", Partitif: "de", Aliment: "crème"},
+			motif:   "quantite_unite_partitif",
+			resolu:  true,
+		},
+		// La garde de la résolution : l'aliment d'après est bien rempli, mais
+		// le lexique ne le retrouve plus.
+		formeVoulue{
+			brut:    "1 pincée de sel",
+			lecture: lectureDUneForme{Quantite: quantiteDe(1), Unite: "pincée", Partitif: "de", Aliment: "sel"},
+			motif:   "quantite_unite_partitif",
+			resolu:  true,
+		},
+	)
+	apres := passeConstruite(t, app,
+		formeVoulue{
+			brut:    "3 tomates",
+			lecture: lectureDUneForme{Quantite: quantiteDe(3), Aliment: "tomate"},
+			motif:   "quantite_aliment",
+			resolu:  true,
+		},
+		formeVoulue{
+			brut:    "100 g de farine de blé",
+			lecture: lectureDUneForme{Quantite: quantiteDe(100), Unite: "g", Partitif: "de", Aliment: "farine"},
+			signaux: []string{SignalMotsPerdus, SignalUniteRepetee},
+			motif:   "quantite_unite_partitif",
+			resolu:  true,
+		},
+		formeVoulue{
+			brut:    "20 cl de crème",
+			lecture: lectureDUneForme{Quantite: quantiteDe(20), Unite: "cl", Partitif: "de"},
+			motif:   "quantite_unite_partitif",
+			resolu:  true,
+		},
+		formeVoulue{
+			brut:    "1 pincée de sel",
+			lecture: lectureDUneForme{Quantite: quantiteDe(1), Unite: "pincée", Partitif: "de", Aliment: "gros sel"},
+			motif:   "quantite_unite_partitif",
+		},
+	)
+
+	sortie := comparaisonDeDeuxPasses(t, app, avant, apres)
+
+	exigeLesLignes(t, sortie,
+		// Le témoin, et lui seul.
+		"canonisation de l'aliment : 1 (hors verdict)",
+		// Les trois autres sont listées en entier, pour être lues.
+		"à relire : 3",
+		"à relire « 100 g de farine de blé »",
+		"à relire « 20 cl de crème »",
+		"à relire « 1 pincée de sel »",
+		// Et l'aliment perdu se lit dans les deux lectures de l'écart.
+		`"food":"crème"`,
+		`"food":""`,
+	)
+	if strings.Contains(sortie, "à relire « 3 tomates »") {
+		t.Errorf("le témoin de canonisation est passé en « à relire » :\n%s", sortie)
+	}
+}
+
+// La même règle en --base, et c'est le mode qui compte : perimetreDeLaBase ne
+// porte pas les signaux, la règle sans tolérance ne s'y arme donc jamais et
+// aucun compte par signal n'y est imprimé. Une ligne dont l'aliment se perd
+// entre les colonnes d'ingredients et une passe ne laisserait, rangée en
+// canonisation, aucune trace nulle part — dans le mode même qui doit trancher
+// la reprise de l'existant.
+func TestComparerLaBaseNeRangePasUnAlimentPerduEnCanonisation(t *testing.T) {
+	app := baseNeuve(t)
+
+	recette := recetteNeuve(t, app)
+	// L'aliment que la base porte disparaît de la passe : seul food bouge, et
+	// ce n'est pas une canonisation.
+	ligneDeBaseImposee(t, app, recette, "200 g de farine",
+		lectureDUneForme{Quantite: quantiteDe(200), Unite: "g", Aliment: "farine"})
+	// Le témoin : une vraie canonisation reste comptée comme telle.
+	ligneDeBaseImposee(t, app, recette, "3 pommes",
+		lectureDUneForme{Quantite: quantiteDe(3), Aliment: "pommes"})
+
+	passe := passeConstruite(t, app,
+		formeVoulue{
+			brut:    "200 g de farine",
+			lecture: lectureDUneForme{Quantite: quantiteDe(200), Unite: "g", Partitif: "de"},
+			signaux: []string{SignalAlimentVide},
+			motif:   "quantite_unite_partitif",
+		},
+		formeVoulue{
+			brut:    "3 pommes",
+			lecture: lectureDUneForme{Quantite: quantiteDe(3), Aliment: "pomme"},
+			motif:   "quantite_aliment",
+			resolu:  true,
+		},
+	)
+
+	sortie, aEchoue, err := executeLaCommande(t, app, "analyse", "comparer", "--base", passe.Id)
+	if err != nil {
+		t.Fatalf("commande en erreur : %v\n%s", err, sortie)
+	}
+	if aEchoue {
+		t.Errorf("témoin d'échec levé sur une commande qui a réussi :\n%s", sortie)
+	}
+
+	exigeLesLignes(t, sortie,
+		"formes communes : 2",
+		"canonisation de l'aliment : 1 (hors verdict)",
+		"à relire : 1",
+		"à relire « 200 g de farine »",
+		`"food":"farine"`,
+		`"food":""`,
+	)
+	if strings.Contains(sortie, "à relire « 3 pommes »") {
+		t.Errorf("le témoin de canonisation est passé en « à relire » :\n%s", sortie)
+	}
+}
+
+// ligneDeBaseImposee écrit une ligne de l'instance et lui impose ses champs
+// dérivés.
+//
+// Le hook les remplit depuis raw à la création ; une seconde écriture, raw
+// inchangé, ne les recalcule pas — c'est ce qui fait survivre une correction
+// manuelle, et c'est ce qui permet ici de choisir l'« avant » plutôt que de
+// subir la lecture du parser du jour. Ces tests-là parlent de la comparaison,
+// pas du moteur.
+func ligneDeBaseImposee(t *testing.T, app core.App, recette *core.Record,
+	brut string, lue lectureDUneForme) {
+	t.Helper()
+
+	ligne := ingredientNeuf(t, app, recette, brut)
+	if err := app.Save(ligne); err != nil {
+		t.Fatalf("enregistrement de la ligne %q : %v", brut, err)
+	}
+
+	// Relue depuis la base : c'est cette lecture que Original() rend au hook,
+	// et c'est elle qui lui dit que raw n'a pas bougé.
+	imposee := relit(t, app, ligne.Id)
+	var quantite float64
+	if lue.Quantite != nil {
+		quantite = *lue.Quantite
+	}
+	imposee.Set("quantity", quantite)
+	imposee.Set("unit", lue.Unite)
+	imposee.Set("food", lue.Aliment)
+	imposee.Set("note", lue.Note)
+	imposee.Set("optional", lue.Optionnel)
+	if err := app.Save(imposee); err != nil {
+		t.Fatalf("champs imposés à la ligne %q : %v", brut, err)
+	}
+}
+
 // --- Le corpus qui a bougé --------------------------------------------------
 
 // Le rapprochement se fait sur raw, qui ne bouge jamais d'une passe à l'autre.
