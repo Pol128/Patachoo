@@ -970,3 +970,84 @@ func TestUnSecondLancementEstRefuseParLaPage(t *testing.T) {
 		t.Errorf("%d analyse(s) en cours, attendu 1 : un second travail a été déposé", passes)
 	}
 }
+
+// Une instance qui n'a encore rien analysé rend le bloc tout de même, vide :
+// c'est le garde de avancementDeLEtabli, et sans lui le fragment part en
+// erreur pour le seul curateur qui n'a jamais rien lancé — celui qui découvre
+// la page. Le rafraîchissement d'un onglet ouvert avant le premier lancement
+// passe exactement par là.
+func TestLAvancementDUneInstanceSansAucunePasseSeRendVide(t *testing.T) {
+	app, mux, cookie := atelierDeLEtabli(t)
+
+	// L'état est celui du montage, et on le dit plutôt que de le supposer :
+	// un jour où atelierDeLEtabli déposerait une passe, ce test ne couvrirait
+	// plus rien sans que rien ne le signale.
+	if compte, err := app.CountRecords("analyses"); err != nil || compte != 0 {
+		t.Fatalf("%d analyse(s) au montage, attendu 0 (erreur : %v)", compte, err)
+	}
+
+	fragment := demande(mux, cheminDeLAvancementDeLEtabli, cookie, map[string]string{"HX-Request": "true"})
+	if fragment.Code != http.StatusOK {
+		t.Fatalf("statut %d sur le fragment, attendu %d — corps :\n%s",
+			fragment.Code, http.StatusOK, fragment.Body.String())
+	}
+	exigeContient(t, fragment.Body.String(),
+		`id="avancement-de-l-etabli"`,
+		// La phrase est du texte de gabarit, pas une valeur interpolée : elle
+		// ressort telle qu'elle est écrite, apostrophe comprise.
+		"Aucune analyse n'a encore été lancée sur cette instance.")
+	// Rien à redemander : sans passe, le rafraîchissement interrogerait le
+	// serveur toutes les deux secondes pour ne jamais rien apprendre.
+	exigeSansAucun(t, fragment.Body.String(), "hx-get", "hx-trigger")
+
+	page := avecCookie(mux, http.MethodGet, cheminDeLEtabli, cookie)
+	if page.Code != http.StatusOK {
+		t.Fatalf("statut %d sur la page, attendu %d", page.Code, http.StatusOK)
+	}
+}
+
+// --- Ce que le gabarit recopie -----------------------------------------------
+
+// Les trois champs du formulaire portent les noms que la route relit.
+//
+// Le gabarit les écrit en dur, comme tous les gabarits du dépôt ; ce test est
+// ce qui tient la promesse faite en tête de ces constantes, qu'aucun partage
+// ne tenait. Une lettre changée d'un côté fait tomber ce test, là où elle
+// passait jusqu'ici inaperçue — un champ mal nommé se lit comme un champ vide,
+// et le formulaire refuserait tout lancement sans que rien ne dise pourquoi.
+func TestLaPageNommeSesChampsCommeLaRouteLesRelit(t *testing.T) {
+	_, mux, cookie := atelierDeLEtabli(t)
+
+	rec := avecCookie(mux, http.MethodGet, cheminDeLEtabli, cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("statut %d, attendu %d", rec.Code, http.StatusOK)
+	}
+	exigeContient(t, rec.Body.String(),
+		`name="`+champSourceDeLEtabli+`"`,
+		`name="`+champCorpusColle+`"`,
+		`name="`+champCorpusTeleverse+`"`,
+		// Et l'adresse du formulaire, pour la même raison : un action
+		// recopié finit par désigner une route qui n'est plus branchée.
+		`action="`+cheminDeLEtabli+`"`)
+}
+
+// Un fichier joint mais vide est un corpus absent, comme le même corpus collé.
+//
+// La seule présence de la partie fichier suffisait à faire une source : le
+// lancement partait, et le curateur obtenait une passe terminée sur zéro
+// ligne au lieu du message qui lui dit quoi faire. Deux chemins pour une même
+// saisie vide, deux réponses — c'est la réponse, pas le chemin, qui doit se
+// tenir.
+func TestUnFichierJointMaisVideEstUnCorpusAbsent(t *testing.T) {
+	app, mux, cookie := atelierDeLEtabli(t)
+
+	rec := soumetLeCorpusTeleverse(t, mux, cookie, "   \n\n")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("statut %d, attendu %d — corps :\n%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	exigeContient(t, rec.Body.String(), html.EscapeString(messageCorpusAbsent))
+
+	if compte, err := app.CountRecords("analyses"); err != nil || compte != 0 {
+		t.Errorf("%d analyse(s) en base après le refus, attendu 0 (erreur : %v)", compte, err)
+	}
+}
