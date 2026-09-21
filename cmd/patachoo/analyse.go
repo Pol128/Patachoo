@@ -399,6 +399,9 @@ func (o *ouvrierDAnalyse) reserve(source string) (*core.Record, error) {
 	// dit tout de même quel parser elle faisait tourner, et c'est souvent
 	// celle-là qu'on relit.
 	passe.Set("engine_version", versionDuMoteur(estampilleDuBinaire()))
+	// Formes et non entrées, malgré le nom de la colonne : ce sont les
+	// écritures reconnues — nom, pluriel et alias. Le schéma le dit au-dessus
+	// du champ ; ici, c'est l'appel qui pourrait tromper.
 	passe.Set("lexicon_entries", o.analyseur.lexique.Formes())
 	if err := o.app.Save(passe); err != nil {
 		return nil, fmt.Errorf("création de l'analyse : %w", err)

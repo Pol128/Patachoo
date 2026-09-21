@@ -104,6 +104,13 @@ func init() {
 			// runtime/debug.ReadBuildInfo rend : c'est l'identité du code.
 			// moteur.Pack.Version, lui, ne versionne que le pack de langue.
 			&core.TextField{Name: "engine_version"},
+			// La taille du référentiel qui a servi, et ce qu'elle compte
+			// vraiment : les écritures reconnues — nom, pluriel et alias —,
+			// et non les entrées du lexique, qui sont moins nombreuses. Le
+			// nom de la colonne dit « entrées » et il reste : la renommer
+			// demanderait une migration sur une base déjà installée, pour un
+			// champ dont le seul usage est de distinguer deux passes. C'est
+			// ce commentaire qui porte la vérité du chiffre (PATA-120).
 			&core.NumberField{Name: "lexicon_entries", OnlyInt: true},
 			&core.AutodateField{Name: "created", OnCreate: true},
 			&core.AutodateField{Name: "updated", OnCreate: true, OnUpdate: true},
