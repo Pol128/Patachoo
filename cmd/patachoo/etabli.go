@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/hook"
 	"github.com/pocketbase/pocketbase/tools/router"
@@ -70,18 +71,28 @@ const (
 // est parti dans un fichier temporaire.
 const plafondDuCorpsDeLEtabli = plafondDOctetsDUneAnalyse
 
-// prioriteBorneDuCorpsDeLEtabli place la borne de taille avant le contrôle
-// anti-rejeu, qui est le premier à lire le corps.
+// prioriteBorneDuCorpsDeLEtabli place la borne de taille avant celle de
+// PocketBase, et donc avant tout ce qui lit le corps.
 //
 // Les middlewares du routeur et ceux de la route sont fondus dans un même
 // crochet trié par priorité croissante (tools/router/router.go) : une priorité
-// strictement négative passe donc avant exigeLeJetonAntiRejeu, qui n'en
-// déclare pas. Un cran, comme ailleurs — plus l'écart est petit, moins il reste
-// de place pour qu'un middleware tiers vienne s'y glisser. Son rang vis-à-vis
-// de la pose du jeton, qui porte la même priorité, est indifférent : l'une
-// borne le corps, l'autre pose un cookie, et aucune ne lit ce que l'autre
-// écrit.
-const prioriteBorneDuCorpsDeLEtabli = -1
+// négative passe donc avant exigeLeJetonAntiRejeu, qui n'en déclare pas et est
+// le premier à lire le corps.
+//
+// Mais il ne suffit pas de passer avant lui : apis.NewRouter pose déjà
+// BodyLimit(DefaultMaxBodySize) sur le routeur racine, et ce plafond-là vaut
+// exactement le nôtre. Son contrôle est optimiste — il compare le
+// Content-Length annoncé et rend son erreur *sans passer la main* —, si bien
+// qu'une borne posée après lui n'est jamais atteinte dès que le corps annonce
+// sa taille, c'est-à-dire dès qu'un navigateur téléverse. Le refus ressortirait
+// alors en JSON, ce que le critère d'acceptation exclut.
+//
+// Un cran avant la sienne, donc, et lu sur sa constante plutôt que recopié :
+// le jour où PocketBase déplace la sienne, celle-ci suit. Reste en aval du
+// chargement de la session (DefaultLoadAuthTokenMiddlewarePriority, -1020) et
+// du plafond de débit (-1000) : e.Auth est posé quand cette borne s'exécute, et
+// un corps hors plafond compte comme une requête.
+const prioriteBorneDuCorpsDeLEtabli = apis.DefaultBodyLimitMiddlewarePriority - 1
 
 // cadenceDeLAvancementDeLEtabli est l'intervalle du rafraîchissement HTMX.
 //
@@ -192,6 +203,17 @@ func borneLeCorpsDeLEtabli() *hook.Handler[*core.RequestEvent] {
 		Id:       "patachooBorneLeCorpsDeLEtabli",
 		Priority: prioriteBorneDuCorpsDeLEtabli,
 		Func: func(e *core.RequestEvent) error {
+			// Le contrôle optimiste, dans les mêmes termes que celui de
+			// PocketBase et juste avant lui : c'est le chemin du navigateur,
+			// qui annonce toujours la taille de ce qu'il envoie. Rendu ici,
+			// le refus est une page ; laissé à BodyLimit, c'est du JSON.
+			if e.Request.ContentLength > plafondDuCorpsDeLEtabli {
+				return refuseLeCorpsTropGros(e)
+			}
+
+			// Et la borne sur la lecture, pour le corps qui n'annonce rien —
+			// un envoi en Transfer-Encoding: chunked, que le contrôle
+			// ci-dessus ne peut pas voir venir.
 			e.Request.Body = http.MaxBytesReader(e.Response, e.Request.Body, plafondDuCorpsDeLEtabli)
 
 			err := e.Next()
@@ -199,13 +221,31 @@ func borneLeCorpsDeLEtabli() *hook.Handler[*core.RequestEvent] {
 			if !errors.As(err, &trop) {
 				return err
 			}
-
-			// Sans reprendre la saisie : le corps est justement ce qu'on a
-			// refusé de lire, et le relire ici serait lever la borne qu'on
-			// vient de poser.
-			return rendLEtabliAvecStatut(e, http.StatusRequestEntityTooLarge, "", messageDuCorpsTropGros())
+			return refuseLeCorpsTropGros(e)
 		},
 	}
+}
+
+// refuseLeCorpsTropGros rend le refus de taille en page — après avoir
+// recontrôlé le droit.
+//
+// Le recontrôle n'est pas une ceinture de plus : la page rendue ici est la page
+// réservée, formulaire de lancement et dernière passe compris, et elle se rend
+// hors de la garde. exigeUnCurateur porte la priorité par défaut, donc passe
+// après cette borne, et le chemin de l'erreur court-circuite la suite de la
+// chaîne — sans ce contrôle, il suffirait de poster plus que le plafond, sans
+// aucune session, pour lire l'établi.
+//
+// Le refus n'est pas habillé en page, lui : c'est celui de exigeUnCurateur,
+// mot pour mot, pour qu'un client hors plafond ne se distingue pas d'un autre.
+func refuseLeCorpsTropGros(e *core.RequestEvent) error {
+	if refuse, err := refuseQuiNEstPasCurateur(e); refuse {
+		return err
+	}
+
+	// Sans reprendre la saisie : le corps est justement ce qu'on a refusé de
+	// lire, et le relire ici serait lever la borne qu'on vient de poser.
+	return rendLEtabliAvecStatut(e, http.StatusRequestEntityTooLarge, "", messageDuCorpsTropGros())
 }
 
 // pageDeLEtabli rend le formulaire nu, et l'avancement s'il y a un travail.

@@ -54,15 +54,36 @@ func exigeUnCurateur() *hook.Handler[*core.RequestEvent] {
 	return &hook.Handler[*core.RequestEvent]{
 		Id: "patachooExigeUnCurateur",
 		Func: func(e *core.RequestEvent) error {
-			if e.Auth == nil {
-				return e.Redirect(http.StatusSeeOther, "/connexion")
-			}
-			if !e.Auth.GetBool(champCurateur) {
-				return apis.NewForbiddenError("", nil)
+			if refuse, err := refuseQuiNEstPasCurateur(e); refuse {
+				return err
 			}
 			return e.Next()
 		},
 	}
+}
+
+// refuseQuiNEstPasCurateur oppose le refus à qui n'a pas le droit, et dit
+// vrai quand il l'a fait.
+//
+// Détaché de la garde parce qu'un middleware n'est pas le seul endroit d'où ce
+// droit se contrôle : le rattrapage d'un corps hors plafond (etabli.go) rend
+// la page réservée sans que la garde ait tourné — le corps est lu, et l'erreur
+// remonte, avant elle. Il rejoue donc ce contrôle-ci, et les deux disent
+// forcément la même chose puisque c'est le même code.
+//
+// Un booléen *en plus* de l'erreur, et c'est le détail qui fait tout : le
+// renvoi vers /connexion passe par e.Redirect, qui écrit la réponse et rend
+// nil. Un appelant qui ne lirait que l'erreur croirait le visiteur autorisé et
+// continuerait — en écrivant la page réservée par-dessus une redirection déjà
+// posée.
+func refuseQuiNEstPasCurateur(e *core.RequestEvent) (bool, error) {
+	if e.Auth == nil {
+		return true, e.Redirect(http.StatusSeeOther, "/connexion")
+	}
+	if !e.Auth.GetBool(champCurateur) {
+		return true, apis.NewForbiddenError("", nil)
+	}
+	return false, nil
 }
 
 // figeLeCurateurSaufPourLeSuperuser bouche le trou évident d'un droit porté par
