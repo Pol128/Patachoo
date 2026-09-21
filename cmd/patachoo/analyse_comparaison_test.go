@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -519,6 +520,12 @@ func TestLaSortieDeComparerEstIdentiqueDUneExecutionALAutre(t *testing.T) {
 			signaux: []string{SignalNonResolu},
 			motif:   "aliment_nu",
 		},
+		formeVoulue{
+			brut:    "3 tomates mondées, épépinées",
+			lecture: lectureDUneForme{Quantite: quantiteDe(3), Aliment: "tomates mondées, épépinées"},
+			signaux: []string{SignalNonResolu},
+			motif:   "quantite_aliment",
+		},
 	)
 	apres := passeConstruite(t, app,
 		formeVoulue{
@@ -540,6 +547,12 @@ func TestLaSortieDeComparerEstIdentiqueDUneExecutionALAutre(t *testing.T) {
 			motif:   "aliment_quantite",
 			resolu:  true,
 		},
+		formeVoulue{
+			brut:    "3 tomates mondées, épépinées",
+			lecture: lectureDUneForme{Quantite: quantiteDe(3), Aliment: "tomate", Note: "épépinées"},
+			motif:   "quantite_aliment_note",
+			resolu:  true,
+		},
 	)
 
 	premiere := comparaisonDeDeuxPasses(t, app, avant, apres)
@@ -547,6 +560,34 @@ func TestLaSortieDeComparerEstIdentiqueDUneExecutionALAutre(t *testing.T) {
 	if premiere != seconde {
 		t.Errorf("deux exécutions sur les mêmes passes rendent deux textes.\npremière :\n%s\nseconde :\n%s",
 			premiere, seconde)
+	}
+
+	// Et la forme vérifiable de la même exigence : les suites sont triées.
+	// Deux exécutions qui s'accordent peuvent s'accorder par chance — le
+	// parcours d'une table de hachage de trois clés ressort dans le même ordre
+	// une fois sur six.
+	exigeCroissant(t, premiere, "signal ", 4)
+	exigeCroissant(t, premiere, "motif ", 5)
+	exigeCroissant(t, premiere, "à relire « ", 3)
+}
+
+// exigeCroissant relève les lignes de la sortie qui commencent par le préfixe
+// donné et vérifie qu'elles sont triées. Le compte attendu est passé avec :
+// une suite vide est triée, et ne prouverait donc rien.
+func exigeCroissant(t *testing.T, sortie, prefixe string, attendues int) {
+	t.Helper()
+
+	var relevees []string
+	for _, ligne := range strings.Split(sortie, "\n") {
+		if reste, porte := strings.CutPrefix(ligne, prefixe); porte {
+			relevees = append(relevees, reste)
+		}
+	}
+	if len(relevees) != attendues {
+		t.Fatalf("%d ligne(s) « %s », attendu %d :\n%s", len(relevees), prefixe, attendues, sortie)
+	}
+	if !slices.IsSorted(relevees) {
+		t.Errorf("les lignes « %s » ne sont pas triées : %q", prefixe, relevees)
 	}
 }
 
