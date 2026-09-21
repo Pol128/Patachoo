@@ -272,15 +272,36 @@ func borneLeCorpsDeLEtabli() *hook.Handler[*core.RequestEvent] {
 // recopier ici un chiffre qui ne nous appartient pas.
 //
 // Ce que cela coûte, et c'est assumé : un fichier joint tient désormais en
-// mémoire au lieu de partir dans un fichier temporaire. Le plafond le borne,
-// l'ouvrier le lit de toute façon en mémoire entière (analyse.go), et le
-// disque n'en garde plus rien — ce qui est la lecture la plus simple de « le
-// fichier fourni n'est jamais conservé ».
+// mémoire au lieu de partir dans le fichier temporaire du formulaire. Le
+// plafond le borne, et l'ouvrier le lit de toute façon en mémoire entière
+// (analyse.go).
+//
+// Cela ne fait pas pour autant que rien ne touche le disque, et il ne faut pas
+// le lire ainsi : le RereadableReadCloser que tools/router/router.go pose sur
+// toute requête recopie chaque octet lu dans un tampon dont la limite mémoire
+// est router.DefaultMaxMemory, 16 Mio, au-delà de laquelle il écrit dans un
+// fichier temporaire — pour un corpus collé comme pour un fichier joint, et
+// quel que soit le maxMemory d'ici. La promesse de la tâche tient par ailleurs :
+// ce fichier-là est supprimé à la fermeture du corps, et rien du corpus ne
+// survit à la requête hors des formes que la passe écrit.
 func litLeFormulaireDeLEtabli(e *core.RequestEvent) error {
-	err := e.Request.ParseMultipartForm(plafondDuCorpsDeLEtabli)
+	// ParseForm à part, et son erreur lue avant tout le reste.
+	//
+	// ParseMultipartForm l'appelle elle-même, mais écrase son erreur par
+	// ErrNotMultipart dès que le corps n'est pas multipart. Ignorer
+	// ErrNotMultipart — ce que valeursSoumises fait déjà — reviendrait donc à
+	// ignorer avec elle le dépassement que ParseForm vient de rencontrer sur le
+	// corps borné : le lancement perdrait tous ses champs, jeton anti-rejeu
+	// compris, et ressortirait en « Formulaire expiré » plutôt qu'en refus de
+	// taille.
+	if err := e.Request.ParseForm(); err != nil {
+		return err
+	}
+
 	// Un lancement sans fichier se poste urlencodé, et ParseMultipartForm le
-	// dit ainsi après avoir tout de même lu les champs : ce n'est pas une
-	// panne, et valeursSoumises l'ignore déjà de la même façon.
+	// dit ainsi : ce n'est pas une panne, et les champs sont déjà lus par
+	// l'appel ci-dessus.
+	err := e.Request.ParseMultipartForm(plafondDuCorpsDeLEtabli)
 	if errors.Is(err, http.ErrNotMultipart) {
 		return nil
 	}
