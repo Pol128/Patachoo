@@ -1,0 +1,27 @@
+<h1>Une forme lue</h1>
+<p class="passe">Analyse du {{.Date}}. <a href="{{.LienDeLaListe}}">Retour aux formes</a></p>
+<p class="brut">{{.Brut}}</p>
+<p class="rangement">{{if .Aliment}}Rangée sous <a href="{{.LienDuGroupe}}">{{.Aliment}}</a>{{else}}<a href="{{.LienDuGroupe}}">Aucun aliment n'a été lu sur cette ligne</a>{{end}}{{if eq .Autres 1}}, voir l'autre forme du groupe{{else if .Autres}}, voir les {{.Autres}} autres formes du groupe{{end}}.</p>
+<p class="poids">Vue {{.Occurrences}} fois dans le corpus.{{if .Signaux}} {{range .Signaux}}<span class="signal">{{.}}</span> {{end}}{{end}}</p>
+<h2>Ce que le parser en a lu</h2>
+<dl class="lecture">
+<dt>Quantité</dt><dd class="quantite">{{.Lecture.Quantite}}</dd>
+<dt>Unité</dt><dd class="unite">{{.Lecture.Unite}}</dd>
+<dt>Partitif</dt><dd class="partitif">{{.Lecture.Partitif}}</dd>
+<dt>Aliment</dt><dd class="aliment-lu">{{.Lecture.Aliment}}</dd>
+<dt>Note</dt><dd class="note">{{.Lecture.Note}}</dd>
+<dt>Facultatif</dt><dd class="facultatif">{{if .Lecture.Optionnel}}oui{{else}}non{{end}}</dd>
+<dt>Motif</dt><dd class="motif">{{.Motif}}</dd>
+<dt>Catégorie</dt><dd class="categorie">{{if .Resolu}}{{.Categorie}}{{else}}aliment non résolu par le lexique{{end}}</dd>
+</dl>
+{{if .AvecProvenance}}
+<h2>D'où elle vient</h2>
+{{if .Provenance}}
+<ul class="provenance">
+{{range .Provenance}}<li class="origine"><a href="/recettes/{{.Id}}">{{.Titre}}</a></li>
+{{end}}</ul>
+{{if .ProvenanceBornee}}<p class="bornee">Les {{.Borne}} premières recettes seulement : cette ligne est portée par beaucoup d'autres.</p>{{end}}
+{{else}}
+<p class="sans-provenance">Aucune recette du carnet ne porte cette ligne aujourd'hui : elle a pu être corrigée ou supprimée depuis l'analyse.</p>
+{{end}}
+{{end}}

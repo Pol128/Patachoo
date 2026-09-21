@@ -694,3 +694,107 @@ footer {
 	text-align: right;
 	font-variant-numeric: tabular-nums;
 }
+
+/* La page détail de l'établi : les formes distinctes d'une passe, leur lecture
+   champ à champ, et le va-et-vient avec le groupe qui les range.
+
+   La dernière colonne de la vue agrégée descend ici : elle se lit comme un
+   lien ordinaire, sans peser plus que la clé du groupe. */
+.detail {
+	white-space: nowrap;
+	font-size: 0.9rem;
+}
+
+/* Le tableau des formes. Dix colonnes étroites plutôt qu'une phrase par ligne :
+   la lecture du parser se relit en descendant une colonne, et c'est ce qui
+   fait ressortir la ligne où l'unité a été prise pour l'aliment. */
+.formes-lues {
+	width: 100%;
+	margin: 1rem 0;
+	border-collapse: collapse;
+	font-size: 0.9rem;
+}
+
+.formes-lues th {
+	padding: 0.4rem 0.5rem;
+	border-bottom: 1px solid var(--trait);
+	text-align: left;
+	font-weight: 600;
+}
+
+.forme td {
+	padding: 0.4rem 0.5rem;
+	border-bottom: 1px solid var(--trait);
+	vertical-align: top;
+}
+
+/* La ligne brute, telle que le corpus la porte : c'est elle qu'on lit en
+   premier, et c'est elle qu'on compare à ce que le parser en a fait. */
+.brut {
+	font-weight: 600;
+}
+
+/* Les quatre champs de la lecture. Le gris les met derrière la ligne brute :
+   ce sont des valeurs dérivées, pas la source. */
+.quantite,
+.unite,
+.partitif,
+.aliment-lu,
+.note,
+.facultatif,
+.motif {
+	color: #4a463f;
+}
+
+.quantite {
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+}
+
+/* Le groupe sous lequel la forme est rangée, sur la ligne comme sur la fiche :
+   c'est le chemin de remontée, et il se voit. */
+.rangement {
+	font-size: 0.9rem;
+}
+
+/* La fiche d'une forme : son poids, sa lecture, et d'où elle vient. */
+.poids {
+	margin: 0.4rem 0;
+	color: #6b675f;
+	font-size: 0.9rem;
+}
+
+.lecture {
+	display: grid;
+	grid-template-columns: max-content 1fr;
+	gap: 0.3rem 1rem;
+	margin: 1rem 0;
+}
+
+.lecture dt {
+	color: #6b675f;
+	font-size: 0.9rem;
+}
+
+.lecture dd {
+	margin: 0;
+}
+
+/* La provenance : les recettes du carnet qui portent cette ligne. Une liste
+   nue, chaque entrée menant à sa fiche. */
+.provenance {
+	margin: 0.5rem 0;
+	padding-left: 1.2rem;
+}
+
+.origine {
+	margin-bottom: 0.2rem;
+}
+
+/* La borne, dite quand elle mord : une liste tronquée en silence se lit comme
+   une liste complète. */
+.bornee,
+.sans-provenance {
+	color: #6b675f;
+	font-size: 0.9rem;
+}

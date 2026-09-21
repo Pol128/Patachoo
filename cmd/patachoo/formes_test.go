@@ -469,7 +469,13 @@ func TestUneLigneBruteContenantDuBalisageEstAfficheeLitteralement(t *testing.T) 
 		"fiche": laFiche(t, mux, cookie, laForme(t, app, passe, brut)),
 	} {
 		t.Run(nom, func(t *testing.T) {
-			for _, balise := range []string{"<script>", "</script>", "<img src=x", "<b>oignon</b>", "<i>u</i>"} {
+			// Les fragments sont ceux de la charge, et non « <script> » nu :
+			// la mise en page porte sa propre balise de script, et un motif
+			// trop large rougirait sur elle plutôt que sur le corpus.
+			for _, balise := range []string{
+				`<script>alert(`, `alert("xss")</script>`,
+				`<img src=x onerror=`, "<b>oignon</b>", "<i>u</i>",
+			} {
 				if strings.Contains(corps, balise) {
 					t.Errorf("la page rend %q littéralement — corps :\n%s", balise, corps)
 				}
@@ -569,8 +575,10 @@ func TestUneFormeSansProvenanceNAfficheNiProvenanceNiLien(t *testing.T) {
 	if lues := origines(fiche); len(lues) != 0 {
 		t.Errorf("%d entrée(s) de provenance sur un corpus fourni, attendu 0 — corps :\n%s", len(lues), fiche)
 	}
-	if strings.Contains(fiche, "/recettes/") {
-		t.Errorf("la fiche d'un corpus fourni porte un lien vers une recette — corps :\n%s", fiche)
+	// Le bloc entier est absent, et pas seulement vide : une section
+	// « d'où elle vient » suivie de rien se lit comme une panne.
+	if strings.Contains(fiche, `class="provenance"`) || strings.Contains(fiche, `class="sans-provenance"`) {
+		t.Errorf("la fiche d'un corpus fourni porte un bloc de provenance — corps :\n%s", fiche)
 	}
 }
 
