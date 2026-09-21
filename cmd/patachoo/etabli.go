@@ -183,8 +183,11 @@ type donneesAvancement struct {
 // droit d'abord (prioriteDuDroitDeCurateur), la borne ensuite, l'anti-rejeu en
 // dernier, à la priorité par défaut. Le droit avant la borne parce que la borne
 // lit : sans cela, un client sans session ferait bâtir jusqu'au plafond de
-// formulaire en mémoire avant d'être refusé, sur la seule route d'écriture du
-// dépôt que ne borne aucune règle de débit.
+// formulaire en mémoire avant d'être refusé.
+//
+// Ce que le curateur, lui, peut encore faire lire est borné par la règle de
+// débit de 1790006400_debit_etabli.go — cinq lancements par minute et par
+// adresse : la garde dit qui fait lire le corps, la règle dit à quel rythme.
 //
 // L'établi diverge donc ici de lot.go, qui met l'anti-rejeu avant la session :
 // c'est que l'argument de lot.go — une requête forgée par un autre site n'a pas

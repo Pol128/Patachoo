@@ -288,8 +288,8 @@ func TestUnCompteOrdinaireEstRefuseSurLaPageEtSurLaRoute(t *testing.T) {
 // plafond, et en mémoire depuis qu'elle pose son propre maxMemory — et elle
 // porte une priorité négative, donc passe avant tout ce qui n'en déclare pas.
 // Un client sans session pouvait ainsi faire bâtir jusqu'à 32 Mio de
-// formulaire avant d'être refusé, sur la seule route d'écriture du dépôt que
-// ne borne aucune règle de débit.
+// formulaire avant d'être refusé. Ce qu'un curateur peut encore faire lire est
+// borné, lui, par la règle de débit de 1790006400_debit_etabli.go.
 //
 // Le corps est donc compté : ce que la réponse dit importe moins, ici, que le
 // fait qu'aucun octet n'ait été lu pour le dire. Et le corps est recevable —
