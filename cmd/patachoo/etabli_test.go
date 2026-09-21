@@ -96,6 +96,17 @@ func soumetAvecFichierJoint(t *testing.T, mux http.Handler, cookie *http.Cookie,
 	champs url.Values, contenu string) *httptest.ResponseRecorder {
 	t.Helper()
 
+	corps, typeDeContenu, _ := corpsAvecFichierJoint(t, champs, contenu)
+	return joueLeMultipart(mux, cookie, typeDeContenu, corps)
+}
+
+// corpsAvecFichierJoint bâtit ce corps sans le jouer, et dit sa taille.
+//
+// Séparé du soumetteur pour le test du moment de la lecture : celui-là a
+// besoin d'envelopper le corps avant qu'il parte, et d'une taille à annoncer.
+func corpsAvecFichierJoint(t *testing.T, champs url.Values, contenu string) (io.Reader, string, int64) {
+	t.Helper()
+
 	corps := &bytes.Buffer{}
 	ecrivain := multipart.NewWriter(corps)
 	ecritLesChamps(t, ecrivain, champs)
@@ -110,7 +121,7 @@ func soumetAvecFichierJoint(t *testing.T, mux http.Handler, cookie *http.Cookie,
 		t.Fatalf("clôture du corps multipart : %v", err)
 	}
 
-	return joueLeMultipart(mux, cookie, ecrivain.FormDataContentType(), corps)
+	return corps, ecrivain.FormDataContentType(), int64(corps.Len())
 }
 
 // ecritLesChamps recopie les champs de saisie dans un corps multipart, le
@@ -270,6 +281,51 @@ func TestUnCompteOrdinaireEstRefuseSurLaPageEtSurLaRoute(t *testing.T) {
 // Le relevé de antirejeu_test.go le dit déjà pour toutes les routes à la fois ;
 // ce test-ci le redit ici pour que le fichier de l'établi porte lui-même la
 // preuve du critère, sans avoir à aller la chercher ailleurs.
+// Le droit se contrôle avant que le corps ne soit lu.
+//
+// Les deux refus ci-dessus ne disent que la réponse ; ici, c'est le moment qui
+// est en cause. borneLeCorpsDeLEtabli lit le formulaire entier — jusqu'au
+// plafond, et en mémoire depuis qu'elle pose son propre maxMemory — et elle
+// porte une priorité négative, donc passe avant tout ce qui n'en déclare pas.
+// Un client sans session pouvait ainsi faire bâtir jusqu'à 32 Mio de
+// formulaire avant d'être refusé, sur la seule route d'écriture du dépôt que
+// ne borne aucune règle de débit.
+//
+// Le corps est donc compté : ce que la réponse dit importe moins, ici, que le
+// fait qu'aucun octet n'ait été lu pour le dire. Et le corps est recevable —
+// bien en deçà du plafond —, sans quoi c'est la borne de taille qui refuserait
+// et le test ne dirait rien de la garde.
+func TestLeDroitSeControleAvantQueLeCorpsNeSoitLu(t *testing.T) {
+	app, mux := serveurDeLEtabli(t)
+	compteParDefaut(t, app)
+	ordinaire := cookieDe(t, seConnecte(t, mux, courrielDeTest, motDePasseDeTest))
+
+	for nom, attendu := range map[string]struct {
+		cookie *http.Cookie
+		statut int
+	}{
+		"visiteur":         {nil, http.StatusSeeOther},
+		"compte ordinaire": {ordinaire, http.StatusForbidden},
+	} {
+		t.Run(nom, func(t *testing.T) {
+			corps, typeDeContenu, taille := corpsAvecFichierJoint(t,
+				url.Values{champSourceDeLEtabli: {sourceFournie}}, "100 g de farine\n")
+			compteur := &lecteurCompte{flux: corps}
+
+			rec := joueLeMultipartAnnonce(mux, attendu.cookie, typeDeContenu, compteur, taille)
+
+			if rec.Code != attendu.statut {
+				t.Fatalf("statut %d, attendu %d — corps :\n%s",
+					rec.Code, attendu.statut, rec.Body.String())
+			}
+			if lus := compteur.lus.Load(); lus != 0 {
+				t.Errorf("%d octet(s) du corps lus avant le refus, attendu 0 : le droit se contrôle avant la lecture",
+					lus)
+			}
+		})
+	}
+}
+
 func TestLeLancementSansJetonAntiRejeuEstRefuseEnHTML(t *testing.T) {
 	_, mux, cookie := atelierDeLEtabli(t)
 
