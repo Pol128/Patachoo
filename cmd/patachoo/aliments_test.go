@@ -108,6 +108,18 @@ func formeNonResolue(brut, aliment string, occurrences int) formeDeTest {
 	}
 }
 
+// formeSansAliment est la ligne dont le motif n'a rien su tirer : aucun
+// aliment, et c'est le signal aliment_vide qui le dit. Sa clé de groupe est la
+// chaîne vide, comme le champ food d'une annotation de forme — d'où le soin
+// que le filtre des groupes tranchés met à ne pas confondre les deux.
+func formeSansAliment(brut string, occurrences int) formeDeTest {
+	return formeDeTest{
+		brut:        brut,
+		occurrences: occurrences,
+		signaux:     []string{SignalAlimentVide},
+	}
+}
+
 // annotationDeGroupe tranche un groupe par sa clé, comme PATA-127 le fera :
 // une ligne de analyses_annotations qui ne porte que l'aliment.
 func annotationDeGroupe(t *testing.T, app core.App, passe *core.Record, aliment string) {
@@ -123,6 +135,33 @@ func annotationDeGroupe(t *testing.T, app core.App, passe *core.Record, aliment 
 	annotation.Set("shareable_note", "vu")
 	if err := app.Save(annotation); err != nil {
 		t.Fatalf("écriture de l'annotation sur %q : %v", aliment, err)
+	}
+}
+
+// annotationDeForme annote une ligne plutôt qu'un groupe, comme PATA-127 le
+// fera : la cible est la forme, et le champ food reste vide — c'est food seul
+// qui désigne un groupe.
+func annotationDeForme(t *testing.T, app core.App, passe *core.Record, brut string) {
+	t.Helper()
+
+	forme, err := app.FindFirstRecordByFilter("analyses_formes",
+		"analysis = {:passe} && raw = {:brut}",
+		dbx.Params{"passe": passe.Id, "brut": brut})
+	if err != nil {
+		t.Fatalf("forme %q de la passe : %v", brut, err)
+	}
+
+	collection, err := app.FindCollectionByNameOrId("analyses_annotations")
+	if err != nil {
+		t.Fatalf("collection analyses_annotations : %v", err)
+	}
+	annotation := core.NewRecord(collection)
+	annotation.Set("analysis", passe.Id)
+	annotation.Set("form", forme.Id)
+	annotation.Set("food", "")
+	annotation.Set("local_note", "forme douteuse")
+	if err := app.Save(annotation); err != nil {
+		t.Fatalf("écriture de l'annotation de forme sur %q : %v", brut, err)
 	}
 }
 
@@ -277,6 +316,36 @@ func TestUnGroupeTrancheSortDeLOrdreParDefautEtRevientDansLaListeComplete(t *tes
 		"oignon", "gousse de vanille")
 }
 
+// Une annotation de forme laisse son champ food vide, et elle ne tranche aucun
+// groupe — surtout pas celui des aliments vides, dont la clé est vide elle
+// aussi. Sans le terme du filtre qui écarte les annotations à food vide, la
+// première annotation de forme posée ferait disparaître de l'ordre par défaut
+// exactement la population que le signal aliment_vide demande de relire.
+//
+// Les deux moitiés existent dès aujourd'hui : l'analyseur écrit food = "" pour
+// les lignes que SignalAlimentVide désigne, et food est facultatif sur
+// analyses_annotations.
+func TestUneAnnotationDeFormeNeTranchePasLeGroupeDesAlimentsVides(t *testing.T) {
+	app, mux, cookie := atelierDeLEtabli(t)
+	passe := passeTermineeDeTest(t, app,
+		formeSansAliment("2 cuillères à soupe", 90),
+		formeResolue("2 oignons", "oignon", "Légumes", 400, SignalMotsPerdus),
+	)
+	annotationDeForme(t, app, passe, "2 cuillères à soupe")
+
+	corps := laVueAgregee(t, mux, cookie, nil)
+
+	vide := false
+	for _, groupe := range groupesAffiches(corps) {
+		if groupe.Aliment == "" {
+			vide = true
+		}
+	}
+	if !vide {
+		t.Errorf("le groupe des aliments vides a quitté l'ordre par défaut sur une annotation de forme — corps :\n%s", corps)
+	}
+}
+
 // --- Ce qu'une ligne montre --------------------------------------------------
 
 // Les occurrences affichées somment exactement celles des formes du groupe, et
@@ -419,6 +488,46 @@ func TestUnAlimentNonResoluPorteurDeBalisageRessortLitteralement(t *testing.T) {
 	groupes := groupesAffiches(corps)
 	if len(groupes) != 1 || groupes[0].Aliment != malveillant {
 		t.Errorf("aliment affiché %v, attendu le texte brut une fois déséchappé", groupes)
+	}
+}
+
+// Le paramètre analyse vient de la chaîne de requête et ressort dans tous les
+// liens de la page — la barre des tris, la bascule, la pagination —, sur une
+// réponse 200 : un identifiant qui ne désigne rien retombe sur la dernière
+// passe au lieu de refuser. C'est donc une entrée utilisateur reflétée dans une
+// page rendue, et la DoD §3 en demande le test d'échappement au même titre que
+// le texte venu du corpus.
+//
+// Deux valeurs : celle qui ouvrirait une balise, et celle qui fermerait
+// l'attribut où elle atterrit.
+func TestLeParametreDAnalyseRessortEchappeDansLesLiens(t *testing.T) {
+	for nom, malveillant := range map[string]string{
+		"balise":    `<script>alert(1)</script>`,
+		"guillemet": `" onmouseover="alert(1)`,
+	} {
+		t.Run(nom, func(t *testing.T) {
+			app, mux, cookie := atelierDeLEtabli(t)
+			passeTermineeDeTest(t, app,
+				formeResolue("2 oignons", "oignon", "Légumes", 400, SignalMotsPerdus))
+
+			corps := laVueAgregee(t, mux, cookie,
+				url.Values{parametreDeLAnalyse: {malveillant}})
+
+			// Reflété d'abord, et c'est ce qui donne son sens à la suite : sur
+			// une page qui ne reprendrait pas le paramètre, l'assertion
+			// d'échappement passerait sans rien avoir vérifié.
+			//
+			// Le reflet se cherche dans le corps déséchappé, parce que les
+			// deux défenses se composent : url.Values encode l'espace en « + »,
+			// que html/template réécrit ensuite en « &#43; ».
+			reflet := url.Values{parametreDeLAnalyse: {malveillant}}.Encode()
+			if !strings.Contains(html.UnescapeString(corps), reflet) {
+				t.Fatalf("le paramètre n'est pas repris dans les liens, le test ne dirait rien — corps :\n%s", corps)
+			}
+			if strings.Contains(corps, malveillant) {
+				t.Errorf("le paramètre ressort tel quel dans la page — corps :\n%s", corps)
+			}
+		})
 	}
 }
 
