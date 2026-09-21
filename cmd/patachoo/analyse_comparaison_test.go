@@ -188,6 +188,8 @@ func TestComparerRendLesQuatreQuantitesDePartEtDAutre(t *testing.T) {
 	apres := passeConstruite(t, app,
 		// Le lexique la résout désormais, et son aliment prend la forme
 		// canonique : un signal de moins, et le seul champ qui bouge est food.
+		// Ses signaux ayant bougé, elle est à relire et non comptée en
+		// canonisation — ce que ce test-ci ne regarde pas, il compte.
 		formeVoulue{
 			brut:    "100 g de farine de sarrasin",
 			lecture: lectureDUneForme{Quantite: quantiteDe(100), Unite: "g", Partitif: "de", Aliment: "farine de sarrasin bio"},
@@ -751,7 +753,10 @@ func TestLaSortieDeComparerEstIdentiqueDUneExecutionALAutre(t *testing.T) {
 	// une fois sur six.
 	exigeCroissant(t, premiere, "signal ", 4)
 	exigeCroissant(t, premiere, "motif ", 5)
-	exigeCroissant(t, premiere, "à relire « ", 3)
+	// Quatre, et non trois : « 1 feuille de laurier » perd son aliment au
+	// profit d'un autre en allumant aliment_vide. Seul food bouge, mais ses
+	// signaux aussi — ce n'est donc pas une canonisation, et elle est listée.
+	exigeCroissant(t, premiere, "à relire « ", 4)
 }
 
 // exigeCroissant relève les lignes de la sortie qui commencent par le préfixe

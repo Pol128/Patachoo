@@ -305,11 +305,12 @@ type comparaison struct {
 	quantitesApres quantitesDUnCote
 
 	identiques int
-	// canonisations compte les formes dont le seul champ qui bouge est
-	// l'aliment. MOTEUR-5 le réécrit avec la forme canonique du lexique sur
-	// toute ligne qui se résout : la moitié du corpus change sans qu'aucune
-	// erreur soit réparée, et un décompte de formes changées qui l'inclurait
-	// serait ininterprétable. Comptée, nommée, et tenue hors du verdict.
+	// canonisations compte les formes dont l'aliment est réécrit avec la forme
+	// canonique du lexique. MOTEUR-5 le fait sur toute ligne qui se résout :
+	// la moitié du corpus change sans qu'aucune erreur soit réparée, et un
+	// décompte de formes changées qui l'inclurait serait ininterprétable.
+	// Comptée, nommée, et tenue hors du verdict — ce qui oblige la famille à
+	// ne prendre que ce qu'elle nomme, cf. estUneCanonisation.
 	canonisations int
 	regressions   []ecartDeForme
 	aRelire       []ecartDeForme
@@ -373,7 +374,7 @@ func compare(avant, apres coteCompare, perimetre perimetreDesChamps) comparaison
 		case memeLecture(lueAvant, lueApres) &&
 			(!perimetre.signaux || slices.Equal(deAvant.signaux, dApres.signaux)):
 			c.identiques++
-		case seulLAlimentDiffere(lueAvant, lueApres):
+		case estUneCanonisation(deAvant, dApres, lueAvant, lueApres, perimetre):
 			c.canonisations++
 		default:
 			// Toute forme qui change sans entrer dans une famille connue est
@@ -449,6 +450,39 @@ func seulLAlimentDiffere(a, b lectureDUneForme) bool {
 	}
 	a.Aliment, b.Aliment = "", ""
 	return memeLecture(a, b)
+}
+
+// estUneCanonisation dit si l'aliment, seul champ à bouger, bouge pour la
+// raison que la famille nomme.
+//
+// Que l'aliment soit le seul champ qui change ne suffit pas. Une forme dont
+// food passe de « farine » à « » n'a elle aussi changé que de cette colonne,
+// et c'est une dégradation franche : rangée en canonisation, elle serait tenue
+// hors du verdict sans jamais être listée, ce que l'invariant 4 de la tâche
+// interdit. En --base, où le périmètre ne porte pas les signaux, elle ne
+// laisserait aucune trace nulle part — et c'est le mode qui doit trancher la
+// reprise de l'existant.
+//
+// Trois gardes, donc, qui disent ce qu'une canonisation est : les signaux ne
+// bougent pas quand le périmètre les porte, et l'aliment d'après est non vide
+// et résolu — MOTEUR-5 ne réécrit que ce que le lexique retrouve. Tout le
+// reste tombe en « à relire » et ressort listé en entier.
+//
+// Conséquence assumée : une forme qui se résout pour la première fois voit son
+// aliment canonisé et son signal non_resolu s'éteindre dans le même mouvement.
+// Ses signaux ont donc bougé, et elle est à relire plutôt que comptée ici.
+// C'est le sens de la garde — une famille tenue hors du verdict doit se
+// tromper du côté de la liste, jamais du côté du silence —, et les quatre
+// quantités, qui se comptent ailleurs, n'en sont pas affectées.
+func estUneCanonisation(deAvant, dApres formeComparee,
+	lueAvant, lueApres lectureDUneForme, perimetre perimetreDesChamps) bool {
+	if !seulLAlimentDiffere(lueAvant, lueApres) {
+		return false
+	}
+	if perimetre.signaux && !slices.Equal(deAvant.signaux, dApres.signaux) {
+		return false
+	}
+	return lueApres.Aliment != "" && dApres.resolu
 }
 
 // triesDesFormes rend les lignes brutes d'un côté, triées : la sortie est faite
