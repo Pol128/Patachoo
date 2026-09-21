@@ -711,6 +711,40 @@ func TestLaPageMontreLAvancementDuTravail(t *testing.T) {
 	exigeContient(t, rec.Body.String(), `id="avancement-de-l-etabli"`)
 }
 
+// Tant que la passe tourne, le bloc se redemande — sur la page comme rendu
+// seul. C'est le livrable « et son avancement » : sans ces deux attributs, la
+// page montre un compteur figé à l'instant du chargement.
+//
+// Les deux valeurs sont lues sur les constantes et non recopiées : un chemin
+// ou une cadence changés d'un côté feraient tomber ce test plutôt que passer
+// inaperçus.
+func TestLAvancementDUnePasseEnCoursLeDitEtSeRedemande(t *testing.T) {
+	app, mux, cookie := atelierDeLEtabli(t)
+
+	// Écrite à la main plutôt que lancée : une passe menée par l'ouvrier se
+	// clôt en quelques millisecondes, et l'état « en cours » ne serait pas
+	// observable de façon reproductible.
+	passeEnCours(t, app)
+
+	rafraichissement := []string{
+		`hx-get="` + cheminDeLAvancementDeLEtabli + `"`,
+		`hx-trigger="` + cadenceDeLAvancementDeLEtabli + `"`,
+	}
+
+	page := avecCookie(mux, http.MethodGet, cheminDeLEtabli, cookie)
+	if page.Code != http.StatusOK {
+		t.Fatalf("statut %d sur la page, attendu %d", page.Code, http.StatusOK)
+	}
+	exigeContient(t, page.Body.String(), append(rafraichissement, "en cours")...)
+
+	fragment := demande(mux, cheminDeLAvancementDeLEtabli, cookie, map[string]string{"HX-Request": "true"})
+	if fragment.Code != http.StatusOK {
+		t.Fatalf("statut %d sur le fragment, attendu %d — corps :\n%s",
+			fragment.Code, http.StatusOK, fragment.Body.String())
+	}
+	exigeContient(t, fragment.Body.String(), append(rafraichissement, "en cours")...)
+}
+
 // Le fragment rendu à HTMX est le bloc seul : une page entière renvoyée dans
 // un hx-target produirait des pages imbriquées.
 func TestLAvancementRenduAHTMXEstLeBlocSeul(t *testing.T) {
@@ -746,6 +780,60 @@ func TestLAvancementNeSeRedemandePlusUneFoisLaPasseClose(t *testing.T) {
 
 	rec := demande(mux, cheminDeLAvancementDeLEtabli, cookie, map[string]string{"HX-Request": "true"})
 	exigeSansAucun(t, rec.Body.String(), "hx-trigger")
+}
+
+// Ce que la page dit d'une passe terminée : son statut, sa source et ses
+// compteurs, en français et relus sur l'enregistrement.
+//
+// Les chiffres attendus sont pris sur la passe et non recopiés : le test dit
+// que la page rend ce que la base porte, pas qu'elle affiche « 5 ».
+func TestLaPageDitLeStatutLaSourceEtLesCompteursDUnePasseTerminee(t *testing.T) {
+	app, mux, cookie := atelierDeLEtabli(t)
+
+	creeRecette(t, app, recetteVoulue{
+		titre:       "Tarte aux pommes",
+		ingredients: []string{"200 g de farine", "3 pommes", "200 g de farine"},
+	})
+
+	lancementAccepte(t, mux, cookie, url.Values{champSourceDeLEtabli: {sourceInstance}})
+	passe := passeMenee(t, app, statutTermine)
+
+	rec := avecCookie(mux, http.MethodGet, cheminDeLEtabli, cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("statut %d, attendu %d", rec.Code, http.StatusOK)
+	}
+	exigeContient(t, rec.Body.String(),
+		"terminée",
+		html.EscapeString("la base de l'instance"),
+		fmt.Sprintf("<strong>%d</strong> ligne(s) lue(s)", passe.GetInt("lines")),
+		fmt.Sprintf("<strong>%d</strong> forme(s) distincte(s)", passe.GetInt("forms")),
+		// La date passe par la mise en forme commune, déjà éprouvée
+		// ailleurs ; ce qui est en cause ici est qu'elle soit celle de la
+		// passe, et non une date vide.
+		"lancée le "+dateEnFrancais(passe.GetDateTime("created")),
+	)
+}
+
+// Et d'une passe échouée : « échouée », pas « en cours ». Une passe morte
+// annoncée en cours laisse le curateur attendre un résultat qui ne viendra
+// pas.
+func TestLaPageDitQuUnePasseSurUnCorpusFourniAEchoue(t *testing.T) {
+	app, mux, cookie := atelierDeLEtabli(t)
+
+	// Close en échec à la main, comme l'ouvrier la laisse quand il abandonne :
+	// obtenir l'échec par le plafond de lignes coûterait un corpus d'un demi
+	// -million de lignes pour dire la même chose du rendu.
+	passe := passeEnCours(t, app)
+	passe.Set("status", statutEchec)
+	if err := app.Save(passe); err != nil {
+		t.Fatalf("clôture de la passe en échec : %v", err)
+	}
+
+	rec := avecCookie(mux, http.MethodGet, cheminDeLEtabli, cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("statut %d, attendu %d", rec.Code, http.StatusOK)
+	}
+	exigeContient(t, rec.Body.String(), "échouée", "un corpus fourni")
 }
 
 // L'ouvrier n'en mène qu'une à la fois, et la page le dit plutôt que de
