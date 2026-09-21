@@ -513,19 +513,23 @@ func TestLeParametreDAnalyseRessortEchappeDansLesLiens(t *testing.T) {
 			corps := laVueAgregee(t, mux, cookie,
 				url.Values{parametreDeLAnalyse: {malveillant}})
 
-			// Reflété d'abord, et c'est ce qui donne son sens à la suite : sur
-			// une page qui ne reprendrait pas le paramètre, l'assertion
-			// d'échappement passerait sans rien avoir vérifié.
+			// Ce que le navigateur lira, d'abord : la valeur brute
+			// n'apparaît nulle part.
+			if strings.Contains(corps, malveillant) {
+				t.Errorf("le paramètre ressort tel quel dans la page — corps :\n%s", corps)
+			}
+
+			// Puis le garde-fou anti-test-vide : sur une page qui ne
+			// reprendrait pas le paramètre, l'assertion ci-dessus passerait
+			// sans rien avoir vérifié. Il vient en second pour ne pas couvrir
+			// de sa voix celle qui porte la propriété de sécurité.
 			//
 			// Le reflet se cherche dans le corps déséchappé, parce que les
 			// deux défenses se composent : url.Values encode l'espace en « + »,
 			// que html/template réécrit ensuite en « &#43; ».
 			reflet := url.Values{parametreDeLAnalyse: {malveillant}}.Encode()
 			if !strings.Contains(html.UnescapeString(corps), reflet) {
-				t.Fatalf("le paramètre n'est pas repris dans les liens, le test ne dirait rien — corps :\n%s", corps)
-			}
-			if strings.Contains(corps, malveillant) {
-				t.Errorf("le paramètre ressort tel quel dans la page — corps :\n%s", corps)
+				t.Errorf("le paramètre n'est pas repris encodé en pourcent dans les liens — corps :\n%s", corps)
 			}
 		})
 	}
