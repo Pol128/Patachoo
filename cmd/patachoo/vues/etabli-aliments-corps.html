@@ -1,0 +1,37 @@
+<h1>Les aliments</h1>
+{{if .SansAnalyse}}
+<p class="absence">Aucune analyse n'a encore été menée à son terme sur cette instance. <a href="{{.LienDuLancement}}">Lancez-en une depuis l'établi</a>.</p>
+{{else}}
+<p class="passe">Analyse du {{.Date}}. <a href="{{.LienDuLancement}}">Retour à l'établi</a></p>
+<nav class="tris" aria-label="Ordre de lecture">
+<ul>
+{{range .Tris}}<li>{{if .Actif}}<span class="tri-actif">{{.Nom}}</span>{{else}}<a href="{{.Adresse}}">{{.Nom}}</a>{{end}}</li>
+{{end}}</ul>
+</nav>
+<p class="bascule">{{if .Tout}}Tous les groupes, filtres retirés. <a href="{{.Bascule}}">Ne montrer que ce qui reste à trancher</a>.{{else}}Les groupes qui restent à trancher, et qui portent au moins un signal. <a href="{{.Bascule}}">Voir la liste complète</a>.{{end}}</p>
+{{with .Resolus}}{{template "tableauDesGroupes" .}}{{end}}
+{{with .NonResolus}}
+<h2>Aliments non résolus</h2>
+<p class="avertissement">Le lexique ne connaît pas encore ces aliments : c'est sa file d'attente, et ils n'ont donc pas de catégorie.</p>
+{{template "tableauDesGroupes" .}}
+{{end}}
+{{if and (not .Resolus) (not .NonResolus)}}
+<p class="absence">Aucun groupe sur cette page.</p>
+{{end}}
+{{if or .Precedente .Suivante}}
+<nav class="pagination">
+{{if .Precedente}}<a rel="prev" href="{{.Precedente}}">← Précédent</a>{{end}}
+{{if .Suivante}}<a rel="next" href="{{.Suivante}}">Suivant →</a>{{end}}
+</nav>
+{{end}}
+{{end}}
+
+{{/* Les occurrences sont à droite, comme un poids : ce qui doit attirer l'œil
+     est le signal, pas le nombre de fois qu'une forme a été vue. */}}
+{{define "tableauDesGroupes"}}<table class="groupes">
+<thead><tr><th scope="col">Aliment</th><th scope="col">Catégorie</th><th scope="col">Signaux</th><th scope="col">Formes</th><th scope="col">Occurrences</th></tr></thead>
+<tbody>
+{{range .}}<tr class="groupe"><td class="aliment-canonique">{{.Aliment}}</td><td class="categorie">{{.Categorie}}</td><td class="signaux">{{range .Signaux}}<span class="signal">{{.}}</span> {{end}}</td><td class="formes">{{.Formes}}</td><td class="occurrences">{{.Occurrences}}</td></tr>
+{{end}}</tbody>
+</table>
+{{end}}
