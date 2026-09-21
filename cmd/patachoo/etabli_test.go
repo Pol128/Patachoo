@@ -485,9 +485,16 @@ func TestLesLignesVidesNeSontNiLuesNiComptees(t *testing.T) {
 	}
 }
 
-// Les deux sources sont exclusives : un lancement qui en porte deux est refusé
-// avec un message, plutôt que d'en préférer une en silence.
-func TestLesDeuxSourcesSontExclusives(t *testing.T) {
+// Les trois saisies que la page refuse en rendant le formulaire, chacune avec
+// son message : deux sources à la fois, aucune source, et une source fournie
+// qui n'apporte rien.
+//
+// Un nom qui dit le refus et non l'exclusivité, parce que les trois cas n'en
+// relèvent pas : sous « les deux sources sont exclusives », un rouge sur l'un
+// des deux autres se lirait comme une entorse à une règle qu'il ne touche pas.
+// Les cas mixtes réels sont dans les deux tests qui suivent, où le fichier
+// joint permet de les poser.
+func TestLaPageRefuseCeQuElleNePeutPasLancer(t *testing.T) {
 	cas := []struct {
 		nom     string
 		champs  url.Values
