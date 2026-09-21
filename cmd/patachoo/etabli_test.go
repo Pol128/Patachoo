@@ -326,6 +326,61 @@ func TestLeDroitSeControleAvantQueLeCorpsNeSoitLu(t *testing.T) {
 	}
 }
 
+// Toutes les réponses de l'établi portent les en-têtes de sécurité du produit,
+// y compris celles que ses propres couches rendent sans passer la main.
+//
+// poseLesEntetesDeReponse est lié au routeur, et le crochet est trié par
+// priorité croissante : une couche qui porte une priorité négative et rend sa
+// réponse sans appeler e.Next() passe donc avant lui. L'établi en a deux — la
+// garde du droit et la borne du corps —, et leurs refus sortaient sans
+// politique de contenu, sans Cache-Control et sans Referrer-Policy, là où la
+// page nominale les porte toutes les trois. Le 413 est pourtant une page
+// complète du produit, formulaire et bloc de la dernière passe compris.
+//
+// Les quatre réponses de l'établi, et non la seule qui manquait : c'est
+// l'ensemble qui doit se tenir, et un refus ajouté demain se remarquera ici.
+func TestToutesLesReponsesDeLEtabliPortentLesEntetesDeSecurite(t *testing.T) {
+	cas := map[string]func(*testing.T) *httptest.ResponseRecorder{
+		"200, la page": func(t *testing.T) *httptest.ResponseRecorder {
+			_, mux, cookie := atelierDeLEtabli(t)
+			return avecCookie(mux, http.MethodGet, cheminDeLEtabli, cookie)
+		},
+		"413, corps hors plafond": func(t *testing.T) *httptest.ResponseRecorder {
+			_, mux, cookie := atelierDeLEtabli(t)
+			corps, typeDeContenu, taille := corpsHorsPlafond(t)
+			return joueLeMultipartAnnonce(mux, cookie, typeDeContenu, corps, taille)
+		},
+		"403, compte sans le droit": func(t *testing.T) *httptest.ResponseRecorder {
+			app, mux := serveurDeLEtabli(t)
+			compteParDefaut(t, app)
+			cookie := cookieDe(t, seConnecte(t, mux, courrielDeTest, motDePasseDeTest))
+			return avecCookie(mux, http.MethodGet, cheminDeLEtabli, cookie)
+		},
+		"303, visiteur renvoyé se connecter": func(t *testing.T) *httptest.ResponseRecorder {
+			_, mux := serveurDeLEtabli(t)
+			return avecCookie(mux, http.MethodGet, cheminDeLEtabli, nil)
+		},
+	}
+
+	for nom, joue := range cas {
+		t.Run(nom, func(t *testing.T) {
+			rec := joue(t)
+
+			// politiqueAttendue est écrite en clair par entetes_test.go, pour
+			// qu'un test ne compare pas une constante à elle-même.
+			for entete, attendu := range map[string]string{
+				"Content-Security-Policy": politiqueAttendue,
+				"Cache-Control":           "private, no-store",
+				"Referrer-Policy":         "no-referrer",
+			} {
+				if valeur := rec.Header().Get(entete); valeur != attendu {
+					t.Errorf("%s = %q, attendu %q", entete, valeur, attendu)
+				}
+			}
+		})
+	}
+}
+
 func TestLeLancementSansJetonAntiRejeuEstRefuseEnHTML(t *testing.T) {
 	_, mux, cookie := atelierDeLEtabli(t)
 
