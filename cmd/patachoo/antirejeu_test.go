@@ -156,9 +156,10 @@ func lesTreizePost(recette, note, ligne *core.Record) []postDeTest {
 		{nom: "ajout d'une note", cible: notes, champs: corpsDe("Trop cuit de dix minutes.")},
 		{nom: "modification d'une note", cible: notes + "/" + note.Id, champs: corpsDe("Finalement, très bien.")},
 		{nom: "suppression d'une note", cible: notes + "/" + note.Id + "/supprimer"},
-		// Le compte de la session n'est pas curateur, et c'est sans
-		// conséquence ici : le contrôle anti-rejeu passe avant la garde du
-		// droit, et c'est lui seul que ces deux relevés éprouvent.
+		// Le compte de la session porte le droit de curateur, posé par
+		// atelierAntiRejeu : la garde de l'établi passe désormais avant le
+		// contrôle anti-rejeu, et sans le droit ces deux relevés éprouveraient
+		// la garde au lieu du jeton.
 		{nom: "lancement d'une analyse", cible: cheminDeLEtabli,
 			champs: url.Values{champSourceDeLEtabli: {sourceInstance}}},
 	}
@@ -171,10 +172,17 @@ func lesTreizePost(recette, note, ligne *core.Record) []postDeTest {
 //
 // Le réseau est piégé : aucune des treize ne doit sortir, et l'import est la
 // seule qui le ferait si le gestionnaire s'exécutait.
+//
+// Le compte de la session est fait curateur : la garde de l'établi s'exécute
+// avant le contrôle anti-rejeu — le droit se contrôle avant qu'on lise le corps
+// du client —, si bien qu'un compte ordinaire recevrait son refus de la garde
+// et ne dirait rien du jeton. Les douze autres routes n'en sont pas affectées :
+// ce droit ne garde qu'elle.
 func atelierAntiRejeu(t *testing.T) (core.App, http.Handler, *http.Cookie, *core.Record, *core.Record, *core.Record) {
 	t.Helper()
 
 	app, mux, cookie := atelierDeLot(t)
+	faisCurateur(t, app, leCompteDeLaSession(t, app), true)
 	ouvreLInscription(t, app)
 	recette := laSienne(t, app, nil)
 	note := noteEnBase(t, app, recette, compteDeLaSession(t, app), "Une note.")

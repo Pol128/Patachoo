@@ -177,11 +177,22 @@ type donneesAvancement struct {
 // Toutes derrière exigeUnCurateur : l'établi est le premier écran réservé du
 // produit, et le droit se contrôle avant la lecture de la saisie comme avant
 // celle de la base. Le POST porte en plus la borne de taille et le contrôle
-// anti-rejeu, dans cet ordre — la première borne ce que le second lit.
+// anti-rejeu — la première borne ce que le second lit.
 //
-// L'anti-rejeu avant le droit, comme lot.go le fait avant la session : une
-// requête forgée par un autre site n'a pas à être distinguée selon que celui
-// qui la subit est curateur ou non.
+// L'ordre des trois ne tient pas à celui des .Bind(…) mais aux priorités : le
+// droit d'abord (prioriteDuDroitDeCurateur), la borne ensuite, l'anti-rejeu en
+// dernier, à la priorité par défaut. Le droit avant la borne parce que la borne
+// lit : sans cela, un client sans session ferait bâtir jusqu'au plafond de
+// formulaire en mémoire avant d'être refusé, sur la seule route d'écriture du
+// dépôt que ne borne aucune règle de débit.
+//
+// L'établi diverge donc ici de lot.go, qui met l'anti-rejeu avant la session :
+// c'est que l'argument de lot.go — une requête forgée par un autre site n'a pas
+// à être distinguée selon qui la subit — ne dit rien contre cet ordre-ci. Une
+// requête forgée part du navigateur d'un curateur connecté, donc porte son
+// cookie, donc passe le droit et se fait refuser par l'anti-rejeu exactement
+// comme avant. Ce que l'ordre change ne concerne que le client sans droit, à
+// qui l'on cesse de lire son corps.
 func brancheLEtabli(routeur *router.Router[*core.RequestEvent], ouvrier *ouvrierDAnalyse) {
 	routeur.GET(cheminDeLEtabli, pageDeLEtabli).Bind(exigeUnCurateur())
 	routeur.POST(cheminDeLEtabli, lanceUnePasse(ouvrier)).Bind(
@@ -273,23 +284,16 @@ func litLeFormulaireDeLEtabli(e *core.RequestEvent) error {
 	return err
 }
 
-// refuseLeCorpsTropGros rend le refus de taille en page — après avoir
-// recontrôlé le droit.
+// refuseLeCorpsTropGros rend le refus de taille en page.
 //
-// Le recontrôle n'est pas une ceinture de plus : la page rendue ici est la page
-// réservée, formulaire de lancement et dernière passe compris, et elle se rend
-// hors de la garde. exigeUnCurateur porte la priorité par défaut, donc passe
-// après cette borne, et le chemin de l'erreur court-circuite la suite de la
-// chaîne — sans ce contrôle, il suffirait de poster plus que le plafond, sans
-// aucune session, pour lire l'établi.
-//
-// Le refus n'est pas habillé en page, lui : c'est celui de exigeUnCurateur,
-// mot pour mot, pour qu'un client hors plafond ne se distingue pas d'un autre.
+// La page rendue ici est la page réservée — formulaire de lancement et dernière
+// passe compris —, et elle se rend depuis une couche que le chemin de l'erreur
+// court-circuite. Elle ne se rend pourtant à personne d'autre qu'un curateur :
+// exigeUnCurateur passe un cran avant cette borne, et rend sans passer la main.
+// C'est le sens de prioriteDuDroitDeCurateur, et c'est ce qui permet de ne pas
+// recontrôler le droit ici — un contrôle qu'aucun refus ne pourrait plus
+// atteindre serait du code que rien ne tient.
 func refuseLeCorpsTropGros(e *core.RequestEvent) error {
-	if refuse, err := refuseQuiNEstPasCurateur(e); refuse {
-		return err
-	}
-
 	// Sans reprendre la saisie : le corps est justement ce qu'on a refusé de
 	// lire, et le relire ici serait lever la borne qu'on vient de poser.
 	return rendLEtabliAvecStatut(e, http.StatusRequestEntityTooLarge, "", messageDuCorpsTropGros())

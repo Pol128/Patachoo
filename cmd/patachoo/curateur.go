@@ -17,12 +17,27 @@ import (
 // IsSuperuser() livrerait une page que personne ne peut voir.
 const champCurateur = "curator"
 
+// prioriteDuDroitDeCurateur fait passer la garde avant toute lecture du corps.
+//
+// Un cran avant la borne de l'établi, qui est elle-même un cran avant celle de
+// PocketBase : la borne lit le formulaire entier, et le retient en mémoire
+// jusqu'au plafond. Sans cette priorité, la garde porterait la priorité par
+// défaut — 0, comme tout ce qui n'en déclare pas — et un client sans session
+// ferait bâtir ce formulaire avant d'être refusé.
+//
+// Lu sur la priorité de la borne plutôt que posé en chiffre : c'est d'elle que
+// la garde doit passer avant, et le jour où elle bouge celle-ci suit. Reste en
+// aval du chargement de la session (-1020), sans quoi e.Auth ne serait pas
+// encore posé, et du plafond de débit (-1000), pour qu'une requête refusée
+// compte tout de même comme une requête.
+const prioriteDuDroitDeCurateur = prioriteBorneDuCorpsDeLEtabli - 1
+
 // exigeUnCurateur garde les routes réservées aux curateurs.
 //
 // Le patron exact de exigeUneSession() (recettes.go) : un Id préfixé patachoo,
-// et un handler qu'on pose par .Bind(…). Aucune route de production ne le porte
-// encore — les pages de l'établi sont PATA-125 à PATA-127, et c'est là qu'il se
-// branchera, route par route.
+// et un handler qu'on pose par .Bind(…). Les trois routes de l'établi le
+// portent (etabli.go) ; les écrans de résultats, PATA-125 à PATA-127, s'y
+// ajouteront.
 //
 // L'ordre des deux contrôles n'est pas indifférent. Le visiteur est renvoyé se
 // connecter, comme partout ailleurs sur le site : un curateur dont la session a
@@ -50,40 +65,24 @@ const champCurateur = "curator"
 // ne porte pas le champ. Aucune valeur recopiée en session, aucun cache — c'est
 // ce qui fait qu'un droit retiré vaut dès la requête suivante, sans attendre
 // une reconnexion.
+//
+// Les deux refus rendent sans appeler e.Next(), et c'est le détail qui fait
+// tout : e.Redirect écrit la réponse et rend nil. Passer la main après lui
+// écrirait la page réservée par-dessus une redirection déjà posée.
 func exigeUnCurateur() *hook.Handler[*core.RequestEvent] {
 	return &hook.Handler[*core.RequestEvent]{
-		Id: "patachooExigeUnCurateur",
+		Id:       "patachooExigeUnCurateur",
+		Priority: prioriteDuDroitDeCurateur,
 		Func: func(e *core.RequestEvent) error {
-			if refuse, err := refuseQuiNEstPasCurateur(e); refuse {
-				return err
+			if e.Auth == nil {
+				return e.Redirect(http.StatusSeeOther, "/connexion")
+			}
+			if !e.Auth.GetBool(champCurateur) {
+				return apis.NewForbiddenError("", nil)
 			}
 			return e.Next()
 		},
 	}
-}
-
-// refuseQuiNEstPasCurateur oppose le refus à qui n'a pas le droit, et dit
-// vrai quand il l'a fait.
-//
-// Détaché de la garde parce qu'un middleware n'est pas le seul endroit d'où ce
-// droit se contrôle : le rattrapage d'un corps hors plafond (etabli.go) rend
-// la page réservée sans que la garde ait tourné — le corps est lu, et l'erreur
-// remonte, avant elle. Il rejoue donc ce contrôle-ci, et les deux disent
-// forcément la même chose puisque c'est le même code.
-//
-// Un booléen *en plus* de l'erreur, et c'est le détail qui fait tout : le
-// renvoi vers /connexion passe par e.Redirect, qui écrit la réponse et rend
-// nil. Un appelant qui ne lirait que l'erreur croirait le visiteur autorisé et
-// continuerait — en écrivant la page réservée par-dessus une redirection déjà
-// posée.
-func refuseQuiNEstPasCurateur(e *core.RequestEvent) (bool, error) {
-	if e.Auth == nil {
-		return true, e.Redirect(http.StatusSeeOther, "/connexion")
-	}
-	if !e.Auth.GetBool(champCurateur) {
-		return true, apis.NewForbiddenError("", nil)
-	}
-	return false, nil
 }
 
 // figeLeCurateurSaufPourLeSuperuser bouche le trou évident d'un droit porté par
