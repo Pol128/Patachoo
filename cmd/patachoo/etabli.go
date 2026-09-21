@@ -46,10 +46,11 @@ const cheminDeLEtabli = "/etabli"
 // y remettrait le formulaire à chaque rafraîchissement.
 const cheminDeLAvancementDeLEtabli = cheminDeLEtabli + "/avancement"
 
-// Les trois champs du formulaire. Écrits une fois : le gabarit, la route et
-// les tests les partagent, et une chaîne recopiée finit par diverger d'une
-// lettre — que rien ne signalerait, un champ absent se lisant comme un champ
-// vide.
+// Les trois champs du formulaire. La route et les tests les partagent ; le
+// gabarit les écrit en dur, comme tous les gabarits du dépôt, et c'est un test
+// qui les y relit — sans quoi une chaîne recopiée finirait par diverger d'une
+// lettre, que rien ne signalerait : un champ mal nommé se lit comme un champ
+// vide, et le formulaire refuserait tout lancement sans dire pourquoi.
 const (
 	champSourceDeLEtabli = "source"
 	champCorpusColle     = "corpus"
@@ -393,6 +394,11 @@ func lanceUnePasse(ouvrier *ouvrierDAnalyse) func(*core.RequestEvent) error {
 //
 // Les deux sources sont exclusives, et le refus est explicite : préférer l'une
 // en silence ferait analyser autre chose que ce que le formulaire montrait.
+//
+// Ce n'est pas le seul endroit d'où un refus sort, et ce ne peut pas l'être :
+// un fichier joint compte ici pour sa seule présence, son contenu n'étant pas
+// encore lu. Le corpus vide qu'il porte peut-être est reproché plus bas, par
+// lanceSurLeCorpusFourni, une fois la lecture faite.
 func refusDuLancement(source, colle string, avecFichier bool) string {
 	fourni := strings.TrimSpace(colle) != "" || avecFichier
 
@@ -452,6 +458,16 @@ func lanceSurLeCorpusFourni(e *core.RequestEvent, ouvrier *ouvrierDAnalyse, coll
 			return fmt.Errorf("lecture du corpus téléversé : %w", err)
 		}
 		contenu = lu
+	}
+
+	// Un fichier joint mais vide est un corpus absent, et reçoit le même
+	// message que le même corpus collé : refusDuLancement n'a pas pu le dire,
+	// n'ayant vu du fichier que sa présence. Le reproche est au contenu, pas
+	// au chemin par lequel il est arrivé — sans ce refus, le curateur obtient
+	// une passe terminée sur zéro ligne au lieu de la phrase qui lui dit quoi
+	// faire.
+	if strings.TrimSpace(string(contenu)) == "" {
+		return rendLEtabli(e, colle, messageCorpusAbsent)
 	}
 
 	// La saisie est reprise en cas de refus, et elle seule : le contenu d'un
