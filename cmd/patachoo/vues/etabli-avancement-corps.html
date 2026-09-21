@@ -1,0 +1,9 @@
+<section id="avancement-de-l-etabli"{{if .EnCours}} hx-get="{{.Lien}}" hx-trigger="{{.Cadence}}" hx-swap="outerHTML"{{end}}>
+{{if .Statut}}
+<h2>La dernière analyse</h2>
+<p class="progression">Analyse de {{.Source}}, lancée le {{.Date}} — <strong>{{.Statut}}</strong>.</p>
+<p class="progression"><strong>{{.Lignes}}</strong> ligne(s) lue(s), <strong>{{.Formes}}</strong> forme(s) distincte(s).</p>
+{{else}}
+<p class="absence">Aucune analyse n'a encore été lancée sur cette instance.</p>
+{{end}}
+</section>

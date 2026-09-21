@@ -68,14 +68,19 @@ func main() {
 	// celles qu'on lui dépose. L'analyseur est celui d'au-dessus — une passe
 	// lit un corpus entier, et recharger le pack pour elle serait le payer
 	// deux fois.
-	brancheLOuvrierDAnalyse(app, analyseur)
+	//
+	// Il est gardé, et non oublié comme celui de l'import : la page de
+	// lancement de l'établi lui dépose son travail, et c'est le même ouvrier
+	// qui doit le recevoir — un second, monté pour les routes, tiendrait son
+	// propre décompte et mènerait une passe en parallèle de la sienne.
+	etabli := brancheLOuvrierDAnalyse(app, analyseur)
 
 	// Avant app.Start() : c'est Execute() qui amorce l'application puis exécute
 	// la sous-commande demandée, laquelle dispose donc d'une base ouverte.
 	commandeAEchoue := brancheLesCommandes(app, app.RootCmd, analyseur)
 
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
-		brancheLesRoutes(se.Router, analyseur)
+		brancheLesRoutes(se.Router, analyseur, etabli)
 
 		// se.Next() laisse la main aux routes de PocketBase : sans lui,
 		// l'interface d'administration et l'API REST ne répondent plus.
@@ -102,7 +107,10 @@ func main() {
 // L'analyseur descend jusqu'aux routes qui rendent la fiche : elle accorde
 // l'aliment à la quantité, et le pack comme le lexique sont ceux chargés une
 // fois au démarrage.
-func brancheLesRoutes(routeur *router.Router[*core.RequestEvent], a *analyseur) {
+//
+// L'ouvrier de l'établi descend pour la même raison : la page de lancement ne
+// mène pas la passe, elle la lui dépose.
+func brancheLesRoutes(routeur *router.Router[*core.RequestEvent], a *analyseur, etabli *ouvrierDAnalyse) {
 	routeur.Bind(poseLesEntetesDeReponse())
 	brancheLaSession(routeur)
 	brancheLAntiRejeu(routeur)
@@ -124,6 +132,7 @@ func brancheLesRoutes(routeur *router.Router[*core.RequestEvent], a *analyseur) 
 	brancheLesCommentaires(routeur, a)
 	brancheLImport(routeur)
 	brancheLImportEnLot(routeur)
+	brancheLEtabli(routeur, etabli)
 
 	// Nos propres assets, embarqués dans le binaire : ni CDN, ni domaine
 	// tiers. Patachoo doit fonctionner sur un réseau coupé d'Internet.

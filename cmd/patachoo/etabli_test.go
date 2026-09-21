@@ -12,7 +12,6 @@ import (
 	"regexp"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
@@ -184,8 +183,9 @@ func TestUnVisiteurNAtteintNiLaPageNiLaRouteDeLEtabli(t *testing.T) {
 	_, mux := serveurDeLEtabli(t)
 
 	for nom, rec := range map[string]*httptest.ResponseRecorder{
-		"page":  avecCookie(mux, http.MethodGet, cheminDeLEtabli, nil),
-		"route": soumetLEtabli(mux, nil, url.Values{champSourceDeLEtabli: {sourceInstance}}),
+		"page":       avecCookie(mux, http.MethodGet, cheminDeLEtabli, nil),
+		"route":      soumetLEtabli(mux, nil, url.Values{champSourceDeLEtabli: {sourceInstance}}),
+		"avancement": avecCookie(mux, http.MethodGet, cheminDeLAvancementDeLEtabli, nil),
 	} {
 		t.Run(nom, func(t *testing.T) {
 			if rec.Code != http.StatusSeeOther {
@@ -210,9 +210,13 @@ func TestUnCompteOrdinaireEstRefuseSurLaPageEtSurLaRoute(t *testing.T) {
 		t.Fatal("le compte par défaut porte le droit : le test ne dirait rien du refus")
 	}
 
+	// L'avancement est de la partie : il dit qu'une analyse tourne, ce qu'elle
+	// a lu et combien de formes elle en tire. C'est une route de l'établi comme
+	// les deux autres, et un oubli de garde y serait invisible.
 	for nom, rec := range map[string]*httptest.ResponseRecorder{
-		"page":  avecCookie(mux, http.MethodGet, cheminDeLEtabli, cookie),
-		"route": soumetLEtabli(mux, cookie, url.Values{champSourceDeLEtabli: {sourceInstance}}),
+		"page":       avecCookie(mux, http.MethodGet, cheminDeLEtabli, cookie),
+		"route":      soumetLEtabli(mux, cookie, url.Values{champSourceDeLEtabli: {sourceInstance}}),
+		"avancement": avecCookie(mux, http.MethodGet, cheminDeLAvancementDeLEtabli, cookie),
 	} {
 		t.Run(nom, func(t *testing.T) {
 			if rec.Code != http.StatusForbidden {

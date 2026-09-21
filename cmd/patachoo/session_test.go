@@ -35,7 +35,8 @@ const (
 func serveurDeTest(t *testing.T, routesEnPlus ...func(*router.Router[*core.RequestEvent])) (core.App, http.Handler) {
 	t.Helper()
 	a := analyseurDeTest(t)
-	return monteLeServeur(t, baseNeuveAvec(t, a), a, routesEnPlus...)
+	app := baseNeuveAvec(t, a)
+	return monteLeServeur(t, app, a, ouvrierDormant(app, a), routesEnPlus...)
 }
 
 // serveurDeTestAuCoutBcryptReel est le même serveur, sur une base qui garde le
@@ -44,21 +45,34 @@ func serveurDeTest(t *testing.T, routesEnPlus ...func(*router.Router[*core.Reque
 func serveurDeTestAuCoutBcryptReel(t *testing.T, routesEnPlus ...func(*router.Router[*core.RequestEvent])) (core.App, http.Handler) {
 	t.Helper()
 	a := analyseurDeTest(t)
-	return monteLeServeur(t, baseNeuveAuCoutBcryptReel(t, a), a, routesEnPlus...)
+	app := baseNeuveAuCoutBcryptReel(t, a)
+	return monteLeServeur(t, app, a, ouvrierDormant(app, a), routesEnPlus...)
+}
+
+// ouvrierDormant rend un ouvrier d'analyse que personne ne fait tourner :
+// c'est ce dont la plupart des tests ont besoin, leur sujet n'étant pas
+// l'établi. Une passe qu'on lui déposerait resterait en file, ce qui est sans
+// conséquence tant qu'aucun test ne la dépose — ceux de l'établi montent le
+// leur, démarré (etabli_test.go).
+func ouvrierDormant(app core.App, a *analyseur) *ouvrierDAnalyse {
+	return nouvelOuvrierDAnalyse(app, horlogeSysteme{}, a)
 }
 
 // monteLeServeur prend l'analyseur à part de l'app : main() le passe aussi aux
 // routes, qui accordent l'aliment de la fiche à sa quantité. C'est le même que
 // celui branché sur les hooks — deux analyseurs liraient le même pack, mais
 // tiendraient deux décomptes de lignes non lues.
-func monteLeServeur(t *testing.T, app core.App, a *analyseur, routesEnPlus ...func(*router.Router[*core.RequestEvent])) (core.App, http.Handler) {
+//
+// L'ouvrier de l'établi descend de la même façon, et pour la même raison que
+// dans main() : la page de lancement lui dépose son travail.
+func monteLeServeur(t *testing.T, app core.App, a *analyseur, etabli *ouvrierDAnalyse, routesEnPlus ...func(*router.Router[*core.RequestEvent])) (core.App, http.Handler) {
 	t.Helper()
 
 	routeur, err := apis.NewRouter(app)
 	if err != nil {
 		t.Fatalf("routeur : %v", err)
 	}
-	brancheLesRoutes(routeur, a)
+	brancheLesRoutes(routeur, a, etabli)
 	for _, ajoute := range routesEnPlus {
 		ajoute(routeur)
 	}

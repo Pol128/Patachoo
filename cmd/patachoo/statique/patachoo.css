@@ -348,25 +348,28 @@ footer {
 
 /* Le formulaire est une colonne : une étiquette, son champ, et de l'air entre
    les deux. Pas de grille à deux colonnes, qui casse sur téléphone là où
-   l'essentiel de la saisie d'une recette se fait. Le formulaire du lot suit les
-   mêmes règles, groupées et non recopiées : deux copies divergeraient au
-   premier réglage. */
+   l'essentiel de la saisie d'une recette se fait. Les formulaires du lot et de
+   l'établi suivent les mêmes règles, groupées et non recopiées : trois copies
+   divergeraient au premier réglage. */
 .formulaire-recette,
-.formulaire-lot {
+.formulaire-lot,
+.formulaire-etabli {
 	display: flex;
 	flex-direction: column;
 	gap: 0.25rem;
 }
 
 .formulaire-recette label,
-.formulaire-lot label {
+.formulaire-lot label,
+.formulaire-etabli label {
 	margin-top: 0.75rem;
 }
 
 .formulaire-recette input,
 .formulaire-recette select,
 .formulaire-recette textarea,
-.formulaire-lot textarea {
+.formulaire-lot textarea,
+.formulaire-etabli textarea {
 	font: inherit;
 	padding: 0.4rem;
 	border: 1px solid var(--trait);
@@ -375,7 +378,8 @@ footer {
 }
 
 .formulaire-recette button,
-.formulaire-lot button {
+.formulaire-lot button,
+.formulaire-etabli button {
 	font: inherit;
 	margin-top: 1.5rem;
 	padding: 0.5rem 1rem;
@@ -402,6 +406,15 @@ footer {
 
 .case input {
 	width: auto;
+}
+
+/* Le choix de la source, dans l'établi : les deux options tiennent ensemble
+   plutôt que de flotter entre les champs du formulaire. Sans marge propre, le
+   fieldset se collerait à l'étiquette du champ suivant. */
+.sources {
+	margin: 0.75rem 0 0;
+	padding: 0.75rem;
+	border: 1px solid var(--trait);
 }
 
 .saisons {
