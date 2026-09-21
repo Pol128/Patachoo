@@ -411,8 +411,11 @@ func TestLesTroisTrisRendentChacunUnOrdreDifferentDuDefaut(t *testing.T) {
 		// Combien de formes brutes distinctes une entrée avale : met en tête
 		// celles qui capturent le plus.
 		"dispersion": {triParDispersion, []string{"oignon", "gousse de vanille", "crème fraîche"}},
-		// Toutes les épices d'affilée, dans l'ordre des libellés.
-		"catégorie": {triParCategorie, []string{"crème fraîche", "gousse de vanille", "oignon"}},
+		// Toutes les épices d'affilée. L'ordre entre catégories est celui de
+		// SQLite — un classement d'octets, où « Épices » suit « Légumes » —
+		// et ce n'est pas ce que le tri promet : ce qu'il promet est que les
+		// libellés ne soient pas éparpillés, et ils ne le sont pas.
+		"catégorie": {triParCategorie, []string{"crème fraîche", "oignon", "gousse de vanille"}},
 		// Le balayage de fin.
 		"rareté": {triParRarete, []string{"crème fraîche", "oignon", "gousse de vanille"}},
 	} {
@@ -572,10 +575,13 @@ func TestLaVueAgregeeNAjouteAucuneRouteEnEcriture(t *testing.T) {
 
 	avant := empreinteDes(t, app, "recipes", "ingredients")
 
+	// Un 404 et non un 405 : aucun motif n'est enregistré pour ce couple
+	// méthode/chemin, et c'est le gestionnaire d'absence de PocketBase qui
+	// répond. Ce qui est en cause est qu'aucun gestionnaire ne soit atteint.
 	rec := avecCookie(mux, http.MethodPost, cheminDesAlimentsDeLEtabli, cookie)
-	if rec.Code != http.StatusMethodNotAllowed {
+	if rec.Code != http.StatusNotFound {
 		t.Errorf("statut %d sur un POST, attendu %d — corps :\n%s",
-			rec.Code, http.StatusMethodNotAllowed, rec.Body.String())
+			rec.Code, http.StatusNotFound, rec.Body.String())
 	}
 
 	laVueAgregee(t, mux, cookie, nil)

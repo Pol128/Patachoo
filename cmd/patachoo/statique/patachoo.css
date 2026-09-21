@@ -615,3 +615,82 @@ footer {
 .aucune-fournee {
 	color: #6b675f;
 }
+
+/* La vue agrégée de l'établi : quelle passe on lit, dans quel ordre, et sous
+   quel filtre. Trois phrases au-dessus d'un tableau, qui disent ce qu'on
+   regarde — une liste de milliers de lignes sans en-tête ne se relit pas. */
+.passe,
+.bascule {
+	margin: 0.4rem 0;
+	color: #6b675f;
+	font-size: 0.9rem;
+}
+
+/* Les quatre ordres de lecture, côte à côte comme la barre des types. */
+.tris ul {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.8rem;
+	margin: 0.8rem 0;
+	padding: 0;
+	list-style: none;
+}
+
+/* L'ordre en cours se lit comme les autres, mais ne se clique pas : un lien
+   vers la page où l'on est déjà est un lien qui ment. */
+.tri-actif {
+	font-weight: 600;
+}
+
+/* Le tableau des groupes. Un vrai tableau, et non la grille des vignettes :
+   ce sont cinq valeurs alignées d'une ligne à l'autre, et c'est l'alignement
+   qui fait qu'on repère l'intrus en descendant la colonne. */
+.groupes {
+	width: 100%;
+	margin: 1rem 0;
+	border-collapse: collapse;
+	font-size: 0.95rem;
+}
+
+.groupes th {
+	padding: 0.4rem 0.5rem;
+	border-bottom: 1px solid var(--trait);
+	text-align: left;
+	font-weight: 600;
+}
+
+.groupe td {
+	padding: 0.4rem 0.5rem;
+	border-bottom: 1px solid var(--trait);
+	vertical-align: top;
+}
+
+/* La clé du groupe : c'est elle qu'on cherche des yeux en descendant. */
+.aliment-canonique {
+	font-weight: 600;
+}
+
+.categorie {
+	color: #6b675f;
+}
+
+/* Les signaux, en pastilles : ce qui attire l'œil sur la ligne. */
+.signaux {
+	line-height: 1.8;
+}
+
+.signal {
+	padding: 0.1rem 0.4rem;
+	border: 1px solid var(--trait);
+	border-radius: 0.8rem;
+	white-space: nowrap;
+	font-size: 0.85rem;
+}
+
+/* Les deux poids, à droite et en chiffres alignés : une colonne de nombres
+   qui ne s'aligne pas ne se compare pas. */
+.formes,
+.occurrences {
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+}
