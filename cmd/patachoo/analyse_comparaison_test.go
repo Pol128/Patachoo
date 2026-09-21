@@ -644,3 +644,55 @@ func TestComparerDeuxPassesSansFormeCommuneNeDivisePasParZero(t *testing.T) {
 		t.Errorf("la sortie porte un « NaN » :\n%s", sortie)
 	}
 }
+
+// Le rapprochement se fait sur la ligne brute, espaces de bord retirés : c'est
+// le même repli que celui de l'analyse, qui fait de « 1 pincée de sel » et de
+// «  1 pincée de sel  » une seule et même forme. Sans lui, une ligne que
+// l'exploitant a saisie avec une espace de trop serait comptée des deux côtés
+// comme une forme que l'autre ne connaît pas.
+//
+// Et le dédoublonnage : la même ligne écrite dans deux recettes ne fait qu'une
+// forme côté base, comme elle n'en fait qu'une côté passe.
+func TestComparerLaBaseReplieLesEspacesEtDedoublonneSurRaw(t *testing.T) {
+	a := analyseurDeTest(t)
+	app := baseNeuveAvec(t, a)
+
+	premiere := recetteNeuve(t, app)
+	for _, brut := range []string{"3 pommes", "  1 pincée de sel  "} {
+		ligne := ingredientNeuf(t, app, premiere, brut)
+		if err := app.Save(ligne); err != nil {
+			t.Fatalf("enregistrement de la ligne %q : %v", brut, err)
+		}
+	}
+	// La même ligne dans une seconde recette : un doublon pour la base, une
+	// seule forme pour la comparaison.
+	seconde := recetteNeuve(t, app)
+	doublon := ingredientNeuf(t, app, seconde, "3 pommes")
+	if err := app.Save(doublon); err != nil {
+		t.Fatalf("enregistrement du doublon : %v", err)
+	}
+
+	o := nouvelOuvrierDAnalyse(app, horlogeFigee(), a)
+	passe, err := o.lance(context.Background(), sourceInstance, lignesDeLInstance(app))
+	if err != nil {
+		t.Fatalf("analyse refusée : %v", err)
+	}
+
+	sortie, aEchoue, err := executeLaCommande(t, app, "analyse", "comparer", "--base", passe.Id)
+	if err != nil {
+		t.Fatalf("commande en erreur : %v\n%s", err, sortie)
+	}
+	if aEchoue {
+		t.Errorf("témoin d'échec levé sur une commande qui a réussi :\n%s", sortie)
+	}
+
+	exigeLesLignes(t, sortie,
+		// Deux formes, pas trois : le doublon n'en fait pas une de plus. Et
+		// aucune forme d'un seul côté : la ligne entourée d'espaces s'est
+		// rapprochée de la forme que la passe en a tirée.
+		"formes communes : 2",
+		"formes seulement avant : 0",
+		"formes seulement après : 0",
+		"formes identiques : 2",
+	)
+}

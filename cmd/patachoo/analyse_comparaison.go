@@ -238,8 +238,13 @@ func coteDUnePasse(app core.App, passe *core.Record) (coteCompare, error) {
 // fait de la comparaison une comparaison champ à champ, sans traduction.
 //
 // Dédoublonné sur raw, comme une passe : la même ligne peut être écrite dans
-// deux recettes, et c'est la première dans l'ordre des identifiants qui est
-// retenue.
+// deux recettes. Deux lignes de même brut portent la même lecture par
+// construction — c'est le hook qui les remplit —, et laquelle des deux est
+// retenue ne se voit donc pas. Sauf là où quelqu'un a corrigé un champ à la
+// main : la première rencontrée l'emporte alors, dans un ordre stable d'une
+// exécution à l'autre mais qui n'est pas celui de la saisie, les identifiants
+// de PocketBase étant tirés au hasard. Aucun test ne fixe ce choix, faute de
+// pouvoir le rendre reproductible.
 //
 // Une lecture, et rien d'autre : la comparaison n'écrit ni dans ingredients ni
 // dans recipes.
