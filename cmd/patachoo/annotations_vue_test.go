@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -574,4 +575,209 @@ func texteDeLaClasse(corps, classe string) string {
 		morceaux = append(morceaux, html.UnescapeString(trouve[1]))
 	}
 	return strings.Join(morceaux, "\n")
+}
+
+// --- Ce que la review de la PR #94 a relevé -----------------------------------------
+
+// Le groupe des lignes dont aucun aliment n'a été lu a pour clé la chaîne vide,
+// et une annotation de groupe à clé vide ne se relit nulle part : les filtres
+// qui retrouvent les annotations d'un groupe écartent food = "", sans quoi une
+// annotation de forme remonterait sur ce groupe. Accepter le dépôt, ce serait
+// rendre un 200 puis perdre le verdict. Il est refusé, et rien ne s'écrit.
+func TestUneAnnotationSurLeGroupeDesAlimentsVidesEstRefusee(t *testing.T) {
+	app, mux, cookie := atelierDeLEtabli(t)
+	passe := passeSignee(t, app, "v0.8.0", 1234,
+		formeSansAliment("2 cuillères à soupe", 90),
+		formeResolue("2 oignons", "oignon", "Légumes", 3, SignalMotsPerdus))
+
+	rec := soumetUneAnnotation(mux, cookie, url.Values{
+		parametreDeLAnalyse: {passe.Id},
+		champDeLaCible:      {cibleDuGroupe},
+		parametreDeLAliment: {""},
+		champDuVerdict:      {"capture trop"},
+	})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("statut %d, attendu %d — corps :\n%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `class="avertissement"`) {
+		t.Errorf("le formulaire ne revient pas avec son message :\n%s", rec.Body.String())
+	}
+	if n := len(lesAnnotations(t, app)); n != 0 {
+		t.Errorf("%d annotation(s) écrite(s) sur le groupe des aliments vides", n)
+	}
+}
+
+// Et la vue agrégée n'offre pas de l'y déposer : le bouton « Annoter » manque
+// sur cette ligne-là, et sur elle seule.
+func TestLaLigneDesAlimentsVidesNOffrePasDAnnoter(t *testing.T) {
+	app, mux, cookie := atelierDeLEtabli(t)
+	passeTermineeDeTest(t, app,
+		formeSansAliment("2 cuillères à soupe", 90),
+		formeResolue("2 oignons", "oignon", "Légumes", 400, SignalMotsPerdus))
+
+	corps := laVueAgregee(t, mux, cookie, nil)
+
+	lignes := regexp.MustCompile(`(?s)<tr class="groupe"><td class="aliment-canonique">(.*?)</td>(.*?)</tr>`).
+		FindAllStringSubmatch(corps, -1)
+	vues := map[string]bool{}
+	for _, ligne := range lignes {
+		aliment, reste := ligne[1], ligne[2]
+		vues[aliment] = true
+		offre := strings.Contains(reste, `class="annoter"`)
+		if aliment == "" && offre {
+			t.Errorf("la ligne des aliments vides offre d'annoter le groupe : %s", reste)
+		}
+		if aliment == "oignon" && !offre {
+			t.Errorf("la ligne de l'oignon n'offre plus d'annoter le groupe : %s", reste)
+		}
+	}
+	if !vues[""] || !vues["oignon"] {
+		t.Fatalf("la vue ne montre pas les deux lignes attendues — lues : %v — corps :\n%s", vues, corps)
+	}
+}
+
+// DOD.md §3 : la clé du groupe vient de la chaîne de requête, et le fragment
+// la réécrit dans un champ caché sans vérifier que la passe la porte. Une
+// charge qui ferme l'attribut ressort échappée.
+func TestLeFragmentDAnnotationEchappeLAlimentReaffiche(t *testing.T) {
+	const charge = `"><script>alert('groupe')</script>`
+
+	app, mux, cookie := atelierDeLEtabli(t)
+	passe := passeSignee(t, app, "v0.8.0", 1234,
+		formeResolue("2 oignons", "oignon", "Légumes", 3, SignalMotsPerdus))
+
+	corps := leFragmentDAnnotation(t, mux, cookie, url.Values{
+		parametreDeLAnalyse: {passe.Id},
+		champDeLaCible:      {cibleDuGroupe},
+		parametreDeLAliment: {charge},
+	})
+
+	exigeSansAucun(t, corps, charge, `alert('groupe')</script>`)
+	champ := entreBalises(corps, `name="`+parametreDeLAliment+`" value="`, `"`)
+	if html.UnescapeString(champ) != charge {
+		t.Errorf("le champ caché porte %q, attendu la charge échappée — corps :\n%s", champ, corps)
+	}
+}
+
+// Même garde sur un dépôt refusé : la ligne brute postée est réécrite telle
+// quelle dans le formulaire qui revient, et elle ressort échappée.
+func TestUnDepotRefuseEchappeLaFormeReaffichee(t *testing.T) {
+	const charge = `"><script>alert('forme')</script>`
+
+	app, mux, cookie := atelierDeLEtabli(t)
+	passe := passeSignee(t, app, "v0.8.0", 1234,
+		formeResolue("2 oignons", "oignon", "Légumes", 3, SignalMotsPerdus))
+
+	rec := soumetUneAnnotation(mux, cookie, url.Values{
+		parametreDeLAnalyse: {passe.Id},
+		champDeLaCible:      {cibleDeLaForme},
+		parametreDeLaForme:  {charge},
+		champDuVerdict:      {"capture trop"},
+	})
+	corps := rec.Body.String()
+	if rec.Code != http.StatusOK || !strings.Contains(corps, html.EscapeString(messageCibleIntrouvable)) {
+		t.Fatalf("statut %d, attendu le formulaire refusé — corps :\n%s", rec.Code, corps)
+	}
+
+	exigeSansAucun(t, corps, charge, `alert('forme')</script>`)
+	champ := entreBalises(corps, `name="`+parametreDeLaForme+`" value="`, `"`)
+	if html.UnescapeString(champ) != charge {
+		t.Errorf("le champ caché porte %q, attendu la charge échappée — corps :\n%s", champ, corps)
+	}
+}
+
+// DOD.md §3, famille « Limites » : une annotation porte au plus autant de mots
+// que le schéma lui en permet. Au-delà, le formulaire revient avec son
+// message, et rien ne s'écrit — ni l'annotation, ni aucun des mots saisis.
+//
+// La borne est lue sur le schéma et non sur maxVerdicts : c'est ce qui fait
+// rougir ce test le jour où la constante serait augmentée sans le champ.
+func TestUneAnnotationAuDelaDeLaBorneDesVerdictsEstRefusee(t *testing.T) {
+	app, mux, cookie := atelierDeLEtabli(t)
+	passe := passeSignee(t, app, "v0.8.0", 1234,
+		formeResolue("2 oignons", "oignon", "Légumes", 3, SignalMotsPerdus))
+
+	collection, err := app.FindCollectionByNameOrId("analyses_annotations")
+	if err != nil {
+		t.Fatalf("collection analyses_annotations : %v", err)
+	}
+	champ, ok := collection.Fields.GetByName("verdicts").(*core.RelationField)
+	if !ok {
+		t.Fatalf("analyses_annotations.verdicts n'est pas une relation")
+	}
+
+	mots := make([]string, 0, champ.MaxSelect+1)
+	for i := range champ.MaxSelect + 1 {
+		mots = append(mots, "verdict "+strconv.Itoa(i))
+	}
+
+	rec := soumetUneAnnotation(mux, cookie, url.Values{
+		parametreDeLAnalyse: {passe.Id},
+		champDeLaCible:      {cibleDuGroupe},
+		parametreDeLAliment: {"oignon"},
+		champDuVerdict:      {strings.Join(mots, ", ")},
+	})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("statut %d, attendu %d — corps :\n%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `class="avertissement"`) {
+		t.Errorf("le formulaire ne revient pas avec son message :\n%s", rec.Body.String())
+	}
+	if n := len(lesAnnotations(t, app)); n != 0 {
+		t.Errorf("%d annotation(s) écrite(s) au-delà de la borne", n)
+	}
+	crees, err := app.FindRecordsByFilter(collectionDesVerdicts, "id != ''", "", 0, 0)
+	if err != nil {
+		t.Fatalf("relecture du vocabulaire : %v", err)
+	}
+	if len(crees) != 0 {
+		t.Errorf("%d mot(s) créé(s) par un dépôt refusé", len(crees))
+	}
+}
+
+// Deux lignes de la vue agrégée peuvent porter leur formulaire ouvert en même
+// temps. Le bloc ne doit donc viser son propre champ, ses suggestions et ses
+// libellés par aucun identifiant de document : un identifiant répété vise le
+// premier formulaire de la page, et le mot choisi pour le groupe B atterrirait
+// dans celui du groupe A.
+func TestDeuxFormulairesOuvertsNePartagentAucunIdentifiant(t *testing.T) {
+	app, mux, cookie := atelierDeLEtabli(t)
+	passe := passeSignee(t, app, "v0.8.0", 1234,
+		formeResolue("2 oignons", "oignon", "Légumes", 3, SignalMotsPerdus),
+		formeResolue("1 carotte", "carotte", "Légumes", 3, SignalMotsPerdus))
+	if _, err := verdictsDepuisSaisie(app, "capture trop"); err != nil {
+		t.Fatalf("mot de verdict : %v", err)
+	}
+
+	var corps strings.Builder
+	for _, aliment := range []string{"oignon", "carotte"} {
+		corps.WriteString(leFragmentDAnnotation(t, mux, cookie, url.Values{
+			parametreDeLAnalyse: {passe.Id},
+			champDeLaCible:      {cibleDuGroupe},
+			parametreDeLAliment: {aliment},
+		}))
+	}
+	// Et le bloc tel que la route des suggestions le rend, suggestion comprise :
+	// c'est lui qui porte le bouton de choix.
+	corps.WriteString(lesSuggestionsRendues(t, mux, cookie,
+		cheminDesSuggestionsDeVerdicts+"?"+url.Values{champDuVerdict: {"capt"}}.Encode()))
+	page := corps.String()
+	if !strings.Contains(page, "capture trop") {
+		t.Fatalf("le bloc des suggestions ne propose rien, le bouton de choix n'est pas éprouvé :\n%s", page)
+	}
+
+	vus := map[string]int{}
+	for _, id := range regexp.MustCompile(`\sid="([^"]*)"`).FindAllStringSubmatch(page, -1) {
+		vus[id[1]]++
+	}
+	for id, n := range vus {
+		if n > 1 {
+			t.Errorf("l'identifiant %q apparaît %d fois avec deux formulaires ouverts", id, n)
+		}
+	}
+	for _, global := range regexp.MustCompile(`hx-(?:target|include|select)="(?:#|\[)[^"]*"`).FindAllString(page, -1) {
+		t.Errorf("le formulaire vise un élément par sélecteur de document : %s", global)
+	}
 }
