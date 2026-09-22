@@ -499,12 +499,105 @@ l'image ait à être tirée :
 gh attestation verify oci://ghcr.io/pol128/patachoo:0.1.0 --repo Pol128/Patachoo
 ```
 
+**Il y faut `gh` 2.49 au minimum** — c'est la version qui a introduit le jeu de
+commandes `attestation`, le 30 avril 2024
+([notes de version](https://github.com/cli/cli/releases/tag/v2.49.0)). La
+vôtre se lit ainsi :
+
+```sh
+gh --version
+```
+
+En dessous de 2.49, la commande ci-dessus ne rend pas un échec de
+vérification — elle rend `unknown command "attestation" for "gh"`. C'est à
+savoir, parce que ça ressemble à une coquille dans cette page alors que c'est
+seulement un `gh` trop ancien. Le cas n'est pas théorique : Debian 13 empaquette
+`gh` 2.46.
+
 Ce que cela prouve : cette image a bien été produite par ce dépôt, par ce
 workflow, à partir d'un commit nommé dans l'attestation — pas construite sur une
 machine tierce ni substituée dans le registre après coup.
 
 Ce que cela ne prouve pas : que le commit attesté soit digne de confiance. La
 provenance dit d'où vient l'image, jamais ce que fait le code qu'elle contient.
+
+**Sans `gh` récent : lire l'attestation dans le registre.** Avec `curl` et `jq`
+seuls, rien d'autre à installer. C'est un repli en deçà de ce que fait
+`gh attestation verify` — la fin de cette section dit exactement en quoi.
+
+L'attestation est déposée dans le registre à côté de l'image, et s'y retrouve
+par l'empreinte de celle-ci. `ghcr.io` ne sert **pas** l'API OCI des référents
+(`/v2/.../referrers/<empreinte>` rend `MANIFEST_UNKNOWN`) : il faut passer par
+le repli par tag prévu par la spécification, `sha256-<hex>` — l'empreinte avec
+un tiret à la place des deux-points.
+
+```sh
+empreinte=$(docker buildx imagetools inspect ghcr.io/pol128/patachoo:0.1.0 \
+  | awk '/^Digest:/ {print $2}')
+
+jeton=$(curl -s "https://ghcr.io/token?scope=repository:pol128/patachoo:pull&service=ghcr.io" \
+  | jq -r .token)
+
+curl -s -H "Authorization: Bearer $jeton" \
+  -H "Accept: application/vnd.oci.image.index.v1+json" \
+  "https://ghcr.io/v2/pol128/patachoo/manifests/sha256-${empreinte#sha256:}" | jq .
+```
+
+Le jeton s'obtient sans compte : le dépôt est public, et `ghcr.io` en délivre un
+anonyme en lecture. L'en-tête `Accept` n'est pas décoratif — sans lui, `ghcr.io`
+refuse la réponse avec `Accept header does not support OCI indexes`.
+
+La réponse est l'index des attestations attachées à cette empreinte. Celle qui
+compte porte `artifactType` à
+`application/vnd.dev.sigstore.bundle.v0.3+json`, et les annotations
+`dev.sigstore.bundle.content = dsse-envelope` et
+`dev.sigstore.bundle.predicateType = https://slsa.dev/provenance/v1`.
+
+Reste à lire ce que cette attestation affirme, en descendant sur le calque du
+bundle :
+
+```sh
+bundle=$(curl -s -H "Authorization: Bearer $jeton" \
+  -H "Accept: application/vnd.oci.image.index.v1+json" \
+  "https://ghcr.io/v2/pol128/patachoo/manifests/sha256-${empreinte#sha256:}" \
+  | jq -r '.manifests[]
+           | select(.artifactType == "application/vnd.dev.sigstore.bundle.v0.3+json")
+           | .digest')
+
+calque=$(curl -s -H "Authorization: Bearer $jeton" \
+  -H "Accept: application/vnd.oci.image.manifest.v1+json" \
+  "https://ghcr.io/v2/pol128/patachoo/manifests/$bundle" | jq -r '.layers[0].digest')
+
+curl -sL -H "Authorization: Bearer $jeton" \
+  "https://ghcr.io/v2/pol128/patachoo/blobs/$calque" \
+  | jq -r .dsseEnvelope.payload | base64 -d | jq .
+```
+
+La charge utile est un énoncé in-toto v1. Il nomme le sujet — l'image et son
+empreinte — et le constructeur, dans `.predicate.runDetails.builder.id`. Pour
+`0.1.0` :
+
+```
+https://github.com/Pol128/Patachoo/.github/workflows/publier.yml@refs/tags/v0.1.0
+```
+
+Ce que ce repli prouve : qu'une attestation de provenance SLSA est bien attachée
+à cette empreinte-là dans le registre, et ce qu'elle affirme — quel dépôt, quel
+workflow, quelle ref.
+
+Ce qu'il ne prouve pas : que cette attestation soit authentique. **Aucune
+signature n'est vérifiée ici** — ni la chaîne de certificats, ni l'inscription
+au journal de transparence. Qui contrôle le registre peut y déposer une charge
+utile qui dit n'importe quoi. C'est un contrôle de présence et de contenu, pas
+une vérification ; seul `gh attestation verify`, ou un vérificateur Sigstore
+équivalent, fait la seconde.
+
+Un dernier écueil : l'index de l'image porte aussi des manifestes
+`attestation-manifest` déposés par BuildKit, en `platform: unknown/unknown`, que
+`docker buildx imagetools inspect` affiche. C'est une **autre** provenance,
+**non signée**, sans rapport avec l'attestation GitHub — elle n'établit rien de
+plus que ce que le constructeur a bien voulu écrire, et ne remplace ni l'une ni
+l'autre des deux voies ci-dessus.
 
 ### Fuseau horaire
 
