@@ -48,6 +48,12 @@ minutes — le détecteur multiplie par dix la durée d'un paquet qui monte une
 base PocketBase, et le paquet `cmd/patachoo` en monte une par test. Ce n'est
 pas qu'elle est bloquée.
 
+La dernière ligne construit un binaire de développement : faute de `-ldflags`,
+il annonce `dev` plutôt qu'un numéro de version. Pour une installation réelle —
+la ligne de construction complète, la compilation croisée vers un Raspberry Pi,
+et l'unité systemd qui réenferme le processus —, voir [« Installation par
+binaire »](INSTALL.md#installation-par-binaire).
+
 Ce qu'il faut avoir fait pour dire qu'une tâche est terminée est écrit dans
 [DOD.md](DOD.md) — tests unitaires, tests de sécurité, et la règle qui remplace
 un seuil de couverture.
