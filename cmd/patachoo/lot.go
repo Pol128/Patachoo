@@ -403,7 +403,7 @@ func creeLeLot(app core.App, compte *core.Record, urls []string, instant time.Ti
 
 // tagDeLaFournee crée le tag sous lequel les recettes du lot se retrouveront.
 //
-// Par le nom, et jamais par le slug : normaliseLeTag (tags.go) recalcule
+// Par le nom, et jamais par le slug : normaliseLeMot (tags.go) recalcule
 // toujours le slug depuis le nom, délibérément — un slug posé par l'appelant
 // serait écrasé, et le poser ici contournerait l'unicité. Le discriminant se
 // met donc dans le nom, et le hook en tire le slug.
@@ -446,7 +446,7 @@ func tagDeLaFournee(txApp core.App, instant time.Time) (*core.Record, error) {
 
 // leSlugEstLibre dit si aucun tag ne porte déjà ce slug.
 //
-// La valeur passe par params, comme dans tagsDepuisSaisie : elle vient d'une
+// La valeur passe par params, comme dans motsDepuisSaisie : elle vient d'une
 // horloge ici, mais un filtre construit par concaténation est une habitude
 // qu'on ne prend pas à moitié.
 func leSlugEstLibre(txApp core.App, slug string) (bool, error) {

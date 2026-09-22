@@ -179,6 +179,15 @@ type groupeDAliment struct {
 	// Composé ici et non dans le gabarit : l'adresse est celle de l'autre
 	// écran, et elle s'écrit dans un seul endroit du dépôt.
 	Detail string `db:"-"`
+
+	// Annoter ouvre le formulaire sur la ligne, et Annotations porte ce qui y
+	// a déjà été posé — « jugé capture-trop sous moteur v0.8 ».
+	Annoter     string               `db:"-"`
+	Annotations []annotationAffichee `db:"-"`
+
+	// Formulaire n'est rempli que par la ligne ouverte en annotation : le
+	// gabarit s'ouvre dessus, et la ligne ordinaire rend ses cellules.
+	Formulaire *formulaireDAnnotation `db:"-"`
 }
 
 // lienDeTri est une entrée de la barre des tris : de quoi l'afficher, y aller,
@@ -224,8 +233,8 @@ type donneesAliments struct {
 // brancheLesAliments pose la vue agrégée, en lecture seule et derrière le
 // droit d'entrer dans l'établi.
 //
-// Un GET et rien d'autre : l'établi lit le carnet, il ne le modifie pas, et
-// l'annotation — la seule écriture de l'établi — est l'affaire de PATA-127.
+// Un GET et rien d'autre : l'écriture de l'annotation a ses propres routes
+// (annotations.go), et la vue ne fait que porter le lien qui les ouvre.
 //
 // La garde est celle des autres écrans, pas une seconde : exigeUnCurateur,
 // qui renvoie le visiteur se connecter et refuse le compte connecté sans le
@@ -247,7 +256,7 @@ func pageDesAliments(e *core.RequestEvent) error {
 			donneesPage:     donneesPage{Titre: "Les aliments — Patachoo"},
 			SansAnalyse:     true,
 			LienDuLancement: cheminDeLEtabli,
-		})
+		}, gabaritsDeLaLigneDUnGroupe...)
 	}
 
 	groupes, err := groupesDuRang(e.App, passe.Id, criteres)
@@ -273,6 +282,13 @@ func pageDesAliments(e *core.RequestEvent) error {
 	// et le clic.
 	for i := range groupes {
 		groupes[i].Detail = lienDesFormesDuGroupe(passe.Id, groupes[i].Aliment)
+		groupes[i].Annoter = lienDAnnotationDUnGroupe(passe.Id, groupes[i].Aliment)
+	}
+
+	// Les verdicts déjà posés, après la borne de la page : la lecture est
+	// bornée aux groupes affichés, comme celle des signaux.
+	if err := poseLesAnnotations(e.App, groupes); err != nil {
+		return err
 	}
 
 	donnees := &donneesAliments{
@@ -292,7 +308,8 @@ func pageDesAliments(e *core.RequestEvent) error {
 		donnees.Suivante = criteres.lien(criteres.Page + 1)
 	}
 
-	return rendre(e, "etabli-aliments.html", "etabli-aliments-corps.html", donnees)
+	return rendre(e, "etabli-aliments.html", "etabli-aliments-corps.html", donnees,
+		gabaritsDeLaLigneDUnGroupe...)
 }
 
 // laPasseAffichee rend l'analyse sur laquelle la vue porte : celle que l'URL

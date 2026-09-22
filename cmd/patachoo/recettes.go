@@ -677,8 +677,8 @@ type formulaireRecette struct {
 // SaisieDesTags rend le champ de tags tel que son gabarit l'attend. Le
 // formulaire ne propose rien à son ouverture : les suggestions arrivent à la
 // frappe, par la route qui les cherche.
-func (f formulaireRecette) SaisieDesTags() saisieDesTags {
-	return saisieDesTags{Valeur: f.Tags}
+func (f formulaireRecette) SaisieDesTags() saisieDeMots {
+	return saisieDeMots{Valeur: f.Tags}
 }
 
 // EstLeTypeDePlat et SaisonCochee servent au gabarit, qui ne sait pas

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -287,18 +288,17 @@ func TestLesDeuxVocabulairesNeSeMelangentPas(t *testing.T) {
 
 // --- Montage ------------------------------------------------------------------
 
-// chargeEnTexte rend la charge telle qu'elle partirait : du JSON, puisque c'est
-// ce qu'un envoi vers patachoo.org transporterait. Le test de non-fuite se lit
-// sur cette sortie-là, et non champ par champ — c'est ce qui le tient le jour
-// où un champ s'ajoute.
+// chargeEnTexte rend la charge entière, tous champs confondus. Le test de
+// non-fuite se lit sur cette sortie-là et non champ par champ : c'est ce qui le
+// tient le jour où un champ s'ajoute à la structure sans qu'on y pense.
 func chargeEnTexte(t *testing.T, charge chargePartageable) string {
 	t.Helper()
 
-	rendu, err := jsonDeLaCharge(charge)
+	rendu, err := json.Marshal(charge)
 	if err != nil {
 		t.Fatalf("sérialisation de la charge : %v", err)
 	}
-	return rendu
+	return string(rendu)
 }
 
 func exigeUnSeulMot(t *testing.T, app core.App, collection, slug string) {

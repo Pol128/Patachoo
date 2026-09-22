@@ -1,0 +1,44 @@
+{{/* Le formulaire d'annotation, écrit une fois et rendu aux deux niveaux : la
+     cible change, pas le formulaire. Les quatre champs cachés la portent, et
+     c'est tout ce qui distingue un verdict de groupe d'un verdict de ligne.
+
+     La cible du remplacement n'est pas ici mais sur le bloc qui l'accueille —
+     la ligne du tableau ou la zone de la fiche : HTMX hérite hx-target de ses
+     ancêtres, et c'est ce qui permet au même formulaire de rerendre tantôt une
+     ligne, tantôt un bloc.
+
+     Les deux champs de texte sont dans cet ordre, et il porte du sens : ce qui
+     pourra partir se rédige en pensant à qui le lira ailleurs ; ce qui reste
+     ici cite la ligne du corpus. */}}
+<form class="annotation" method="post" action="{{.Action}}" hx-post="{{.Action}}">
+<input type="hidden" name="_antirejeu" value="{{.JetonAntiRejeu}}">
+<input type="hidden" name="analyse" value="{{.Analyse}}">
+<input type="hidden" name="cible" value="{{.Cible}}">
+<input type="hidden" name="aliment" value="{{.Aliment}}">
+<input type="hidden" name="forme" value="{{.Forme}}">
+{{with .Message}}<p class="avertissement">{{.}}</p>{{end}}
+<label for="verdicts">Verdict</label>
+{{template "etabli-verdicts-saisie.html" .Verdicts}}
+<label for="note-partageable">Ce qui pourra partir — la règle ou l'entrée du lexique</label>
+<textarea id="note-partageable" name="note-partageable" rows="2"></textarea>
+<label for="note-locale">Ce qui reste ici — la ligne telle qu'elle est écrite</label>
+<textarea id="note-locale" name="note-locale" rows="2"></textarea>
+{{if .AvecLectureAttendue}}
+<fieldset class="lecture-attendue-saisie">
+<legend>Ce qu'il fallait lire</legend>
+<label for="attendu-quantite">Quantité</label>
+<input type="text" id="attendu-quantite" name="attendu-quantite" inputmode="decimal">
+<label for="attendu-unite">Unité</label>
+<input type="text" id="attendu-unite" name="attendu-unite">
+<label for="attendu-partitif">Partitif</label>
+<input type="text" id="attendu-partitif" name="attendu-partitif">
+<label for="attendu-aliment">Aliment</label>
+<input type="text" id="attendu-aliment" name="attendu-aliment">
+<label for="attendu-note">Note</label>
+<input type="text" id="attendu-note" name="attendu-note">
+<label for="attendu-optionnel">Facultatif</label>
+<input type="checkbox" id="attendu-optionnel" name="attendu-optionnel" value="oui">
+</fieldset>
+{{end}}
+<button type="submit">Déposer</button>
+</form>

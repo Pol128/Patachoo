@@ -1,0 +1,22 @@
+{{/* La zone d'annotation de la page détail : ce qui a déjà été dit de cette
+     ligne, puis le formulaire pour en dire plus.
+
+     hx-target est posé ici plutôt que sur le formulaire, pour la raison écrite
+     dans etabli-annotation.html : le formulaire sert aux deux niveaux, et c'est
+     son hôte qui sait ce que le dépôt doit remplacer.
+
+     Les deux notes sont dans deux blocs distincts, et ce n'est pas une question
+     de mise en forme : deux colonnes séparées en base ne servent à rien si la
+     page les mêle. */}}
+<div class="annotations" id="annotations-de-la-forme" hx-target="#annotations-de-la-forme" hx-swap="outerHTML">
+<h2>Ce qu'on en a dit</h2>
+{{range .Annotations}}<div class="annotation-posee">
+{{if .Verdicts}}<p class="verdict">jugé {{range .Verdicts}}{{.Nom}} {{end}}sous moteur {{.Moteur}}</p>{{end}}
+{{with .NotePartageable}}<p class="note-partageable">{{.}}</p>{{end}}
+{{with .NoteLocale}}<p class="note-locale">{{.}}</p>{{end}}
+{{with .Attendue}}<p class="lecture-attendue">Il fallait lire : {{.Quantite}} {{.Unite}} {{.Partitif}} {{.Aliment}} {{.Note}}{{if .Optionnel}} — facultatif{{end}}</p>{{end}}
+</div>
+{{else}}<p class="absence">Personne n'a encore jugé cette ligne.</p>
+{{end}}
+{{template "etabli-annotation.html" .Formulaire}}
+</div>
