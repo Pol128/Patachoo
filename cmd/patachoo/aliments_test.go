@@ -195,7 +195,8 @@ var ligneDeGroupe = regexp.MustCompile(
 		`<td class="signaux">(.*?)</td>` +
 		`<td class="formes">([^<]*)</td>` +
 		`<td class="occurrences">([^<]*)</td>` +
-		`<td class="detail"><a href="[^"]*">[^<]*</a></td></tr>`)
+		`<td class="detail"><a href="[^"]*">[^<]*</a></td>` +
+		`<td class="verdicts">(.*?)</td></tr>`)
 
 // groupeAffiche est ce qu'une ligne d'écran montre.
 type groupeAffiche struct {
@@ -204,6 +205,10 @@ type groupeAffiche struct {
 	Signaux     string
 	Formes      string
 	Occurrences string
+
+	// Verdicts porte la dernière cellule : ce qui a déjà été jugé du groupe,
+	// et le bouton qui ouvre le formulaire.
+	Verdicts string
 }
 
 // groupesAffiches rend les lignes de la vue, dans l'ordre où elles sont
@@ -217,6 +222,7 @@ func groupesAffiches(corps string) []groupeAffiche {
 			Signaux:     html.UnescapeString(ligne[3]),
 			Formes:      ligne[4],
 			Occurrences: ligne[5],
+			Verdicts:    html.UnescapeString(ligne[6]),
 		})
 	}
 	return lus
