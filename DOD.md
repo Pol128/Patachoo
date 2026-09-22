@@ -7,8 +7,8 @@ ne peut pas cocher est une intention, pas une définition.
 ## 1. Ça compile et c'est propre
 
 ```sh
-./verifie                # gofmt, go vet, go test, govulncheck — ~2 min
-AVEC_RACE=1 ./verifie    # la même chose avec -race — ~20 min
+./verifie                # gofmt, go vet, go test, govulncheck — ~7 min
+AVEC_RACE=1 ./verifie    # la même chose avec -race — de 45 min à 1 h 40
 ```
 
 Le script échoue au premier manquement. C'est le minimum, pas la DoD complète :
@@ -33,11 +33,19 @@ concurrent. Le produit est devenu concurrent — une goroutine par file d'hôte,
 une cadence et un cache partagés —, et une course ne se voit dans aucune autre
 commande du dépôt.
 
-La passe longue dure une vingtaine de minutes là où la courte en dure deux : le
+La passe longue dure une heure environ là où la courte en dure sept minutes : le
 détecteur multiplie par dix la durée d'un paquet qui monte une base PocketBase,
 et le paquet `cmd/patachoo` en monte une par test. Elle porte donc un
 `-timeout` explicite, largement au-dessus de cette durée — un rouge doit parler d'une
 course, jamais d'un dépassement de délai.
+
+Cette durée n'est pas une constante, et le plafond doit couvrir sa plage entière.
+Relevé le 22/09/2026, à 689 tests dans `cmd/patachoo` : **~45 min** sur une
+machine au repos, **~1 h 40** quand un job de CI tourne en même temps. Le runner
+est auto-hébergé sur la machine de développement, et rien n'empêche un
+`./verifie` lancé à la main d'y croiser un job. Le plafond est à trois heures
+pour cette raison : il borne un test bloqué, il ne borne pas une machine
+chargée. La durée de fond, elle, a sa tâche — PATA-129.
 
 ## 2. Tests unitaires
 
