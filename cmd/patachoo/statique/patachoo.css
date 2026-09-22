@@ -734,15 +734,23 @@ footer {
 	font-weight: 600;
 }
 
-/* Les quatre champs de la lecture. Le gris les met derrière la ligne brute :
-   ce sont des valeurs dérivées, pas la source. */
+/* Les champs de la lecture. Le gris les met derrière la ligne brute : ce sont
+   des valeurs dérivées, pas la source.
+
+   « note » et « facultatif » ne sont pas inédites — la fiche recette les porte
+   sur ses lignes d'ingrédients (ligne 146). Posées nues ici, en fin de feuille
+   et à spécificité égale, elles gagneraient là-bas aussi et repeindraient une
+   page que l'établi ne touche pas. Elles se portent donc par le conteneur de
+   chacun des deux écrans : le tableau des formes, et la lecture de la fiche. */
 .quantite,
 .unite,
 .partitif,
 .aliment-lu,
-.note,
-.facultatif,
-.motif {
+.motif,
+.forme td.note,
+.forme td.facultatif,
+.lecture dd.note,
+.lecture dd.facultatif {
 	color: #4a463f;
 }
 
