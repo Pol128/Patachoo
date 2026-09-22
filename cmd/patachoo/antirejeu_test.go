@@ -439,12 +439,14 @@ func jetonDuFormulaire(t *testing.T, corps string) string {
 // Le décompte se fait sur le système de fichiers embarqué, celui qui part dans
 // le binaire : un gabarit oublié de l'embed ne serait pas servi.
 func TestChaqueFormulaireEnPostPorteLeChampAntiRejeu(t *testing.T) {
-	// Douze depuis PATA-124 : la page de lancement de l'établi ajoute le
-	// sien. Onze depuis PATA-119, où la bascule de reprise avait ajouté un
-	// formulaire au gabarit du suivi — un seul, bien que le rapport le rende
-	// une fois par adresse en échec : le décompte porte sur les gabarits, pas
-	// sur le rendu.
-	const attendus = 12
+	// Treize depuis PATA-127 : le formulaire d'annotation ajoute le sien. Un
+	// seul, bien qu'il serve aux deux niveaux et qu'une page le rende une fois
+	// par ligne — le décompte porte sur les gabarits, pas sur le rendu.
+	//
+	// Douze depuis PATA-124, où la page de lancement de l'établi avait ajouté
+	// le sien ; onze depuis PATA-119, où la bascule de reprise avait ajouté un
+	// formulaire au gabarit du suivi.
+	const attendus = 13
 
 	var formulaires, champs int
 	err := fs.WalkDir(vues, ".", func(chemin string, entree fs.DirEntry, err error) error {
