@@ -915,3 +915,93 @@ func poseLesAnnotations(app core.App, groupes []groupeDAliment) error {
 	}
 	return nil
 }
+
+// --- Ce qui tranche un groupe, et ce qui le détranche -----------------------------
+
+// alimentsTranches rend les clés de groupe dont le verdict tient encore pour
+// cette passe.
+//
+// Deux conditions, et les deux comptent. La cible porte au moins un mot de
+// verdict : une note sans mot ne tranche pas, c'est ce qui permet de déposer
+// une remarque sans retirer le groupe de la file. Et la lecture n'a pas bougé
+// depuis : l'empreinte enregistrée est celle de ce que l'annotation jugeait, on
+// la recompare à celle de la passe affichée.
+//
+// Ni « le verdict vaut pour toujours », qui enterrerait silencieusement les
+// groupes dont la lecture vient justement de changer, ni « toute montée de
+// version périme tout », qui ferait tout rejuger après une correction du seul
+// lexique.
+//
+// En Go plutôt qu'en SQL, et c'est un choix de taille : la comparaison porte
+// sur une empreinte d'agrégat, qu'un NOT EXISTS corrélé devrait recalculer pour
+// chaque ligne du corpus. Ici, la table des annotations est humaine — elle
+// grandit d'un verdict à la fois, pas d'une ligne de corpus —, et les lectures
+// relues sont bornées aux seules clés annotées.
+func alimentsTranches(app core.App, analyse string) ([]any, error) {
+	// Toutes passes confondues : un verdict rendu hier tranche le groupe de la
+	// passe d'aujourd'hui, la clé étant l'aliment canonique.
+	annotations, err := app.FindRecordsByFilter("analyses_annotations",
+		"food != ''", "-created", 0, 0)
+	if err != nil {
+		return nil, fmt.Errorf("annotations de groupe : %w", err)
+	}
+
+	// Par clé, les empreintes que ses verdicts jugeaient. Plusieurs annotations
+	// sur une même cible sont permises : il suffit que l'une d'elles tienne
+	// encore.
+	jugees := map[string][]string{}
+	for _, annotation := range annotations {
+		if len(annotation.GetStringSlice("verdicts")) == 0 {
+			continue
+		}
+		aliment := annotation.GetString("food")
+		jugees[aliment] = append(jugees[aliment], annotation.GetString("reading_digest"))
+	}
+	if len(jugees) == 0 {
+		return nil, nil
+	}
+
+	courantes, err := empreintesDesGroupes(app, analyse, jugees)
+	if err != nil {
+		return nil, err
+	}
+
+	tranches := make([]any, 0, len(jugees))
+	for aliment, empreintes := range jugees {
+		if slices.Contains(empreintes, courantes[aliment]) {
+			tranches = append(tranches, aliment)
+		}
+	}
+	return tranches, nil
+}
+
+// empreintesDesGroupes rend, pour chaque clé demandée, l'empreinte de sa
+// lecture dans cette passe.
+//
+// Une seule requête pour toutes les clés, et non une par clé : le regroupement
+// se fait ensuite en mémoire, sur les seules formes des groupes annotés.
+func empreintesDesGroupes(app core.App, analyse string, jugees map[string][]string) (map[string]string, error) {
+	aliments := make([]any, 0, len(jugees))
+	for aliment := range jugees {
+		aliments = append(aliments, aliment)
+	}
+
+	formes, err := formesJugees(app, analyse, dbx.In("food", aliments...))
+	if err != nil {
+		return nil, fmt.Errorf("lecture courante des groupes annotés : %w", err)
+	}
+
+	parAliment := map[string][]formeJugee{}
+	for _, forme := range formes {
+		parAliment[forme.Aliment] = append(parAliment[forme.Aliment], forme)
+	}
+
+	empreintes := make(map[string]string, len(jugees))
+	for aliment := range jugees {
+		// Une clé que la passe ne porte plus a l'empreinte d'un groupe vide,
+		// qui ne peut égaler aucune empreinte jugée : le groupe n'est pas
+		// affiché de toute façon, et rien ne le tranche à tort.
+		empreintes[aliment] = empreinteDeLaLecture(parAliment[aliment])
+	}
+	return empreintes, nil
+}
