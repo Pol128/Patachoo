@@ -530,6 +530,329 @@ du conteneur sur 8080 et 8443 — plus rien ne répond sur 8090. Le
 « Hors de la machine locale : il faut du TLS » la désactive pour cette raison,
 et dit par quoi la remplacer.
 
+## Installation par binaire
+
+Patachoo est déjà un binaire unique, et l'image Docker n'est qu'un emballage
+autour de lui : les gabarits et les fichiers statiques y sont embarqués par
+`go:embed`, les migrations y sont compilées, et SQLite passe par une
+implémentation en Go pur (`modernc.org`). Il n'y a donc **aucune dépendance
+système à reproduire** — c'est ce que dit déjà le `FROM scratch` de l'image, qui
+ne contient rien d'autre que cet exécutable.
+
+Cette section est le chemin pour qui ne veut pas de démon Docker sur sa machine.
+
+### Ce que ça change, et ce que ça ne change pas
+
+Le binaire pèse **25 Mo**, et l'image `scratch` ne contient que lui : côté
+serveur, la mémoire consommée est **la même dans les deux cas**. Un conteneur,
+ce sont des espaces de noms, pas une machine virtuelle — il n'y a pas de système
+invité à payer.
+
+Le gain est **entièrement dans le démon**, et il dépend donc de ce que la
+machine héberge par ailleurs :
+
+- **Docker ne sert qu'à Patachoo.** On supprime `dockerd` et `containerd`, soit
+  **~550 Mo** de mémoire résidente constatés, pour faire tourner 25 Mo de Go.
+  Sur un VPS à 1 Go, c'est la différence entre à l'étroit et au large.
+- **La machine héberge déjà d'autres conteneurs.** Le démon tourne de toute
+  façon ; le coût marginal de Patachoo en conteneur se réduit au *shim*, de
+  l'ordre de **17 Mo**. L'argument de la légèreté tombe, et le mode Docker
+  reste le chemin le plus simple.
+
+Le mode binaire n'est donc **pas universellement plus léger**. Ce qu'il apporte
+dans tous les cas, en revanche, c'est de n'avoir aucun démon à administrer, et
+une cible de compilation de plus — voir le tableau ci-dessous.
+
+En échange, il faut **reconstruire à la main l'isolation** que le conteneur
+donnait gratuitement : le `FROM scratch` et son `USER 65532:65532` enferment le
+processus sans qu'on ait rien demandé. Un binaire lancé sous un compte ordinaire
+est plus léger *et moins bien enfermé*. C'est l'unité systemd, plus bas, qui
+rattrape cet écart ; elle n'est pas un bonus.
+
+### Construire
+
+Il faut **Go 1.26.6** — la version déclarée par `go.mod`. Rien d'autre : pas de
+compilateur C, pas d'en-têtes de développement.
+
+```sh
+git clone https://github.com/Pol128/Patachoo.git
+cd Patachoo
+git checkout v0.1.0    # une version publiée, plutôt que la pointe de main
+CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=v0.1.0" -o patachoo ./cmd/patachoo
+```
+
+`-trimpath` retire du binaire les chemins de la machine qui l'a construit,
+`-s -w` ses tables de symboles et de débogage — c'est ce qui le ramène à 25 Mo.
+
+**La version se passe à la main, et c'est important.** Sans
+`-X main.version=…`, le binaire annonce `dev` (`cmd/patachoo/version.go`) : dans
+le pied de page d'un compte connecté comme dans `./patachoo version`. Construit
+depuis un arbre git, il y ajoute la révision — `dev (1de2cd1)` —, ce qui vaut
+mieux que rien mais ne dit toujours pas *quelle version* tourne. L'image Docker,
+elle, reçoit la sienne par `--build-arg VERSION=` ; ici, personne ne le fait à
+votre place.
+
+#### Votre machine → ce que vous compilez
+
+`CGO_ENABLED=0` rend toutes ces cibles atteignables par **simple compilation
+croisée**, depuis n'importe quel poste. On compile chez soi, on copie les 25 Mo
+sur la machine cible : celle-ci n'a besoin ni de Go, ni de Docker, ni d'aucune
+bibliothèque.
+
+| La machine qui fera tourner Patachoo | Ce qu'on passe à `go build` |
+| --- | --- |
+| PC, serveur ou VPS x86 64 bits | `GOARCH=amd64` |
+| Raspberry Pi 3 / 4 / 5, Pi Zero 2 W, sous un OS 64 bits | `GOARCH=arm64` |
+| Raspberry Pi 2, ou Pi 3 / 4 sous un OS 32 bits | `GOARCH=arm GOARM=7` |
+| Raspberry Pi 1, Pi Zero / Zero W | `GOARCH=arm GOARM=6` |
+
+```sh
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
+    go build -trimpath -ldflags "-s -w -X main.version=v0.1.0" -o patachoo ./cmd/patachoo
+scp patachoo la-machine:/tmp/patachoo
+```
+
+**Ce chemin n'a pas de trou, là où l'image en a un.** `publier.yml` construit
+`linux/amd64`, `linux/arm64` et `linux/arm/v7` — pas `arm/v6`. Un Raspberry Pi 1
+ou un Pi Zero premier modèle n'a donc **aucune image Docker** à tirer, alors
+qu'il a bien un binaire à compiler. C'est le seul avantage franc du mode binaire
+sur le mode Docker, et il ne concerne que ces machines-là.
+
+### Lancer
+
+```sh
+sudo install -m 0755 patachoo /usr/local/bin/patachoo
+/usr/local/bin/patachoo serve --http=127.0.0.1:8090 --dir=/var/lib/patachoo
+```
+
+Deux drapeaux, et aucun des deux n'est facultatif.
+
+**`--http`, sans quoi l'instance ne répond qu'à elle-même.** Le défaut de
+PocketBase est `127.0.0.1:8090` : joignable depuis la machine elle-même, et de
+nulle part ailleurs. Le `CMD` de l'image le surcharge en `0.0.0.0:8090`, ce qui
+fait qu'on ne rencontre jamais la question en Docker ; un binaire lancé nu, non.
+L'oubli ne produit aucune erreur — le serveur démarre, annonce son adresse, et
+un navigateur d'un autre poste reçoit une connexion refusée. On cherche alors la
+panne du côté du pare-feu, où elle n'est pas.
+
+Ce qu'il faut y mettre dépend de ce qu'il y a devant : `127.0.0.1:8090` si un
+proxy inverse tourne sur la même machine — le cas normal, et le seul recommandé
+dès qu'on sort de chez soi —, `0.0.0.0:8090` pour exposer directement sur le
+réseau local. Voir
+[« Exposer Patachoo hors de chez soi »](#exposer-patachoo-hors-de-chez-soi).
+
+**`--dir`, en chemin absolu, toujours.** Le défaut est `./pb_data`, *relatif au
+répertoire courant*. Lancé à la main depuis deux répertoires différents, le
+binaire ouvre deux bases différentes ; sous systemd avec un `WorkingDirectory=`
+mal posé, les données atterrissent là où personne ne les cherche et l'instance a
+l'air vide. Un chemin absolu supprime la question. L'unité ci-dessous le fait
+poser par systemd lui-même.
+
+### Le premier superutilisateur
+
+Les deux chemins de
+[« Créer le premier superutilisateur »](#créer-le-premier-superutilisateur)
+valent ici, à la commande près. **Par le navigateur** reste le chemin conseillé :
+au premier démarrage, tant qu'aucun superutilisateur n'existe, les logs du
+serveur affichent une URL `/_/#/pbinstall/<jeton>` qui mène au formulaire de
+création — le mot de passe se tape alors dans un champ, et ne passe ni par la
+table des processus ni par l'historique du shell.
+
+En repli, par la ligne de commande — serveur arrêté, puisque les deux processus
+ouvriraient la même base :
+
+```sh
+patachoo superuser upsert vous@exemple.fr 'un-mot-de-passe-solide' --dir=/var/lib/patachoo
+```
+
+> L'avertissement de la section Docker s'applique **mot pour mot** : le mot de
+> passe est ici un argument, donc lisible par `ps aux` pour tout utilisateur de
+> la machine le temps de la commande, et conservé en clair dans
+> `~/.bash_history` ou `~/.zsh_history` bien après. Les deux remèdes sont les
+> mêmes — préfixer la ligne d'une espace si `HISTCONTROL` contient
+> `ignorespace`, ou l'effacer avec `history -d <numéro>`.
+
+Ce compte administre l'instance depuis `/_/` ; ce n'est pas celui avec lequel on
+range ses recettes. Pour le compte ordinaire, rien ne change :
+[« Créer un compte ordinaire »](#créer-un-compte-ordinaire) s'applique tel quel.
+
+### L'unité systemd
+
+Elle fait deux choses qu'on ne peut pas se contenter d'espérer : elle **relance
+le service** après une panne — l'équivalent du `restart: unless-stopped` du
+compose — et elle **réenferme le processus**, puisqu'il n'y a plus de conteneur
+pour le faire.
+
+Dans `/etc/systemd/system/patachoo.service` :
+
+```ini
+[Unit]
+Description=Patachoo — carnet de recettes
+Documentation=https://github.com/Pol128/Patachoo
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/patachoo serve --http=127.0.0.1:8090 --dir=/var/lib/patachoo
+Restart=on-failure
+RestartSec=5s
+
+# Le compte : créé au démarrage, détruit à l'arrêt, il n'existe pas entre-temps.
+# StateDirectory pose /var/lib/patachoo, le lui donne, et le conserve d'un
+# démarrage à l'autre — c'est le chemin que --dir désigne ci-dessus, et les deux
+# ne peuvent pas diverger sans que le service cesse de trouver ses données.
+DynamicUser=yes
+StateDirectory=patachoo
+StateDirectoryMode=0700
+
+# Le système de fichiers : tout en lecture seule sauf le répertoire d'état,
+# /home et /root invisibles, un /tmp qui n'est partagé avec personne.
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+# Aucune élévation possible, aucune capacité conservée : Patachoo écoute
+# au-dessus de 1024 et n'a besoin d'aucune.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# Le noyau et le reste du système, hors de portée.
+PrivateDevices=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now patachoo
+systemctl status patachoo
+journalctl -u patachoo -f
+```
+
+**`DynamicUser=yes` déplace les données, et il faut le savoir avant la première
+sauvegarde.** Avec lui, systemd range l'état réel dans
+`/var/lib/private/patachoo` et laisse `/var/lib/patachoo` comme lien
+symbolique ; `/var/lib/private` n'est traversable que par `root`. Le service,
+lui, ne voit que `/var/lib/patachoo` et n'en sait rien. Deux conséquences
+pratiques : une sauvegarde lancée par un compte ordinaire échouera, et le
+répertoire à viser depuis l'extérieur du service est
+`/var/lib/private/patachoo`. Qui préfère un chemin franc remplace
+`DynamicUser=yes` par un `User=patachoo` créé d'avance
+(`sudo useradd --system --no-create-home --shell /usr/sbin/nologin patachoo`) :
+`StateDirectory=` pose alors `/var/lib/patachoo` pour de bon, et le reste de
+l'unité ne change pas.
+
+`RestrictAddressFamilies=` garde `AF_INET` et `AF_INET6` parce que l'import va
+chercher des pages sur Internet, et `AF_UNIX` parce que c'est par là que passe
+la journalisation vers `journald`. Les retirer casserait l'un ou l'autre.
+
+**Vérifier l'unité avant de la poser**, ce qui coûte une seconde :
+
+```sh
+systemd-analyze verify /etc/systemd/system/patachoo.service
+```
+
+#### La sonde de santé, hors Docker
+
+`patachoo healthcheck` n'est pas propre au conteneur : c'est une sous-commande
+ordinaire, qui interroge `/api/health` et rend **0** si l'application répond.
+Elle vise `127.0.0.1:8090` par défaut et se règle par `--http` :
+
+```sh
+patachoo healthcheck --http=127.0.0.1:8090 ; echo $?
+```
+
+De quoi alimenter une supervision extérieure, ou un `ExecStartPost=` si l'on
+tient à ce que `systemctl start` ne rende la main qu'une fois l'application
+joignable. Elle n'ouvre pas le répertoire de données — son `--dir` est accepté
+et ignoré —, on peut donc l'appeler aussi souvent qu'on veut.
+
+#### Pourquoi un compte dédié, et pas le vôtre
+
+Le binaire pose lui-même `umask(0o077)` au démarrage
+(`cmd/patachoo/droits_unix.go`) : tout ce qu'il écrit ensuite — la base, les
+fichiers téléversés, les archives de sauvegarde — n'est lisible que par le
+compte qui l'exécute. C'est une protection réelle, et elle a une conséquence
+directe sur le choix de ce compte.
+
+Ce qu'elle protège : `data.db` porte, dans `_collections.options`, **les secrets
+de signature des jetons**. Qui peut lire ce fichier peut fabriquer un jeton de
+superutilisateur valable et entrer dans `/_/`. Lancer Patachoo sous son propre
+compte d'utilisateur revient donc à ranger ces secrets parmi ses fichiers
+personnels, à portée de tout ce qui tourne par ailleurs sous cette identité.
+D'où le `DynamicUser=` ou le `User=` dédié de l'unité : une identité qui ne fait
+que ça, et que personne n'emprunte.
+
+### Sauvegarde
+
+**`pb_data` reste la seule chose à conserver** — ici, le répertoire désigné par
+`--dir`. La procédure ne change pas d'un mode à l'autre, et elle est écrite une
+seule fois : voir
+[« Sauvegarde et restauration »](#sauvegarde-et-restauration).
+
+Ce qui disparaît en mode binaire, c'est toute l'histoire des droits de volume et
+des *bind mounts* : il n'y a plus d'UID 65532 à faire correspondre, seulement un
+répertoire appartenant au compte du service.
+
+Ce qui ne change pas, en revanche : **pas de copie à chaud**. Une copie de
+fichiers prise pendant que le serveur tourne donne une base corrompue, en mode
+binaire exactement comme en Docker.
+
+### Mettre à jour
+
+Aucun `docker compose pull` ici, et pour une raison qu'il vaut mieux dire
+franchement : **il n'existe aucun binaire publié**. `publier.yml` ne produit que
+l'image `ghcr.io` et son attestation de provenance. La mise à jour consiste donc
+à refaire soi-même ce qu'on a fait la première fois :
+
+```sh
+cd Patachoo
+git fetch --tags
+git checkout v0.2.0
+CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=v0.2.0" -o patachoo ./cmd/patachoo
+sudo install -m 0755 patachoo /usr/local/bin/patachoo
+sudo systemctl restart patachoo
+```
+
+Les données restent où elles sont ; seul l'exécutable est remplacé. Sauvegarder
+`pb_data` avant une montée de version reste la précaution d'usage.
+
+**Ce que la vérification devient ici.** En Docker, on vérifie une empreinte et
+une attestation — « cette image vient bien de ce dépôt ». En mode binaire, on ne
+vérifie rien de tel, puisqu'on ne télécharge rien : on **compile soi-même depuis
+un tag du dépôt**, et c'est la confiance accordée au dépôt qui remplace celle
+accordée au registre. Ce n'est pas moins sûr, c'est déplacé ailleurs.
+
+### Exposer hors de chez soi
+
+Rien ne change. `/_/` et `/api/` répondent sur **le même port que le site**,
+comme en Docker, et tout ce que dit
+[« Exposer Patachoo hors de chez soi »](#exposer-patachoo-hors-de-chez-soi)
+s'applique à l'identique — le proxy inverse, le TLS, et ce que le proxy doit
+fermer au passage. L'absence de conteneur ne change ni ce qui est publié, ni ce
+qu'il faut filtrer devant.
+
+Une seule différence de forme : il n'y a plus de `ports:` à écrire dans un
+compose pour restreindre la publication. C'est `--http` qui joue ce rôle, et
+`--http=127.0.0.1:8090` est l'équivalent exact de `"127.0.0.1:8090:8090"`.
+
 ## Exposer Patachoo hors de chez soi
 
 Tant que Patachoo ne sert que la maison, le `docker-compose.yml` livré convient
