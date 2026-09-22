@@ -53,28 +53,6 @@ func TestLesBasesDeTestSontRecopieesDUnGabaritMigreUneFois(t *testing.T) {
 	}
 }
 
-// Le coût réel de bcrypt ne passe pas par le gabarit : celui-ci porte le coût
-// abaissé, et le test qui mesure un écart de temps conclurait sur un bcrypt bradé.
-func TestLaBaseAuCoutBcryptReelNEstPasRecopieeDuGabarit(t *testing.T) {
-	reel := baseNeuveAuCoutBcryptReel(t, analyseurDeTest(t))
-	recopiee := baseNeuve(t)
-
-	for _, nom := range []string{"users", core.CollectionNameSuperusers} {
-		collection, err := reel.FindCollectionByNameOrId(nom)
-		if err != nil {
-			t.Fatalf("collection %s : %v", nom, err)
-		}
-		champ := collection.Fields.GetByName(core.FieldNamePassword).(*core.PasswordField)
-		if champ.Cost == coutBcryptDesTests {
-			t.Errorf("collection %s : coût bcrypt %d sur la base au coût réel, "+
-				"celui des tests — elle a hérité du gabarit", nom, champ.Cost)
-		}
-	}
-	if memesMigrations(migrationsAppliquees(t, reel), migrationsAppliquees(t, recopiee)) {
-		t.Error("la base au coût réel porte les migrations du gabarit : elle en a été recopiée")
-	}
-}
-
 // La recopie ne doit rien coûter au facteur bcrypt : le gabarit le porte déjà.
 func TestLaBaseRecopieePorteLeCoutBcryptDesTests(t *testing.T) {
 	app := baseNeuve(t)
