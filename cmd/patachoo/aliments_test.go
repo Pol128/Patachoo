@@ -141,19 +141,18 @@ func formeSansAliment(brut string, occurrences int) formeDeTest {
 func annotationDeGroupe(t *testing.T, app core.App, passe *core.Record, aliment string) {
 	t.Helper()
 
-	empreinte, err := empreinteDuGroupe(app, passe.Id, aliment)
-	if err != nil {
-		t.Fatalf("empreinte du groupe %q : %v", aliment, err)
-	}
-
 	verdicts, err := verdictsDepuisSaisie(app, "capture trop")
 	if err != nil {
 		t.Fatalf("mot de verdict : %v", err)
 	}
 
+	// Le mot est tout ce qui distingue cette annotation de la précédente : la
+	// clé et l'empreinte sont les mêmes. Sans cela, le test de la note sans
+	// verdict passerait pour la mauvaise raison — une empreinte absente
+	// suffirait à ne pas trancher, et le filtre pourrait ignorer les mots sans
+	// que rien ne rougisse.
 	annotation := annotationDeGroupeSansVerdict(t, app, passe, aliment)
 	annotation.Set("verdicts", []string{verdicts[0].Id})
-	annotation.Set("reading_digest", empreinte)
 	if err := app.Save(annotation); err != nil {
 		t.Fatalf("verdict sur %q : %v", aliment, err)
 	}
@@ -161,8 +160,16 @@ func annotationDeGroupe(t *testing.T, app core.App, passe *core.Record, aliment 
 
 // annotationDeGroupeSansVerdict pose la même annotation, mots en moins : une
 // remarque déposée sans trancher.
+//
+// L'empreinte de la lecture jugée y est, comme sur l'autre : ce qui les sépare
+// doit être le mot, et rien d'autre.
 func annotationDeGroupeSansVerdict(t *testing.T, app core.App, passe *core.Record, aliment string) *core.Record {
 	t.Helper()
+
+	empreinte, err := empreinteDuGroupe(app, passe.Id, aliment)
+	if err != nil {
+		t.Fatalf("empreinte du groupe %q : %v", aliment, err)
+	}
 
 	collection, err := app.FindCollectionByNameOrId("analyses_annotations")
 	if err != nil {
@@ -173,6 +180,7 @@ func annotationDeGroupeSansVerdict(t *testing.T, app core.App, passe *core.Recor
 	annotation.Set("food", aliment)
 	annotation.Set("shareable_note", "vu")
 	annotation.Set("engine_version", passe.GetString("engine_version"))
+	annotation.Set("reading_digest", empreinte)
 	if err := app.Save(annotation); err != nil {
 		t.Fatalf("écriture de l'annotation sur %q : %v", aliment, err)
 	}
