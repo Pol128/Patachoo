@@ -253,6 +253,63 @@ func TestChaqueLigneMontreLaLectureChampAChamp(t *testing.T) {
 	}
 }
 
+// --- Ce que la fiche dit en propre -------------------------------------------
+
+// La fiche porte trois choses que la liste ne montre pas : le motif du parser
+// qui a lu la ligne, le poids de la forme dans le corpus, et la cellule de
+// catégorie — celle du lexique, ou la mention qui prend sa place quand rien
+// n'a été reconnu.
+//
+// Le motif répond à « pourquoi cette lecture-là » : c'est la règle du moteur
+// qui a attrapé la ligne, et la relire est la moitié du travail quand on
+// cherche d'où sort un aliment bizarre. Le poids dit combien de fiches une
+// lecture fausse abîme.
+func TestLaFicheDitLeMotifLePoidsEtLaCategorieOuSonAbsence(t *testing.T) {
+	const nonResolue = "1 pointe de couteau de garam masala"
+	const resolue = "2 oignons"
+
+	app, mux, cookie := atelierDeLEtabli(t)
+	passe := passeTermineeDeTest(t, app,
+		formeDeTest{
+			brut: nonResolue, aliment: "garam masala", occurrences: 37,
+			motif: "quantite_unite_partitif", signaux: []string{SignalNonResolu},
+			lecture: lue(1, "pointe de couteau", "de", "garam masala", ""),
+		},
+		formeDeTest{
+			brut: resolue, aliment: "oignon", resolu: true, categorie: "Légumes",
+			occurrences: 4, motif: "quantite_aliment",
+			lecture: lue(2, "", "", "oignon", ""),
+		})
+
+	t.Run("non résolue", func(t *testing.T) {
+		fiche := laFiche(t, mux, cookie, laForme(t, app, passe, nonResolue))
+
+		for nom, attendu := range map[string]string{
+			"le motif du parser":      `<dd class="motif">quantite_unite_partitif</dd>`,
+			"le poids dans le corpus": "Vue 37 fois",
+			"la non-résolution":       `<dd class="categorie">aliment non résolu par le lexique</dd>`,
+		} {
+			if !strings.Contains(fiche, attendu) {
+				t.Errorf("la fiche ne porte pas %s (%q) — corps :\n%s", nom, attendu, fiche)
+			}
+		}
+	})
+
+	// La catégorie du lexique et la mention de non-résolution sont la même
+	// cellule : sans ce second cas, retirer ce que « resolved » décide
+	// laisserait la suite verte.
+	t.Run("résolue", func(t *testing.T) {
+		fiche := laFiche(t, mux, cookie, laForme(t, app, passe, resolue))
+
+		if !strings.Contains(fiche, `<dd class="categorie">Légumes</dd>`) {
+			t.Errorf("la fiche d'une forme résolue ne porte pas sa catégorie — corps :\n%s", fiche)
+		}
+		if strings.Contains(fiche, "aliment non résolu") {
+			t.Errorf("la fiche d'une forme résolue la dit non résolue — corps :\n%s", fiche)
+		}
+	})
+}
+
 // --- Le va-et-vient entre le groupe et le détail -----------------------------
 
 // Depuis le groupe, au détail : la vue agrégée porte, sur chaque groupe, le
@@ -444,6 +501,71 @@ func TestUneRechercheSansResultatLeDit(t *testing.T) {
 	}
 	if !strings.Contains(corps, `class="absence"`) {
 		t.Errorf("la page ne dit pas que la recherche n'a rien ramené — corps :\n%s", corps)
+	}
+}
+
+// formulaireDeRecherche reconnaît le formulaire de la liste : son action, et
+// tout ce qu'il contient.
+var formulaireDeRecherche = regexp.MustCompile(
+	`(?s)<form class="recherche" method="get" action="([^"]*)"[^>]*>(.*?)</form>`)
+
+// champCacheDuFormulaire reconnaît un champ caché, tel que le gabarit l'écrit.
+var champCacheDuFormulaire = regexp.MustCompile(
+	`<input type="hidden" name="([^"]*)" value="([^"]*)">`)
+
+// rechercheDepuis rejoue la recherche telle que la page la soumettrait :
+// l'action et les champs cachés sont relus dans le corps rendu, et le terme
+// s'y ajoute.
+//
+// Relus, et non recomposés : un champ caché retiré du gabarit disparaît alors
+// de la requête, exactement comme il disparaîtrait d'un navigateur — ce qui
+// est le seul moyen de faire dire à un test que ces champs servent à quelque
+// chose.
+func rechercheDepuis(t *testing.T, corps, terme string) string {
+	t.Helper()
+
+	trouve := formulaireDeRecherche.FindStringSubmatch(corps)
+	if trouve == nil {
+		t.Fatalf("aucun formulaire de recherche dans la page — corps :\n%s", corps)
+	}
+
+	valeurs := url.Values{}
+	for _, champ := range champCacheDuFormulaire.FindAllStringSubmatch(trouve[2], -1) {
+		valeurs.Set(html.UnescapeString(champ[1]), html.UnescapeString(champ[2]))
+	}
+	valeurs.Set(parametreDuTerme, terme)
+
+	return html.UnescapeString(trouve[1]) + "?" + valeurs.Encode()
+}
+
+// Chercher depuis un groupe cherche dans le groupe, et dans la passe d'où l'on
+// vient : le filtre et l'analyse partent avec le terme.
+//
+// C'est le parcours central de la page — descendre d'un groupe, puis chercher
+// dedans — et il se joue par le formulaire tel que la page l'écrit. Les deux
+// jeux posés ici sont ceux qui apparaîtraient si l'un des deux critères se
+// perdait en route : une autre forme de la même passe si le filtre tombe, une
+// forme de la passe la plus récente si l'analyse tombe. Dans les deux cas le
+// résultat serait plausible, et c'est pourquoi il faut un test.
+func TestChercherDepuisUnGroupeGardeLeFiltreEtLaPasse(t *testing.T) {
+	app, mux, cookie := atelierDeLEtabli(t)
+
+	ancienne := passeTermineeDeTest(t, app,
+		formeResolue("1 feuille de laurier", "feuille de laurier", "Épices", 400, SignalMotsPerdus),
+		formeResolue("2 feuilles de laurier", "feuille de laurier", "Épices", 40, SignalMotsPerdus),
+		formeResolue("laurier moulu", "poudre de laurier", "Épices", 4, SignalMotsPerdus))
+	recule(t, app, ancienne, "2026-09-18 10:00:00.000Z")
+
+	passeTermineeDeTest(t, app,
+		formeResolue("3 feuilles de laurier", "feuille de laurier", "Épices", 7, SignalMotsPerdus))
+
+	groupe := laPageA(t, mux, cookie, lienDesFormesDuGroupe(ancienne.Id, "feuille de laurier"))
+	cherchee := laPageA(t, mux, cookie, rechercheDepuis(t, groupe, "laurier"))
+
+	attendu := []string{"1 feuille de laurier", "2 feuilles de laurier"}
+	if bruts := brutsAffiches(cherchee); strings.Join(bruts, "|") != strings.Join(attendu, "|") {
+		t.Errorf("chercher « laurier » depuis le groupe ramène %v, attendu %v — corps :\n%s",
+			bruts, attendu, cherchee)
 	}
 }
 
