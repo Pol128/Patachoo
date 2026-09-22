@@ -1,0 +1,38 @@
+<h1>Les formes lues</h1>
+{{if .SansAnalyse}}
+<p class="absence">Aucune analyse n'a encore été menée à son terme sur cette instance. <a href="{{.LienDuLancement}}">Lancez-en une depuis l'établi</a>.</p>
+{{else}}
+<p class="passe">Analyse du {{.Date}}. <a href="{{.LienDeLaVueAgregee}}">Retour aux aliments</a></p>
+{{/* Les critères partent avec la recherche, sinon taper une lettre les
+     annulerait. Des champs cachés plutôt que les valeurs dans l'action : ils
+     suivent le formulaire sans JavaScript, qui est le seul chemin de cette
+     page. */}}
+<form class="recherche" method="get" action="{{.LienDesFormes}}" role="search">
+{{if .Analyse}}<input type="hidden" name="analyse" value="{{.Analyse}}">{{end}}
+{{if .Filtre}}<input type="hidden" name="aliment" value="{{.Aliment}}">{{end}}
+<label for="q">Chercher une forme</label>
+<input type="search" id="q" name="q" value="{{.Terme}}" placeholder="ligne brute ou aliment">
+<button type="submit">Chercher</button>
+</form>
+{{if .Filtre}}<p class="bascule">Les formes rangées sous {{if .Aliment}}« {{.Aliment}} »{{else}}aucun aliment{{end}}. <a href="{{.SansFiltre}}">Toutes les formes de la passe</a>.</p>{{end}}
+{{if .Formes}}
+{{/* Les occurrences sont à droite, comme un poids : ce qui doit attirer l'œil
+     est la lecture, pas le nombre de fois qu'une ligne a été vue. */}}
+<table class="formes-lues">
+<thead><tr><th scope="col">Ligne</th><th scope="col">Quantité</th><th scope="col">Unité</th><th scope="col">Partitif</th><th scope="col">Aliment lu</th><th scope="col">Note</th><th scope="col">Facultatif</th><th scope="col">Rangée sous</th><th scope="col">Signaux</th><th scope="col">Occurrences</th></tr></thead>
+<tbody>
+{{range .Formes}}<tr class="forme"><td class="brut"><a href="{{.Lien}}">{{.Brut}}</a></td><td class="quantite">{{.Lecture.Quantite}}</td><td class="unite">{{.Lecture.Unite}}</td><td class="partitif">{{.Lecture.Partitif}}</td><td class="aliment-lu">{{.Lecture.Aliment}}</td><td class="note">{{.Lecture.Note}}</td><td class="facultatif">{{if .Lecture.Optionnel}}oui{{end}}</td><td class="rangement"><a href="{{.LienDuGroupe}}">{{if .Groupe}}{{.Groupe}}{{else}}sans aliment{{end}}</a></td><td class="signaux">{{range .Signaux}}<span class="signal">{{.}}</span> {{end}}</td><td class="occurrences">{{.Occurrences}}</td></tr>
+{{end}}</tbody>
+</table>
+{{else if .Terme}}
+<p class="absence">Aucune forme ne correspond à « {{.Terme}} ».</p>
+{{else}}
+<p class="absence">Aucune forme sur cette page.</p>
+{{end}}
+{{if or .Precedente .Suivante}}
+<nav class="pagination">
+{{if .Precedente}}<a rel="prev" href="{{.Precedente}}">← Précédent</a>{{end}}
+{{if .Suivante}}<a rel="next" href="{{.Suivante}}">Suivant →</a>{{end}}
+</nav>
+{{end}}
+{{end}}

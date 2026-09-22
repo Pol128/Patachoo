@@ -342,3 +342,57 @@ func TestChaqueClasseDesGabaritsAUneRegleDeStyle(t *testing.T) {
 		}
 	}
 }
+
+// Les classes de la fiche recette ne sont stylisées qu'à un seul endroit de la
+// feuille. La feuille est commune à tout le site et la cascade ne demande la
+// permission à personne : une règle nue posée six cents lignes plus bas, pour
+// une page qui n'a rien à voir, repeint la fiche sans qu'aucune erreur ne le
+// dise — la page s'affiche, la CI reste verte, et l'écart ne se remarque qu'à
+// l'œil.
+//
+// Une règle qui vise une autre page se porte par le conteneur de cette
+// page-là, jamais par une classe nue que la fiche recette porte déjà.
+func TestAucuneRegleNeRepeintLaFicheRecette(t *testing.T) {
+	feuille, err := statique.ReadFile("statique/patachoo.css")
+	if err != nil {
+		t.Fatalf("lecture de la feuille de style : %v", err)
+	}
+
+	gabarit, err := vues.ReadFile("vues/recette-corps.html")
+	if err != nil {
+		t.Fatalf("lecture du gabarit de la fiche recette : %v", err)
+	}
+
+	attributDeClasse := regexp.MustCompile(`class="([^"]*)"`)
+	dejaVues := map[string]bool{}
+	for _, attribut := range attributDeClasse.FindAllStringSubmatch(string(gabarit), -1) {
+		for _, classe := range strings.Fields(attribut[1]) {
+			if dejaVues[classe] {
+				continue
+			}
+			dejaVues[classe] = true
+
+			if compte := declarationsNues(string(feuille), classe); compte > 1 {
+				t.Errorf("la classe %q de la fiche recette est stylisée par %d règles nues ; une règle qui vise une autre page se porte par le conteneur de cette page", classe, compte)
+			}
+		}
+	}
+}
+
+// declarationsNues compte les règles de la feuille dont un sélecteur est
+// exactement « .classe » — ni descendant, ni combiné à autre chose. Ce sont
+// celles-là, et elles seules, qui s'appliquent partout où la classe est posée.
+func declarationsNues(feuille, classe string) int {
+	sansCommentaires := regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAllString(feuille, "")
+
+	compte := 0
+	for _, regle := range regexp.MustCompile(`([^{}]+)\{`).FindAllStringSubmatch(sansCommentaires, -1) {
+		for _, selecteur := range strings.Split(regle[1], ",") {
+			if strings.TrimSpace(selecteur) == "."+classe {
+				compte++
+			}
+		}
+	}
+
+	return compte
+}

@@ -174,6 +174,11 @@ type groupeDAliment struct {
 	Formes      int    `db:"formes_avalees"`
 
 	Signaux []string `db:"-"`
+
+	// Detail descend sur les formes qui ont produit le groupe (PATA-126).
+	// Composé ici et non dans le gabarit : l'adresse est celle de l'autre
+	// écran, et elle s'écrit dans un seul endroit du dépôt.
+	Detail string `db:"-"`
 }
 
 // lienDeTri est une entrée de la barre des tris : de quoi l'afficher, y aller,
@@ -260,6 +265,14 @@ func pageDesAliments(e *core.RequestEvent) error {
 
 	if err := poseLesSignaux(e.App, passe.Id, groupes); err != nil {
 		return err
+	}
+
+	// Le lien du détail porte la passe affichée, et non le paramètre tel
+	// qu'il a été lu : descendre d'un groupe ne doit pas pouvoir changer
+	// d'analyse en chemin parce qu'une passe s'est terminée entre l'affichage
+	// et le clic.
+	for i := range groupes {
+		groupes[i].Detail = lienDesFormesDuGroupe(passe.Id, groupes[i].Aliment)
 	}
 
 	donnees := &donneesAliments{

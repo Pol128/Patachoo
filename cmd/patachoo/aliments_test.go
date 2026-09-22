@@ -33,6 +33,13 @@ type formeDeTest struct {
 	categorie   string
 	occurrences int
 	signaux     []string
+
+	// Le motif et la lecture champ à champ ne concernent que la page détail
+	// (PATA-126) : la vue agrégée ne les montre pas, et ses fixtures les
+	// laissent vides. Facultatifs, donc — une colonne non posée vaut ce que le
+	// schéma en dit, et non ce qu'un test aurait dû écrire.
+	motif   string
+	lecture *lectureDUneForme
 }
 
 // passeTermineeDeTest pose une analyse close et les formes qu'elle a données.
@@ -69,6 +76,10 @@ func passeDeTest(t *testing.T, app core.App, statut string, formes ...formeDeTes
 		enregistrement.Set("food", forme.aliment)
 		enregistrement.Set("resolved", forme.resolu)
 		enregistrement.Set("category", forme.categorie)
+		enregistrement.Set("pattern", forme.motif)
+		if forme.lecture != nil {
+			enregistrement.Set("reading", *forme.lecture)
+		}
 		// Jamais nil : la colonne part en JSON et json_array_length veut un
 		// tableau des deux côtés, exactement comme signaux() le promet.
 		signaux := forme.signaux
@@ -190,7 +201,8 @@ var ligneDeGroupe = regexp.MustCompile(
 		`<td class="categorie">([^<]*)</td>` +
 		`<td class="signaux">(.*?)</td>` +
 		`<td class="formes">([^<]*)</td>` +
-		`<td class="occurrences">([^<]*)</td></tr>`)
+		`<td class="occurrences">([^<]*)</td>` +
+		`<td class="detail"><a href="[^"]*">[^<]*</a></td></tr>`)
 
 // groupeAffiche est ce qu'une ligne d'écran montre.
 type groupeAffiche struct {
