@@ -67,6 +67,15 @@ func lue(quantite float64, unite, partitif, aliment, note string) *lectureDUneFo
 	}
 }
 
+// lueFacultative est la même lecture, marquée facultative. Une variante plutôt
+// qu'un sixième paramètre à lue : le cas est rare, et six paramètres positionnels
+// se lisent mal sur les appels qui ne s'en servent pas.
+func lueFacultative(quantite float64, unite, partitif, aliment, note string) *lectureDUneForme {
+	lecture := lue(quantite, unite, partitif, aliment, note)
+	lecture.Optionnel = true
+	return lecture
+}
+
 // --- Lecture de la liste -----------------------------------------------------
 
 // ligneDeForme reconnaît une ligne de la liste, et chacune de ses cellules.
@@ -253,6 +262,83 @@ func TestChaqueLigneMontreLaLectureChampAChamp(t *testing.T) {
 	}
 }
 
+// Les signaux sont dits en français, sur la liste comme la vue agrégée les
+// dit : « mots_perdus » est une clé de schéma, pas un mot qu'on montre à
+// l'écran. C'est signalAffiche qui fait la traduction, et la liste la seule
+// des deux pages à la faire ligne à ligne.
+func TestLaListeDitLesSignauxEnFrancais(t *testing.T) {
+	app, mux, cookie := atelierDeLEtabli(t)
+	passeTermineeDeTest(t, app,
+		formeResolue("2 oignons", "oignon", "Légumes", 30, SignalMotsPerdus))
+
+	corps := laListeDesFormes(t, mux, cookie, nil)
+	lues := formesAffichees(corps)
+	if len(lues) != 1 {
+		t.Fatalf("%d ligne(s) affichée(s), attendu 1 — corps :\n%s", len(lues), corps)
+	}
+
+	if !strings.Contains(lues[0].Signaux, "mots perdus") {
+		t.Errorf("la cellule des signaux porte %q, attendu « mots perdus » — corps :\n%s",
+			lues[0].Signaux, corps)
+	}
+	// Et jamais la clé enregistrée : une cellule qui la recopierait telle
+	// quelle passerait le contrôle ci-dessus si on l'écrivait plus large.
+	if strings.Contains(lues[0].Signaux, SignalMotsPerdus) {
+		t.Errorf("la cellule des signaux montre la clé de schéma %q : %q",
+			SignalMotsPerdus, lues[0].Signaux)
+	}
+}
+
+// Le caractère facultatif est un champ que le parser lit — « (facultatif) » sur
+// une ligne d'ingrédient — et les deux écrans le montrent, chacun à sa façon :
+// la liste laisse la cellule vide quand la ligne ne l'est pas, la fiche dit
+// « non », parce qu'une définition sans valeur se lirait comme une panne.
+//
+// Les deux cas, facultative et obligatoire, sont posés ensemble : sans le
+// second, un écran qui dirait « oui » de toute ligne passerait le contrôle.
+func TestLeCaractereFacultatifSeLitSurLaListeEtSurLaFiche(t *testing.T) {
+	const facultative = "1 pincée de piment, facultatif"
+	const obligatoire = "2 oignons"
+
+	app, mux, cookie := atelierDeLEtabli(t)
+	passe := passeTermineeDeTest(t, app,
+		formeDeTest{
+			brut: facultative, aliment: "piment", resolu: true, categorie: "Épices",
+			occurrences: 9, signaux: []string{SignalMotsPerdus},
+			lecture: lueFacultative(1, "pincée", "de", "piment", ""),
+		},
+		formeDeTest{
+			brut: obligatoire, aliment: "oignon", resolu: true, categorie: "Légumes",
+			occurrences: 4, signaux: []string{SignalMotsPerdus},
+			lecture: lue(2, "", "", "oignon", ""),
+		})
+
+	t.Run("la liste", func(t *testing.T) {
+		corps := laListeDesFormes(t, mux, cookie, nil)
+
+		cellules := map[string]string{}
+		for _, forme := range formesAffichees(corps) {
+			cellules[forme.Brut] = forme.Facultatif
+		}
+		for brut, attendu := range map[string]string{facultative: "oui", obligatoire: ""} {
+			if cellules[brut] != attendu {
+				t.Errorf("la cellule « Facultatif » de %q porte %q, attendu %q — corps :\n%s",
+					brut, cellules[brut], attendu, corps)
+			}
+		}
+	})
+
+	t.Run("la fiche", func(t *testing.T) {
+		for brut, attendu := range map[string]string{facultative: "oui", obligatoire: "non"} {
+			fiche := laFiche(t, mux, cookie, laForme(t, app, passe, brut))
+			ligne := `<dd class="facultatif">` + attendu + `</dd>`
+			if !strings.Contains(fiche, ligne) {
+				t.Errorf("la fiche de %q ne porte pas %q — corps :\n%s", brut, ligne, fiche)
+			}
+		}
+	})
+}
+
 // --- Ce que la fiche dit en propre -------------------------------------------
 
 // La fiche porte trois choses que la liste ne montre pas : le motif du parser
@@ -263,7 +349,7 @@ func TestChaqueLigneMontreLaLectureChampAChamp(t *testing.T) {
 // Le motif répond à « pourquoi cette lecture-là » : c'est la règle du moteur
 // qui a attrapé la ligne, et la relire est la moitié du travail quand on
 // cherche d'où sort un aliment bizarre. Le poids dit combien de fiches une
-// lecture fausse abîme.
+// lecture fausse abîme, et porte avec lui les signaux de la forme.
 func TestLaFicheDitLeMotifLePoidsEtLaCategorieOuSonAbsence(t *testing.T) {
 	const nonResolue = "1 pointe de couteau de garam masala"
 	const resolue = "2 oignons"
@@ -292,6 +378,15 @@ func TestLaFicheDitLeMotifLePoidsEtLaCategorieOuSonAbsence(t *testing.T) {
 			if !strings.Contains(fiche, attendu) {
 				t.Errorf("la fiche ne porte pas %s (%q) — corps :\n%s", nom, attendu, fiche)
 			}
+		}
+
+		// Les signaux accompagnent le poids, et en français comme partout
+		// ailleurs. Le contrôle est borné au bloc du poids : « non résolu » nu
+		// se lirait aussi dans la cellule de catégorie, qui est une autre
+		// sortie et porte déjà son propre contrôle ci-dessus.
+		poids := entreBalises(fiche, `<p class="poids">`, "</p>")
+		if !strings.Contains(poids, `<span class="signal">non résolu</span>`) {
+			t.Errorf("le bloc du poids ne porte pas le signal « non résolu » : %q", poids)
 		}
 	})
 
@@ -672,44 +767,51 @@ func TestUneLigneBruteContenantDuBalisageEstAfficheeLitteralement(t *testing.T) 
 	}
 }
 
-// Le corpus n'est pas la seule entrée étrangère de la page : le terme et la
-// clé du groupe viennent de la chaîne de requête, donc de n'importe qui, et la
-// page les réaffiche à quatre endroits. Le carnet porte déjà le même garde-fou
-// sur sa propre recherche — TestLeChampDeRechercheEchappeLeTerme et
-// TestLeMessageDAbsenceEchappeLeTerme, dans recettes_test.go.
+// Le corpus n'est pas la seule entrée étrangère de la page : le terme, la clé
+// du groupe et l'identifiant de la passe viennent de la chaîne de requête,
+// donc de n'importe qui, et la page les réaffiche à cinq endroits. Le carnet
+// porte déjà le même garde-fou sur sa propre recherche —
+// TestLeChampDeRechercheEchappeLeTerme et TestLeMessageDAbsenceEchappeLeTerme,
+// dans recettes_test.go.
 //
-// Rien n'est ouvert aujourd'hui : html/template échappe les quatre. C'est le
+// Rien n'est ouvert aujourd'hui : html/template échappe les cinq. C'est le
 // test qui manquait, pas la protection — et il rougirait le jour où l'un des
-// quatre passerait en template.HTML.
+// cinq passerait en template.HTML.
 func TestLesParametresReflechisDeLaListeSontEchappes(t *testing.T) {
 	const terme = `<script>alert("xss")</script>`
 	const aliment = `"><script>alert('groupe')</script>`
+	const analyse = `"><script>alert('passe')</script>`
 
 	app, mux, cookie := atelierDeLEtabli(t)
 	passeTermineeDeTest(t, app,
 		formeResolue("2 oignons", "oignon", "Légumes", 30, SignalMotsPerdus))
 
-	// Une clé de groupe que rien ne porte et un terme que rien ne contient :
-	// la page rend donc ses quatre réflexions d'un coup — les deux champs du
-	// formulaire, le bandeau du groupe et le message d'absence.
+	// Une clé de groupe que rien ne porte, un terme que rien ne contient et un
+	// identifiant de passe que rien ne désigne : la passe affichée retombe sur
+	// la dernière terminée, et la page rend ses cinq réflexions d'un coup —
+	// les trois champs du formulaire, le bandeau du groupe et le message
+	// d'absence.
 	corps := laListeDesFormes(t, mux, cookie, url.Values{
+		parametreDeLAnalyse: {analyse},
 		parametreDeLAliment: {aliment},
 		parametreDuTerme:    {terme},
 	})
 
 	// Les fragments sont ceux des charges, et non « <script> » nu : la mise en
 	// page porte sa propre balise de script.
-	exigeSansAucun(t, corps, terme, aliment,
-		`<script>alert(`, `alert("xss")</script>`, `alert('groupe')</script>`)
+	exigeSansAucun(t, corps, terme, aliment, analyse,
+		`<script>alert(`, `alert("xss")</script>`,
+		`alert('groupe')</script>`, `alert('passe')</script>`)
 
 	for nom, cas := range map[string]struct {
 		extrait string
 		charge  string
 	}{
-		"le champ de recherche":    {entreBalises(corps, `name="q" value="`, `"`), terme},
-		"le champ caché du groupe": {entreBalises(corps, `name="aliment" value="`, `"`), aliment},
-		"le bandeau de bascule":    {entreBalises(corps, `<p class="bascule">`, "</p>"), aliment},
-		"le message d'absence":     {entreBalises(corps, `<p class="absence">`, "</p>"), terme},
+		"le champ de recherche":       {entreBalises(corps, `name="q" value="`, `"`), terme},
+		"le champ caché du groupe":    {entreBalises(corps, `name="aliment" value="`, `"`), aliment},
+		"le champ caché de l'analyse": {entreBalises(corps, `name="analyse" value="`, `"`), analyse},
+		"le bandeau de bascule":       {entreBalises(corps, `<p class="bascule">`, "</p>"), aliment},
+		"le message d'absence":        {entreBalises(corps, `<p class="absence">`, "</p>"), terme},
 	} {
 		t.Run(nom, func(t *testing.T) {
 			if cas.extrait == "" {
