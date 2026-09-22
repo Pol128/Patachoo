@@ -179,6 +179,15 @@ type groupeDAliment struct {
 	// Composé ici et non dans le gabarit : l'adresse est celle de l'autre
 	// écran, et elle s'écrit dans un seul endroit du dépôt.
 	Detail string `db:"-"`
+
+	// Annoter ouvre le formulaire sur la ligne, et Annotations porte ce qui y
+	// a déjà été posé — « jugé capture-trop sous moteur v0.8 ».
+	Annoter     string               `db:"-"`
+	Annotations []annotationAffichee `db:"-"`
+
+	// Formulaire n'est rempli que par la ligne ouverte en annotation : le
+	// gabarit s'ouvre dessus, et la ligne ordinaire rend ses cellules.
+	Formulaire *formulaireDAnnotation `db:"-"`
 }
 
 // lienDeTri est une entrée de la barre des tris : de quoi l'afficher, y aller,
@@ -224,8 +233,8 @@ type donneesAliments struct {
 // brancheLesAliments pose la vue agrégée, en lecture seule et derrière le
 // droit d'entrer dans l'établi.
 //
-// Un GET et rien d'autre : l'établi lit le carnet, il ne le modifie pas, et
-// l'annotation — la seule écriture de l'établi — est l'affaire de PATA-127.
+// Un GET et rien d'autre : l'écriture de l'annotation a ses propres routes
+// (annotations.go), et la vue ne fait que porter le lien qui les ouvre.
 //
 // La garde est celle des autres écrans, pas une seconde : exigeUnCurateur,
 // qui renvoie le visiteur se connecter et refuse le compte connecté sans le
@@ -247,7 +256,7 @@ func pageDesAliments(e *core.RequestEvent) error {
 			donneesPage:     donneesPage{Titre: "Les aliments — Patachoo"},
 			SansAnalyse:     true,
 			LienDuLancement: cheminDeLEtabli,
-		})
+		}, gabaritsDeLaLigneDUnGroupe...)
 	}
 
 	groupes, err := groupesDuRang(e.App, passe.Id, criteres)
@@ -273,6 +282,13 @@ func pageDesAliments(e *core.RequestEvent) error {
 	// et le clic.
 	for i := range groupes {
 		groupes[i].Detail = lienDesFormesDuGroupe(passe.Id, groupes[i].Aliment)
+		groupes[i].Annoter = lienDAnnotationDUnGroupe(passe.Id, groupes[i].Aliment)
+	}
+
+	// Les verdicts déjà posés, après la borne de la page : la lecture est
+	// bornée aux groupes affichés, comme celle des signaux.
+	if err := poseLesAnnotations(e.App, groupes); err != nil {
+		return err
 	}
 
 	donnees := &donneesAliments{
@@ -292,7 +308,8 @@ func pageDesAliments(e *core.RequestEvent) error {
 		donnees.Suivante = criteres.lien(criteres.Page + 1)
 	}
 
-	return rendre(e, "etabli-aliments.html", "etabli-aliments-corps.html", donnees)
+	return rendre(e, "etabli-aliments.html", "etabli-aliments-corps.html", donnees,
+		gabaritsDeLaLigneDUnGroupe...)
 }
 
 // laPasseAffichee rend l'analyse sur laquelle la vue porte : celle que l'URL
@@ -354,22 +371,24 @@ func groupesDuRang(app core.App, analyse string, criteres criteresDesAliments) (
 		GroupBy("analyses_formes.food")
 
 	if !criteres.Tout {
-		// Ce qui rend un groupe « tranché » : sa clé porte au moins une ligne
-		// dans analyses_annotations. C'est la forme la plus simple, et c'est
-		// PATA-127 qui dira ensuite quel genre d'annotation compte.
+		// Ce qui rend un groupe « tranché » : sa clé porte une annotation qui
+		// pose au moins un mot de verdict, et la lecture qu'elle jugeait n'a
+		// pas bougé depuis. alimentsTranches répond aux deux, et rend la liste
+		// des clés à écarter — voir l'argument qui y est écrit sur le choix de
+		// Go plutôt que d'un NOT EXISTS corrélé.
 		//
-		// Dans le WHERE et non dans le HAVING : le critère ne dépend que de
-		// food, qui est la clé du groupe, et le filtrer ligne à ligne évite de
-		// bâtir des groupes qu'on jette ensuite.
-		//
-		// Le « food != '' » n'est pas un ornement : une annotation de forme —
-		// celles que PATA-127 posera sur une ligne plutôt que sur un groupe —
-		// laisse son propre champ food vide, et sans ce terme elle trancherait
-		// le groupe des aliments vides que le signal aliment_vide désigne.
-		requete = requete.AndWhere(dbx.NewExp(
-			`NOT EXISTS (SELECT 1 FROM analyses_annotations
-			             WHERE analyses_annotations.food = analyses_formes.food
-			               AND analyses_annotations.food != '')`))
+		// Les clés écartées sont bornées par le nombre d'annotations, qui est
+		// humain : la liste ne peut pas grossir avec le corpus.
+		tranches, err := alimentsTranches(app, analyse)
+		if err != nil {
+			return nil, err
+		}
+		if len(tranches) > 0 {
+			// Dans le WHERE et non dans le HAVING : le critère ne dépend que de
+			// food, qui est la clé du groupe, et le filtrer ligne à ligne évite
+			// de bâtir des groupes qu'on jette ensuite.
+			requete = requete.AndWhere(dbx.NotIn("analyses_formes.food", tranches...))
+		}
 
 		// Le signal filtre : on ne garde que les groupes portant au moins un
 		// signal — ce qui évacue sel et poivre tout seul. Dans le HAVING,

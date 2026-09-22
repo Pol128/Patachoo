@@ -58,9 +58,11 @@ var champsDeLEtabli = map[string]map[string]string{
 	},
 	"analyses_annotations": {
 		"analysis": core.FieldTypeRelation,
-		"form":     core.FieldTypeRelation,
-		// L'agrégé n'étant pas stocké, une annotation de groupe ne vise pas un
-		// enregistrement : elle vise l'aliment canonique, en texte.
+		// Ni l'agrégé ni la forme ne se visent par un enregistrement : le
+		// groupe se désigne par l'aliment canonique, la forme par sa ligne
+		// brute. Les deux cibles, et le reste du contrat de la collection,
+		// sont énumérés par etabli_annotation_test.go — c'est la migration
+		// corrective de PATA-127 qui les pose.
 		"food": core.FieldTypeText,
 		// Deux champs séparés dès maintenant : l'un cite la ligne brute et ne
 		// quitte jamais l'instance, l'autre porte le verdict sur la règle ou
@@ -350,19 +352,6 @@ func TestSupprimerUnePasseEmporteSesFormesEtSesAnnotations(t *testing.T) {
 	exigeDisparu(t, app, "analyses_annotations", surLeGroupe.Id, "l'annotation de groupe")
 }
 
-func TestSupprimerUneFormeEmporteSesAnnotations(t *testing.T) {
-	app := baseNeuve(t)
-	passe := passeNeuve(t, app)
-	forme := formeNeuve(t, app, passe, "200 g de farine", "farine")
-	annotation := annotationNeuve(t, app, passe, forme, "la ligne citée", "le verdict")
-
-	if err := app.Delete(forme); err != nil {
-		t.Fatalf("suppression de la forme : %v", err)
-	}
-
-	exigeDisparu(t, app, "analyses_annotations", annotation.Id, "l'annotation de la forme")
-}
-
 // Le garde-fou de l'établi : il lit le carnet, il ne peut pas l'abîmer. Une
 // cascade posée dans le mauvais sens sur analyses_formes.recipe ferait
 // disparaître des recettes le jour où on efface une passe.
@@ -505,8 +494,10 @@ func ecritLaForme(app core.App, passe *core.Record, brut, aliment string) error 
 }
 
 // annotationNeuve pose une annotation de forme quand forme est fournie, une
-// annotation de groupe sinon — le groupe n'étant pas un enregistrement, il se
-// désigne par son aliment canonique.
+// annotation de groupe sinon. Aucune des deux ne vise un enregistrement : la
+// forme se désigne par sa ligne brute, le groupe par son aliment canonique —
+// des lignes de analyses_formes appartenant à une passe, une annotation qui
+// les référencerait ne survivrait pas à la suivante.
 func annotationNeuve(t *testing.T, app core.App, passe, forme *core.Record, locale, partageable string) *core.Record {
 	t.Helper()
 
@@ -517,8 +508,7 @@ func annotationNeuve(t *testing.T, app core.App, passe, forme *core.Record, loca
 	annotation := core.NewRecord(collection)
 	annotation.Set("analysis", passe.Id)
 	if forme != nil {
-		annotation.Set("form", forme.Id)
-		annotation.Set("food", forme.GetString("food"))
+		annotation.Set("raw", forme.GetString("raw"))
 	} else {
 		annotation.Set("food", "farine")
 	}

@@ -161,8 +161,18 @@ func rendreAvecStatut(e *core.RequestEvent, statut int, page, fragment string, d
 // suggestions n'en forment pas une — n'a pas non plus d'arbitrage à faire :
 // elle rend son fichier, et rien autour. Ses données ne sont pas celles d'une
 // page, et ne portent donc pas l'utilisateur courant.
-func rendLeBlocSeul(e *core.RequestEvent, bloc string, donnees any) error {
-	rendu, err := registre.LoadFS(vues, "vues/"+bloc).Render(donnees)
+//
+// enPlus nomme les gabarits que le bloc inclut, comme rendre le fait pour une
+// page. Ils sont chargés même quand la branche qui les appelle n'est pas prise :
+// html/template parcourt tout l'arbre pour poser son échappement, et refuse un
+// {{template}} dont le fichier manque, fût-il dans un {{if}} faux.
+func rendLeBlocSeul(e *core.RequestEvent, bloc string, donnees any, enPlus ...string) error {
+	motifs := []string{"vues/" + bloc}
+	for _, gabarit := range enPlus {
+		motifs = append(motifs, "vues/"+gabarit)
+	}
+
+	rendu, err := registre.LoadFS(vues, motifs...).Render(donnees)
 	if err != nil {
 		return err
 	}

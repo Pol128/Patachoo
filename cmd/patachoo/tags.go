@@ -18,6 +18,18 @@ import (
 // créerait des tags qu'aucune recette ne pourrait ensuite référencer.
 const maxTags = 20
 
+// Les deux vocabulaires par mots du produit, et ils ne se mélangent pas.
+//
+// tags est celui du carnet, proposé à tout compte en session.
+// analyses_verdicts est celui de l'établi (PATA-127) : le mécanisme est le
+// même — saisie libre, liste existante proposée en premier, création à la
+// volée, unicité sur le slug —, la collection ne l'est pas. Les confondre
+// ferait remonter « capture-trop » dans les filtres des recettes.
+const (
+	collectionDesTags     = "tags"
+	collectionDesVerdicts = "analyses_verdicts"
+)
+
 // brancheLesHooks accroche nos hooks à l'app — un seul point de branchement,
 // que main() appelle et que les tests appellent à l'identique.
 //
@@ -25,20 +37,29 @@ const maxTags = 20
 // une migration — doit être normalisé lui aussi, et OnServe ne se déclenche
 // que pour le serveur.
 func brancheLesHooks(app core.App, a *analyseur) {
-	app.OnRecordCreate("tags").BindFunc(normaliseLeTag)
-	app.OnRecordUpdate("tags").BindFunc(normaliseLeTag)
+	app.OnRecordCreate(collectionDesTags).BindFunc(normaliseLeMot)
+	app.OnRecordUpdate(collectionDesTags).BindFunc(normaliseLeMot)
+	// Le vocabulaire des verdicts porte la même normalisation, et c'est ce que
+	// l'arbitrage demande : même hook, même unicité sur le slug. Une seconde
+	// règle de normalisation divergerait de celle-ci le jour où l'une des deux
+	// change.
+	app.OnRecordCreate(collectionDesVerdicts).BindFunc(normaliseLeMot)
+	app.OnRecordUpdate(collectionDesVerdicts).BindFunc(normaliseLeMot)
 
 	brancheLIngredient(app, a)
 	brancheLAcces(app)
 }
 
-// normaliseLeTag met le nom en forme et recalcule le slug avant l'écriture.
+// normaliseLeMot met le nom en forme et recalcule le slug avant l'écriture.
+//
+// Un seul hook pour les deux vocabulaires : ce qu'il fait ne dépend pas de la
+// collection, et deux copies finiraient par normaliser différemment.
 //
 // PocketBase déclenche OnRecordCreate avant la validation, qui précède
 // l'écriture : modifier l'enregistrement ici puis appeler e.Next() suffit,
 // et évite d'avoir à normaliser chez chaque appelant — ce qu'on oublierait
 // un jour, précisément là où ça compte.
-func normaliseLeTag(e *core.RecordEvent) error {
+func normaliseLeMot(e *core.RecordEvent) error {
 	saisi := e.Record.GetString("name")
 
 	nom := nomNormalise(saisi)
@@ -46,7 +67,7 @@ func normaliseLeTag(e *core.RecordEvent) error {
 	if slug == "" {
 		// L'index d'unicité n'accepterait un slug vide qu'une fois, et le
 		// message parlerait d'une contrainte SQL plutôt que du champ fautif.
-		return fmt.Errorf("name : %q ne donne aucun tag utilisable", saisi)
+		return fmt.Errorf("name : %q ne donne aucun mot utilisable", saisi)
 	}
 
 	e.Record.Set("name", nom)
@@ -63,14 +84,23 @@ func nomNormalise(nom string) string {
 	return strings.ToLower(strings.Join(strings.Fields(nom), " "))
 }
 
-// tagsDepuisSaisie rend les tags décrits par une saisie libre, en les créant
-// au besoin. C'est le point d'entrée unique du formulaire.
+// tagsDepuisSaisie rend les tags du carnet décrits par une saisie libre, en
+// les créant au besoin. C'est le point d'entrée unique du formulaire.
+func tagsDepuisSaisie(app core.App, saisie string) ([]*core.Record, error) {
+	return motsDepuisSaisie(app, collectionDesTags, maxTags, saisie)
+}
+
+// motsDepuisSaisie rend les mots d'un vocabulaire décrits par une saisie
+// libre, en les créant au besoin.
 //
 // Le hook seul ne peut pas dédupliquer : il normalise un enregistrement, il ne
 // sait pas transformer une création en réutilisation.
 //
-// La virgule sépare, et elle seule : « plat unique » est un tag, pas deux.
-func tagsDepuisSaisie(app core.App, saisie string) ([]*core.Record, error) {
+// La virgule sépare, et elle seule : « plat unique » est un mot, pas deux.
+//
+// La collection et la borne sont des paramètres parce que l'établi tient le
+// sien (PATA-127) : le mécanisme est le même, la collection ne l'est pas.
+func motsDepuisSaisie(app core.App, collection string, borne int, saisie string) ([]*core.Record, error) {
 	type demande struct{ nom, slug string }
 
 	var demandes []demande
@@ -87,17 +117,17 @@ func tagsDepuisSaisie(app core.App, saisie string) ([]*core.Record, error) {
 		demandes = append(demandes, demande{nom: nom, slug: slug})
 	}
 
-	if len(demandes) > maxTags {
-		return nil, fmt.Errorf("%d tags distincts, %d au maximum", len(demandes), maxTags)
+	if len(demandes) > borne {
+		return nil, fmt.Errorf("%d mots distincts, %d au maximum", len(demandes), borne)
 	}
 
 	tags := make([]*core.Record, 0, len(demandes))
 	// La transaction pour la même raison que la borne vérifiée d'abord :
-	// créer les premiers tags puis échouer laisserait des orphelins derrière.
+	// créer les premiers mots puis échouer laisserait des orphelins derrière.
 	err := app.RunInTransaction(func(txApp core.App) error {
-		collection, err := txApp.FindCollectionByNameOrId("tags")
+		vocabulaire, err := txApp.FindCollectionByNameOrId(collection)
 		if err != nil {
-			return fmt.Errorf("collection tags : %w", err)
+			return fmt.Errorf("collection %s : %w", collection, err)
 		}
 
 		trouves := make([]*core.Record, 0, len(demandes))
@@ -105,20 +135,20 @@ func tagsDepuisSaisie(app core.App, saisie string) ([]*core.Record, error) {
 			// La valeur vient de l'utilisateur : elle passe par params,
 			// jamais par concaténation dans le filtre.
 			existant, err := txApp.FindFirstRecordByFilter(
-				"tags", "slug = {:slug}", dbx.Params{"slug": d.slug})
+				collection, "slug = {:slug}", dbx.Params{"slug": d.slug})
 			switch {
 			case err == nil:
 				trouves = append(trouves, existant)
 				continue
 			case !errors.Is(err, sql.ErrNoRows):
-				return fmt.Errorf("recherche du tag %q : %w", d.slug, err)
+				return fmt.Errorf("recherche du mot %q : %w", d.slug, err)
 			}
 
-			// sql.ErrNoRows : le tag n'existe pas encore.
-			nouveau := core.NewRecord(collection)
+			// sql.ErrNoRows : le mot n'existe pas encore.
+			nouveau := core.NewRecord(vocabulaire)
 			nouveau.Set("name", d.nom)
 			if err := txApp.Save(nouveau); err != nil {
-				return fmt.Errorf("création du tag %q : %w", d.nom, err)
+				return fmt.Errorf("création du mot %q : %w", d.nom, err)
 			}
 			trouves = append(trouves, nouveau)
 		}
@@ -139,18 +169,21 @@ func tagsDepuisSaisie(app core.App, saisie string) ([]*core.Record, error) {
 // sans masquer le formulaire ; au-delà, on ne choisit plus, on relit.
 const maxSuggestions = 8
 
-// suggestionDeTag est ce qu'un bouton de suggestion affiche et renvoie : le
+// suggestionDeMot est ce qu'un bouton de suggestion affiche et renvoie : le
 // nom se lit, le slug se poste.
-type suggestionDeTag struct {
+type suggestionDeMot struct {
 	Nom  string
 	Slug string
 }
 
-// saisieDesTags porte le champ et ses suggestions — un seul bloc, rendu par un
+// saisieDeMots porte le champ et ses suggestions — un seul bloc, rendu par un
 // seul fichier, parce que choisir une suggestion re-rend les deux.
-type saisieDesTags struct {
+//
+// La même structure pour les deux vocabulaires : ce que le bloc montre ne
+// dépend pas de la collection interrogée, seul le gabarit change.
+type saisieDeMots struct {
 	Valeur      string
-	Suggestions []suggestionDeTag
+	Suggestions []suggestionDeMot
 
 	// Autofocus n'est posé que sur le bloc re-rendu après un choix : la saisie
 	// doit reprendre là où elle en était. Sur le formulaire à son ouverture,
@@ -158,54 +191,84 @@ type saisieDesTags struct {
 	Autofocus bool
 }
 
+// champDeMots décrit un champ de saisie par mots : le vocabulaire interrogé,
+// le nom sous lequel la saisie est postée, le gabarit du bloc et la route qui
+// le rend.
+//
+// Une description plutôt que deux gestionnaires recopiés : l'établi tient le
+// sien (PATA-127), et ce qui les distingue tient dans ces quatre chaînes.
+type champDeMots struct {
+	collection string
+	champ      string
+	bloc       string
+	chemin     string
+}
+
+// champDesTagsDuCarnet est celui du formulaire de recette.
+var champDesTagsDuCarnet = champDeMots{
+	collection: collectionDesTags,
+	champ:      "tags",
+	bloc:       "tags-saisie.html",
+	chemin:     "/tags/suggestions",
+}
+
 // brancheLesTags pose la route des suggestions.
 //
 // Derrière exigeUneSession comme les autres : la liste des tags révèle le
 // contenu du carnet, et un visiteur n'a pas à la lire.
 func brancheLesTags(routeur *router.Router[*core.RequestEvent]) {
-	routeur.GET("/tags/suggestions", suggestionsDeTags).Bind(exigeUneSession())
+	routeur.GET(champDesTagsDuCarnet.chemin, suggestionsDeMots(champDesTagsDuCarnet)).
+		Bind(exigeUneSession())
 }
 
-// suggestionsDeTags rend le champ de saisie et les tags qu'il propose.
+// suggestionsDeMots rend le champ de saisie et les mots qu'il propose.
 //
 // Deux requêtes arrivent ici, et le paramètre choix les distingue : la frappe,
 // qui demande des suggestions, et le clic sur l'une d'elles, qui demande le
 // champ complété. Le recollage se fait donc côté serveur — c'est ce qui évite
 // d'écrire du JavaScript pour recomposer la saisie dans le navigateur.
-func suggestionsDeTags(e *core.RequestEvent) error {
-	requete := e.Request.URL.Query()
-	saisie := requete.Get("tags")
+func suggestionsDeMots(champ champDeMots) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
+		requete := e.Request.URL.Query()
+		saisie := requete.Get(champ.champ)
 
-	if slug := requete.Get("choix"); slug != "" {
-		choisi, err := e.App.FindFirstRecordByFilter(
-			"tags", "slug = {:slug}", dbx.Params{"slug": slug})
-		switch {
-		case err == nil:
-			saisie = saisieAvecLeChoix(saisie, choisi.GetString("name"))
-		case !errors.Is(err, sql.ErrNoRows):
-			return fmt.Errorf("tag choisi %q : %w", slug, err)
+		if slug := requete.Get("choix"); slug != "" {
+			choisi, err := e.App.FindFirstRecordByFilter(
+				champ.collection, "slug = {:slug}", dbx.Params{"slug": slug})
+			switch {
+			case err == nil:
+				saisie = saisieAvecLeChoix(saisie, choisi.GetString("name"))
+			case !errors.Is(err, sql.ErrNoRows):
+				return fmt.Errorf("mot choisi %q : %w", slug, err)
+			}
+			// sql.ErrNoRows : le slug ne désigne rien — un bouton d'une page
+			// laissée ouverte pendant qu'un tag était fusionné. La saisie
+			// revient telle quelle plutôt qu'amputée de son dernier fragment.
+			return rendLeBlocSeul(e, champ.bloc, saisieDeMots{Valeur: saisie, Autofocus: true})
 		}
-		// sql.ErrNoRows : le slug ne désigne rien — un bouton d'une page
-		// laissée ouverte pendant qu'un tag était fusionné. La saisie revient
-		// telle quelle plutôt qu'amputée de son dernier fragment.
-		return rendLeBlocSeul(e, "tags-saisie.html", saisieDesTags{Valeur: saisie, Autofocus: true})
-	}
 
-	proposees, err := lesSuggestions(e.App, saisie)
-	if err != nil {
-		return err
+		proposees, err := lesSuggestionsDans(e.App, champ.collection, saisie)
+		if err != nil {
+			return err
+		}
+		return rendLeBlocSeul(e, champ.bloc, saisieDeMots{Valeur: saisie, Suggestions: proposees})
 	}
-	return rendLeBlocSeul(e, "tags-saisie.html", saisieDesTags{Valeur: saisie, Suggestions: proposees})
 }
 
-// lesSuggestions rend les tags que le dernier fragment de la saisie appelle.
+// lesSuggestions rend les tags du carnet que le dernier fragment appelle.
+func lesSuggestions(app core.App, saisie string) ([]suggestionDeMot, error) {
+	return lesSuggestionsDans(app, collectionDesTags, saisie)
+}
+
+// lesSuggestionsDans rend les mots d'un vocabulaire que le dernier fragment de
+// la saisie appelle.
 //
 // La recherche porte sur le slug et non sur le nom : le slug est déjà sans
 // accent ni casse, donc « Vég », « vég » et « veg » proposent tous
 // « végétarien », sans rien attendre de l'index de recherche. Effet de bord
 // utile, texte.Slug n'ayant laissé que des lettres ASCII et des chiffres :
 // les jokers « % » et « _ » ne peuvent pas survivre jusqu'au LIKE.
-func lesSuggestions(app core.App, saisie string) ([]suggestionDeTag, error) {
+func lesSuggestionsDans(app core.App, collection, saisie string) ([]suggestionDeMot, error) {
 	fragment := texte.Slug(dernierFragment(saisie))
 	if fragment == "" {
 		// Une saisie vide, ou finie sur une virgule : un bloc sans suggestion,
@@ -221,18 +284,18 @@ func lesSuggestions(app core.App, saisie string) ([]suggestionDeTag, error) {
 	// la requête — et une borne que l'utilisateur écrit n'en est pas une.
 	rangs := min(maxSuggestions+len(dejaSaisis), 2*maxSuggestions)
 	trouves, err := app.FindRecordsByFilter(
-		"tags", "slug ~ {:fragment}", "name",
+		collection, "slug ~ {:fragment}", "name",
 		rangs, 0, dbx.Params{"fragment": fragment})
 	if err != nil {
-		return nil, fmt.Errorf("suggestions de tags pour %q : %w", fragment, err)
+		return nil, fmt.Errorf("suggestions de %s pour %q : %w", collection, fragment, err)
 	}
 
-	proposees := make([]suggestionDeTag, 0, maxSuggestions)
+	proposees := make([]suggestionDeMot, 0, maxSuggestions)
 	for _, tag := range trouves {
 		if dejaSaisis[tag.GetString("slug")] {
 			continue
 		}
-		proposees = append(proposees, suggestionDeTag{
+		proposees = append(proposees, suggestionDeMot{
 			Nom:  tag.GetString("name"),
 			Slug: tag.GetString("slug"),
 		})

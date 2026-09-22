@@ -14,6 +14,7 @@
 <dt>Motif</dt><dd class="motif">{{.Motif}}</dd>
 <dt>Catégorie</dt><dd class="categorie">{{if .Resolu}}{{.Categorie}}{{else}}aliment non résolu par le lexique{{end}}</dd>
 </dl>
+{{with .Annotation}}{{template "etabli-forme-annotation.html" .}}{{end}}
 {{if .AvecProvenance}}
 <h2>D'où elle vient</h2>
 {{if .Provenance}}

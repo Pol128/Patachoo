@@ -1,0 +1,23 @@
+{{/* Le champ de verdict et ses suggestions — le miroir de tags-saisie.html sur
+     l'autre vocabulaire. Deux fichiers et non un seul paramétré : la route est
+     écrite en dur dans les attributs HTMX, comme partout dans le dépôt, et un
+     bloc qui la recevrait en données ne serait plus relisible. Ce qui est
+     partagé est le gestionnaire, pas le gabarit.
+
+     Aucun identifiant ici, et c'est la différence avec tags-saisie.html : la
+     vue agrégée peut ouvrir ce bloc sur plusieurs lignes à la fois, et un
+     identifiant répété vise le premier formulaire de la page — le mot choisi
+     pour un groupe atterrirait dans le formulaire d'un autre. Le bloc se vise
+     donc par rapport à l'élément qui déclenche : la liste qui suit le champ,
+     le bloc qui contient le bouton. Le libellé enveloppe son champ pour la
+     même raison. */}}
+<div class="saisie-des-verdicts">
+<label>Verdict
+<input type="text" name="verdicts" value="{{.Valeur}}"{{if .Autofocus}} autofocus{{end}}
+ hx-get="/etabli/verdicts/suggestions" hx-trigger="keyup changed delay:200ms"
+ hx-target="next .suggestions" hx-select=".suggestions" hx-swap="outerHTML"></label>
+<ul class="suggestions">
+{{range .Suggestions}}<li><button type="button" hx-get="/etabli/verdicts/suggestions?choix={{.Slug}}"
+ hx-include="closest .saisie-des-verdicts" hx-target="closest .saisie-des-verdicts" hx-swap="outerHTML">{{.Nom}}</button></li>
+{{end}}</ul>
+</div>

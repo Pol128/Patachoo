@@ -806,3 +806,86 @@ footer {
 	color: #6b675f;
 	font-size: 0.9rem;
 }
+
+/* L'annotation : le verdict qu'un œil humain dépose, et qu'on garde.
+
+   Les classes sont neuves et aucune n'est portée ailleurs sur le site : la
+   feuille est commune et plate, et une règle nue reprenant un nom déjà employé
+   repeindrait l'autre page sans qu'aucune erreur ne le dise. */
+.annotations {
+	margin: 1.5rem 0;
+}
+
+.annotation-posee {
+	border-left: 3px solid #d8d2c4;
+	padding-left: 0.8rem;
+	margin-bottom: 0.8rem;
+}
+
+/* Le verdict se lit d'un coup d'œil : c'est lui qui dit qu'une cible est
+   tranchée, et sous quel moteur elle l'a été. */
+.verdict {
+	display: inline-block;
+	background: #efe9db;
+	border-radius: 0.2rem;
+	padding: 0.05rem 0.4rem;
+	margin: 0 0.3rem 0.2rem 0;
+	font-size: 0.9rem;
+}
+
+.verdicts {
+	white-space: normal;
+}
+
+/* Les deux champs, et ils ne se ressemblent pas : ce qui pourra partir est
+   affirmatif, ce qui reste ici est en retrait. C'est la seule marque visuelle
+   de la séparation, et elle vaut mieux qu'une légende. */
+.note-partageable {
+	margin: 0.2rem 0;
+}
+
+.note-locale {
+	margin: 0.2rem 0;
+	color: #6b675f;
+	font-size: 0.9rem;
+}
+
+.lecture-attendue {
+	margin: 0.2rem 0;
+	font-size: 0.9rem;
+}
+
+/* Le formulaire, rendu aux deux niveaux. */
+.annotation {
+	display: grid;
+	gap: 0.3rem;
+	margin: 0.8rem 0;
+}
+
+/* Les libellés du formulaire enveloppent leur champ — un identifiant se
+   répéterait d'une ligne ouverte à l'autre : le champ passe sous son texte.
+   Par l'enfant direct, pour laisser la lecture attendue à sa propre grille. */
+.annotation > label,
+.saisie-des-verdicts label {
+	display: grid;
+	gap: 0.2rem;
+}
+
+.annotation-ouverte {
+	background: #faf7f0;
+}
+
+.lecture-attendue-saisie {
+	display: grid;
+	grid-template-columns: max-content 1fr;
+	gap: 0.3rem 0.8rem;
+	align-items: center;
+	border: 1px solid #d8d2c4;
+	padding: 0.5rem 0.8rem;
+}
+
+/* Le bouton qui ouvre le formulaire sur la ligne : discret, la ligne elle-même
+   étant ce qu'on lit. */
+.annoter {
+	font-size: 0.85rem;
+}

@@ -265,6 +265,11 @@ type donneesForme struct {
 
 	LienDeLaListe string
 
+	// Annotation porte la zone de verdict : ce qui a déjà été dit de cette
+	// ligne, et le formulaire pour en dire plus. Le gabarit s'ouvre sur un
+	// {{with}}, comme la fiche recette le fait de ses blocs.
+	Annotation *blocDAnnotationDUneForme
+
 	// AvecProvenance ouvre le bloc, et il reste fermé sur un corpus fourni :
 	// le fichier n'est pas conservé (PATA-124), la passe n'a donc aucune
 	// provenance à relire. Un bloc vide se lirait comme une panne.
@@ -277,10 +282,11 @@ type donneesForme struct {
 // brancheLesFormes pose les deux écrans de détail, en lecture seule et
 // derrière le droit d'entrer dans l'établi.
 //
-// Deux GET et rien d'autre : l'annotation — la seule écriture de l'établi —
-// est l'affaire de PATA-127. La garde est celle des autres écrans, pas une
-// seconde : exigeUnCurateur, qui renvoie le visiteur se connecter et refuse le
-// compte connecté sans le droit.
+// Deux GET et rien d'autre : la seule écriture de l'établi a ses propres
+// routes (annotations.go), et la fiche ne fait que porter le formulaire qui
+// les atteint. La garde est celle des autres écrans, pas une seconde :
+// exigeUnCurateur, qui renvoie le visiteur se connecter et refuse le compte
+// connecté sans le droit.
 func brancheLesFormes(routeur *router.Router[*core.RequestEvent]) {
 	routeur.GET(cheminDesFormesDeLEtabli, pageDesFormes).Bind(exigeUnCurateur())
 	routeur.GET(motifDeLaFicheDUneForme, pageDeLaForme).Bind(exigeUnCurateur())
@@ -485,6 +491,14 @@ func pageDeLaForme(e *core.RequestEvent) error {
 		Borne:         provenancesAffichees,
 	}
 
+	// La zone d'annotation, sur la clé naturelle de la forme : les annotations
+	// posées sur cette ligne, quelle que soit la passe qui l'avait lue, et le
+	// formulaire pour en poser une de plus.
+	donnees.Annotation, err = leBlocDeLaForme(e, passe.Id, donnees.Brut)
+	if err != nil {
+		return err
+	}
+
 	// La provenance ne se relit que sur un corpus venu de la base de
 	// l'instance. Un corpus fourni n'en a aucune — pas même un numéro de
 	// ligne, le fichier n'étant pas conservé (PATA-124) —, et une égalité sur
@@ -499,7 +513,8 @@ func pageDeLaForme(e *core.RequestEvent) error {
 		}
 	}
 
-	return rendre(e, "etabli-forme.html", "etabli-forme-corps.html", donnees)
+	return rendre(e, "etabli-forme.html", "etabli-forme-corps.html", donnees,
+		gabaritsDuBlocDeLaForme...)
 }
 
 // pageDeLaFormeIntrouvable répond par une page lisible, et non par une 500 ni

@@ -26,17 +26,13 @@
 {{end}}
 {{end}}
 
-{{/* Les occurrences sont à droite, comme un poids : ce qui doit attirer l'œil
-     est le signal, pas le nombre de fois qu'une forme a été vue.
-
-     La dernière colonne descend sur les formes du groupe. Une colonne à elle
-     plutôt qu'un lien posé sur le nom de l'aliment : la clé du groupe des
-     lignes sans aliment est la chaîne vide, et un lien sans texte ne se
-     clique pas. */}}
+{{/* La ligne elle-même vit dans etabli-groupe-ligne.html : c'est elle que le
+     dépôt d'une annotation rerend, et un bloc qu'une route peut renvoyer seul
+     vit dans son propre fichier. */}}
 {{define "tableauDesGroupes"}}<table class="groupes">
-<thead><tr><th scope="col">Aliment</th><th scope="col">Catégorie</th><th scope="col">Signaux</th><th scope="col">Formes</th><th scope="col">Occurrences</th><th scope="col">Détail</th></tr></thead>
+<thead><tr><th scope="col">Aliment</th><th scope="col">Catégorie</th><th scope="col">Signaux</th><th scope="col">Formes</th><th scope="col">Occurrences</th><th scope="col">Détail</th><th scope="col">Verdict</th></tr></thead>
 <tbody>
-{{range .}}<tr class="groupe"><td class="aliment-canonique">{{.Aliment}}</td><td class="categorie">{{.Categorie}}</td><td class="signaux">{{range .Signaux}}<span class="signal">{{.}}</span> {{end}}</td><td class="formes">{{.Formes}}</td><td class="occurrences">{{.Occurrences}}</td><td class="detail"><a href="{{.Detail}}">Ses formes</a></td></tr>
+{{range .}}{{template "etabli-groupe-ligne.html" .}}
 {{end}}</tbody>
 </table>
 {{end}}

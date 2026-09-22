@@ -131,10 +131,45 @@ func formeSansAliment(brut string, occurrences int) formeDeTest {
 	}
 }
 
-// annotationDeGroupe tranche un groupe par sa clé, comme PATA-127 le fera :
-// une ligne de analyses_annotations qui ne porte que l'aliment.
+// annotationDeGroupe tranche un groupe par sa clé : une annotation qui porte
+// l'aliment canonique, au moins un mot de verdict, et l'empreinte de la lecture
+// qu'elle jugeait.
+//
+// Les trois, parce que les trois comptent : la clé désigne la cible, le mot la
+// tranche — une note sans mot ne la tranche pas —, et l'empreinte dit jusqu'à
+// quand le verdict tient.
 func annotationDeGroupe(t *testing.T, app core.App, passe *core.Record, aliment string) {
 	t.Helper()
+
+	verdicts, err := verdictsDepuisSaisie(app, "capture trop")
+	if err != nil {
+		t.Fatalf("mot de verdict : %v", err)
+	}
+
+	// Le mot est tout ce qui distingue cette annotation de la précédente : la
+	// clé et l'empreinte sont les mêmes. Sans cela, le test de la note sans
+	// verdict passerait pour la mauvaise raison — une empreinte absente
+	// suffirait à ne pas trancher, et le filtre pourrait ignorer les mots sans
+	// que rien ne rougisse.
+	annotation := annotationDeGroupeSansVerdict(t, app, passe, aliment)
+	annotation.Set("verdicts", []string{verdicts[0].Id})
+	if err := app.Save(annotation); err != nil {
+		t.Fatalf("verdict sur %q : %v", aliment, err)
+	}
+}
+
+// annotationDeGroupeSansVerdict pose la même annotation, mots en moins : une
+// remarque déposée sans trancher.
+//
+// L'empreinte de la lecture jugée y est, comme sur l'autre : ce qui les sépare
+// doit être le mot, et rien d'autre.
+func annotationDeGroupeSansVerdict(t *testing.T, app core.App, passe *core.Record, aliment string) *core.Record {
+	t.Helper()
+
+	empreinte, err := empreinteDuGroupe(app, passe.Id, aliment)
+	if err != nil {
+		t.Fatalf("empreinte du groupe %q : %v", aliment, err)
+	}
 
 	collection, err := app.FindCollectionByNameOrId("analyses_annotations")
 	if err != nil {
@@ -144,23 +179,19 @@ func annotationDeGroupe(t *testing.T, app core.App, passe *core.Record, aliment 
 	annotation.Set("analysis", passe.Id)
 	annotation.Set("food", aliment)
 	annotation.Set("shareable_note", "vu")
+	annotation.Set("engine_version", passe.GetString("engine_version"))
+	annotation.Set("reading_digest", empreinte)
 	if err := app.Save(annotation); err != nil {
 		t.Fatalf("écriture de l'annotation sur %q : %v", aliment, err)
 	}
+	return annotation
 }
 
-// annotationDeForme annote une ligne plutôt qu'un groupe, comme PATA-127 le
-// fera : la cible est la forme, et le champ food reste vide — c'est food seul
-// qui désigne un groupe.
+// annotationDeForme annote une ligne plutôt qu'un groupe : la cible est la
+// ligne brute, et le champ food reste vide — c'est food seul qui désigne un
+// groupe.
 func annotationDeForme(t *testing.T, app core.App, passe *core.Record, brut string) {
 	t.Helper()
-
-	forme, err := app.FindFirstRecordByFilter("analyses_formes",
-		"analysis = {:passe} && raw = {:brut}",
-		dbx.Params{"passe": passe.Id, "brut": brut})
-	if err != nil {
-		t.Fatalf("forme %q de la passe : %v", brut, err)
-	}
 
 	collection, err := app.FindCollectionByNameOrId("analyses_annotations")
 	if err != nil {
@@ -168,7 +199,7 @@ func annotationDeForme(t *testing.T, app core.App, passe *core.Record, brut stri
 	}
 	annotation := core.NewRecord(collection)
 	annotation.Set("analysis", passe.Id)
-	annotation.Set("form", forme.Id)
+	annotation.Set("raw", brut)
 	annotation.Set("food", "")
 	annotation.Set("local_note", "forme douteuse")
 	if err := app.Save(annotation); err != nil {
@@ -202,7 +233,8 @@ var ligneDeGroupe = regexp.MustCompile(
 		`<td class="signaux">(.*?)</td>` +
 		`<td class="formes">([^<]*)</td>` +
 		`<td class="occurrences">([^<]*)</td>` +
-		`<td class="detail"><a href="[^"]*">[^<]*</a></td></tr>`)
+		`<td class="detail"><a href="[^"]*">[^<]*</a></td>` +
+		`<td class="verdicts">(.*?)</td></tr>`)
 
 // groupeAffiche est ce qu'une ligne d'écran montre.
 type groupeAffiche struct {
@@ -211,6 +243,10 @@ type groupeAffiche struct {
 	Signaux     string
 	Formes      string
 	Occurrences string
+
+	// Verdicts porte la dernière cellule : ce qui a déjà été jugé du groupe,
+	// et le bouton qui ouvre le formulaire.
+	Verdicts string
 }
 
 // groupesAffiches rend les lignes de la vue, dans l'ordre où elles sont
@@ -224,6 +260,7 @@ func groupesAffiches(corps string) []groupeAffiche {
 			Signaux:     html.UnescapeString(ligne[3]),
 			Formes:      ligne[4],
 			Occurrences: ligne[5],
+			Verdicts:    html.UnescapeString(ligne[6]),
 		})
 	}
 	return lus
@@ -311,9 +348,9 @@ func TestLaListeCompleteRamèneLesGroupesSansSignalSansSOuvrirParDefaut(t *testi
 	exigeLOrdre(t, complete, "sel", "oignon")
 }
 
-// Ce qui rend un groupe « tranché », ici : sa clé porte au moins une ligne
-// dans analyses_annotations. Il sort de l'ordre par défaut, et il revient dans
-// la liste complète.
+// Ce qui rend un groupe « tranché » : sa clé porte une annotation qui pose au
+// moins un mot de verdict. Il sort de l'ordre par défaut, et il revient dans la
+// liste complète.
 func TestUnGroupeTrancheSortDeLOrdreParDefautEtRevientDansLaListeComplete(t *testing.T) {
 	app, mux, cookie := atelierDeLEtabli(t)
 	passe := passeTermineeDeTest(t, app,
@@ -326,6 +363,67 @@ func TestUnGroupeTrancheSortDeLOrdreParDefautEtRevientDansLaListeComplete(t *tes
 	exigeLOrdre(t, laVueAgregee(t, mux, cookie,
 		url.Values{parametreDeLaListeComplete: {valeurDeLaListeComplete}}),
 		"oignon", "gousse de vanille")
+}
+
+// Une note sans mot de verdict ne tranche pas sa cible : c'est ce qui permet de
+// déposer une remarque sans sortir le groupe de la file. Le pendant du test
+// précédent, et il faut les deux — un filtre qui ne regarderait pas les mots
+// écarterait les deux, et un filtre absent n'en écarterait aucun.
+func TestUneAnnotationSansVerdictNeTranchePasLeGroupe(t *testing.T) {
+	app, mux, cookie := atelierDeLEtabli(t)
+	passe := passeTermineeDeTest(t, app,
+		formeResolue("2 oignons", "oignon", "Légumes", 400, SignalMotsPerdus),
+		formeResolue("1 gousse de vanille", "gousse de vanille", "Épices", 40, SignalUniteRepetee),
+	)
+	annotationDeGroupeSansVerdict(t, app, passe, "oignon")
+
+	exigeLOrdre(t, laVueAgregee(t, mux, cookie, nil), "oignon", "gousse de vanille")
+}
+
+// Le verdict vaut tant que la lecture qu'il jugeait n'a pas changé.
+//
+// À la passe suivante, le groupe dont la lecture a bougé revient dans l'ordre
+// par défaut, avec son verdict précédent affiché — l'humain confirme d'un geste
+// au lieu de rejuger à l'aveugle. Celui dont la lecture est inchangée reste
+// écarté : une montée de version ne fait pas tout rejuger.
+func TestUnGroupeDontLaLectureAChangeRevientDansLOrdreParDefaut(t *testing.T) {
+	app, mux, cookie := atelierDeLEtabli(t)
+
+	jugee := passeTermineeDeTest(t, app,
+		formeResolue("2 oignons", "oignon", "Légumes", 400, SignalMotsPerdus),
+		formeResolue("1 gousse de vanille", "gousse de vanille", "Épices", 40, SignalUniteRepetee),
+	)
+	jugee.Set("engine_version", "v0.8.0")
+	if err := app.Save(jugee); err != nil {
+		t.Fatalf("signature de la passe jugée : %v", err)
+	}
+	recule(t, app, jugee, "2026-09-01 10:00:00.000Z")
+
+	annotationDeGroupe(t, app, jugee, "oignon")
+	annotationDeGroupe(t, app, jugee, "gousse de vanille")
+
+	// La passe suivante relit le même corpus, et lit « 2 oignons » autrement :
+	// le signal a changé, la vanille non.
+	passeTermineeDeTest(t, app,
+		formeResolue("2 oignons", "oignon", "Légumes", 400, SignalMotsReordonnes),
+		formeResolue("1 gousse de vanille", "gousse de vanille", "Épices", 40, SignalUniteRepetee),
+	)
+
+	corps := laVueAgregee(t, mux, cookie, nil)
+	exigeLOrdre(t, corps, "oignon")
+
+	// Et son verdict précédent est affiché : « jugé capture trop sous moteur
+	// v0.8.0 ».
+	lignes := groupesAffiches(corps)
+	if len(lignes) == 0 {
+		t.Fatalf("aucune ligne à relire — corps :\n%s", corps)
+	}
+	ligne := lignes[0]
+	for _, attendu := range []string{"jugé", "capture trop", "v0.8.0"} {
+		if !strings.Contains(ligne.Verdicts, attendu) {
+			t.Errorf("le verdict précédent n'est pas affiché (%q manque) : %q", attendu, ligne.Verdicts)
+		}
+	}
 }
 
 // Une annotation de forme laisse son champ food vide, et elle ne tranche aucun
