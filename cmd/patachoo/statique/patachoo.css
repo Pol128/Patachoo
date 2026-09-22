@@ -862,6 +862,15 @@ footer {
 	margin: 0.8rem 0;
 }
 
+/* Les libellés du formulaire enveloppent leur champ — un identifiant se
+   répéterait d'une ligne ouverte à l'autre : le champ passe sous son texte.
+   Par l'enfant direct, pour laisser la lecture attendue à sa propre grille. */
+.annotation > label,
+.saisie-des-verdicts label {
+	display: grid;
+	gap: 0.2rem;
+}
+
 .annotation-ouverte {
 	background: #faf7f0;
 }

@@ -332,12 +332,19 @@ const (
 	champDeLOptionnelAttendu  = "attendu-optionnel"
 )
 
-// Les deux refus du dépôt. Ils disent ce qui n'allait pas et ce qu'il faut
+// Les trois refus du dépôt. Ils disent ce qui n'allait pas et ce qu'il faut
 // faire, sans jamais reprendre la saisie dans leur texte : c'est le champ qui
 // la reprend, où le gabarit l'échappe.
 const (
 	messageAnnotationVide   = "Cette annotation ne dit rien : posez un verdict, une note, ou la lecture attendue."
 	messageCibleIntrouvable = "Cette analyse ne porte pas la cible annotée : elle a pu être relue depuis."
+
+	// Le groupe des lignes dont aucun aliment n'a été lu a pour clé la chaîne
+	// vide, et une annotation de groupe à clé vide ne se relirait nulle part :
+	// les filtres qui retrouvent les annotations d'un groupe écartent food = '',
+	// sans quoi une annotation de forme remonterait sur ce groupe. Ces lignes se
+	// jugent une à une, depuis leur fiche.
+	messageGroupeSansAliment = "Ces lignes n'ont aucun aliment en commun : annotez-les une à une, depuis leurs formes."
 )
 
 // champDesVerdicts est le champ de saisie par mots de l'établi.
@@ -525,7 +532,7 @@ func poseUneAnnotation(e *core.RequestEvent) error {
 		return err
 	}
 
-	if refus := refusDeLAnnotation(len(lecture), saisie, locale, partageable, attendue); refus != "" {
+	if refus := refusDeLAnnotation(cible, len(lecture), saisie, locale, partageable, attendue); refus != "" {
 		return rendLeFormulaireRefuse(e, passe.Id, cible, refus)
 	}
 
@@ -550,7 +557,10 @@ func poseUneAnnotation(e *core.RequestEvent) error {
 // Une annotation qui ne dit rien n'est pas une annotation : elle n'apprend rien
 // et, sans verdict, elle ne tranche même pas sa cible — elle ne ferait
 // qu'encombrer la table.
-func refusDeLAnnotation(formesDeLaCible int, saisie, locale, partageable string, attendue *lectureDUneForme) string {
+func refusDeLAnnotation(cible cibleDAnnotation, formesDeLaCible int, saisie, locale, partageable string, attendue *lectureDUneForme) string {
+	if cible.estUnGroupe() && cible.Aliment == "" {
+		return messageGroupeSansAliment
+	}
 	if formesDeLaCible == 0 {
 		return messageCibleIntrouvable
 	}

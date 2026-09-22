@@ -8,7 +8,9 @@
      La colonne du détail descend sur les formes du groupe. Une colonne à elle
      plutôt qu'un lien posé sur le nom de l'aliment : la clé du groupe des
      lignes sans aliment est la chaîne vide, et un lien sans texte ne se
-     clique pas. La dernière porte le verdict, et le bouton qui l'ouvre. */}}
+     clique pas. La dernière porte le verdict, et le bouton qui l'ouvre — sauf
+     sur ce groupe-là : ses lignes n'ont aucun aliment en commun, et s'annotent
+     une à une depuis leurs formes. */}}
 {{if .Formulaire}}<tr class="groupe"><td class="annotation-ouverte" colspan="7" hx-target="closest tr" hx-swap="outerHTML">{{template "etabli-annotation.html" .Formulaire}}</td></tr>
-{{else}}<tr class="groupe"><td class="aliment-canonique">{{.Aliment}}</td><td class="categorie">{{.Categorie}}</td><td class="signaux">{{range .Signaux}}<span class="signal">{{.}}</span> {{end}}</td><td class="formes">{{.Formes}}</td><td class="occurrences">{{.Occurrences}}</td><td class="detail"><a href="{{.Detail}}">Ses formes</a></td><td class="verdicts">{{range .Annotations}}{{if .Verdicts}}<span class="verdict">jugé {{range .Verdicts}}{{.Nom}} {{end}}sous moteur {{.Moteur}}</span>{{end}}{{with .NotePartageable}}<span class="note-partageable">{{.}}</span>{{end}}{{with .NoteLocale}}<span class="note-locale">{{.}}</span>{{end}}{{end}}<button type="button" class="annoter" hx-get="{{.Annoter}}" hx-target="closest tr" hx-swap="outerHTML">Annoter</button></td></tr>
+{{else}}<tr class="groupe"><td class="aliment-canonique">{{.Aliment}}</td><td class="categorie">{{.Categorie}}</td><td class="signaux">{{range .Signaux}}<span class="signal">{{.}}</span> {{end}}</td><td class="formes">{{.Formes}}</td><td class="occurrences">{{.Occurrences}}</td><td class="detail"><a href="{{.Detail}}">Ses formes</a></td><td class="verdicts">{{range .Annotations}}{{if .Verdicts}}<span class="verdict">jugé {{range .Verdicts}}{{.Nom}} {{end}}sous moteur {{.Moteur}}</span>{{end}}{{with .NotePartageable}}<span class="note-partageable">{{.}}</span>{{end}}{{with .NoteLocale}}<span class="note-locale">{{.}}</span>{{end}}{{end}}{{if .Aliment}}<button type="button" class="annoter" hx-get="{{.Annoter}}" hx-target="closest tr" hx-swap="outerHTML">Annoter</button>{{end}}</td></tr>
 {{end}}

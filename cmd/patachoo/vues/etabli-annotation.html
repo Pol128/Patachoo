@@ -9,7 +9,13 @@
 
      Les deux champs de texte sont dans cet ordre, et il porte du sens : ce qui
      pourra partir se rédige en pensant à qui le lira ailleurs ; ce qui reste
-     ici cite la ligne du corpus. */}}
+     ici cite la ligne du corpus.
+
+     Les libellés de ce qui sert aux deux niveaux enveloppent leur champ plutôt
+     que de le nommer par un identifiant : la vue agrégée peut ouvrir ce
+     formulaire sur plusieurs lignes à la fois, et un identifiant ne s'y
+     répète pas. La lecture attendue garde les siens — elle n'est rendue que
+     sur la fiche, qui n'a qu'un formulaire. */}}
 <form class="annotation" method="post" action="{{.Action}}" hx-post="{{.Action}}">
 <input type="hidden" name="_antirejeu" value="{{.JetonAntiRejeu}}">
 <input type="hidden" name="analyse" value="{{.Analyse}}">
@@ -17,12 +23,11 @@
 <input type="hidden" name="aliment" value="{{.Aliment}}">
 <input type="hidden" name="forme" value="{{.Forme}}">
 {{with .Message}}<p class="avertissement">{{.}}</p>{{end}}
-<label for="verdicts">Verdict</label>
 {{template "etabli-verdicts-saisie.html" .Verdicts}}
-<label for="note-partageable">Ce qui pourra partir — la règle ou l'entrée du lexique</label>
-<textarea id="note-partageable" name="note-partageable" rows="2"></textarea>
-<label for="note-locale">Ce qui reste ici — la ligne telle qu'elle est écrite</label>
-<textarea id="note-locale" name="note-locale" rows="2"></textarea>
+<label>Ce qui pourra partir — la règle ou l'entrée du lexique
+<textarea name="note-partageable" rows="2"></textarea></label>
+<label>Ce qui reste ici — la ligne telle qu'elle est écrite
+<textarea name="note-locale" rows="2"></textarea></label>
 {{if .AvecLectureAttendue}}
 <fieldset class="lecture-attendue-saisie">
 <legend>Ce qu'il fallait lire</legend>
