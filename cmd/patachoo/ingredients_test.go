@@ -1,8 +1,11 @@
 package main
 
 import (
+	"fmt"
+	"os"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,15 +29,18 @@ func analyseurDeTest(t *testing.T) *analyseur {
 	return a
 }
 
-// baseNeuveAvec monte une base vide, y branche nos hooks avec l'analyseur
+// baseNeuveAvec monte une base neuve, y branche nos hooks avec l'analyseur
 // donné, puis applique les migrations — dans l'ordre où main() le fait.
+func baseNeuveAvec(t *testing.T, a *analyseur) core.App {
+	t.Helper()
+	return baseNeuveAuCout(t, a, coutBcryptDesTests)
+}
+
 // Le coût bcrypt des comptes de test.
 //
 // Un test qui ouvre une session paie deux bcrypt complets : hacher le mot de
-// passe à la création du compte, puis le vérifier à la connexion. Mesuré sur
-// cette machine, 101 ms et 96 ms — plus de la moitié du coût d'un test, devant
-// les migrations (93 ms) et l'amorçage (49 ms). Multiplié par les 444 tests du
-// paquet, c'est la moitié de la passe.
+// passe à la création du compte, puis le vérifier à la connexion. Au facteur
+// par défaut de PocketBase, c'était la moitié du coût d'un test.
 //
 // Le facteur est un réglage du champ, et la vérification lit le sien dans le
 // hash : l'abaisser dans la fixture rend les deux opérations quasi gratuites.
@@ -47,13 +53,9 @@ func analyseurDeTest(t *testing.T) *analyseur {
 // écart de temps, et son garde-fou refuse de conclure sur un bcrypt bradé.
 const coutBcryptDesTests = bcrypt.MinCost
 
-func baseNeuveAvec(t *testing.T, a *analyseur) core.App {
-	t.Helper()
-	return baseNeuveAuCout(t, a, coutBcryptDesTests)
-}
-
 // baseNeuveAuCoutBcryptReel laisse à PocketBase son facteur par défaut, au prix
-// d'environ 200 ms par compte créé puis connecté.
+// d'environ 200 ms par compte créé puis connecté. Elle ne passe pas par le
+// gabarit, qui porte le facteur abaissé : sa base est migrée pour elle seule.
 func baseNeuveAuCoutBcryptReel(t *testing.T, a *analyseur) core.App {
 	t.Helper()
 	return baseNeuveAuCout(t, a, 0)
@@ -62,10 +64,33 @@ func baseNeuveAuCoutBcryptReel(t *testing.T, a *analyseur) core.App {
 // baseNeuveAuCout monte la base. `cout` à zéro laisse le facteur bcrypt de
 // PocketBase. Le nom dit « au coût » parce que `baseNeuve` est déjà pris
 // (tags_test.go) et désigne autre chose.
+//
+// Au coût des tests, la base n'est pas migrée mais recopiée du gabarit, et
+// c'est ce qui fait la durée du paquet. Relevé le 22/09/2026 (PATA-130), le coût
+// d'un test est son montage, et le montage est d'abord la migration : 279 ms en
+// passe courte, 2,5 s sous -race — plus de la moitié du montage, alors que le
+// corps d'un test pèse moins de 10 % du tout. Recopier le gabarit coûte moins
+// d'une milliseconde, sous -race comme sans.
+//
+// L'isolation n'y perd rien : chaque test a sa copie dans son propre
+// répertoire, son BaseApp et son nettoyage. Ce qui est mis en commun, c'est le
+// travail de migration, pas la base. Mais ce que les migrations tirent au
+// hasard est tiré une fois par passe au lieu d'une fois par test : les secrets
+// de jeton des collections d'authentification, les identifiants des types de
+// plat et celui des réglages. Aucun test ne fait voyager une de ces valeurs
+// d'une base à l'autre, ni ne compte sur leur nouveauté — vérifié le 23/09/2026
+// sur tout le paquet (PATA-129). Un test qui en aurait besoin prend
+// `baseNeuveAuCoutBcryptReel`, migrée pour lui seul.
 func baseNeuveAuCout(t *testing.T, a *analyseur, cout int) core.App {
 	t.Helper()
 
-	app := core.NewBaseApp(core.BaseAppConfig{DataDir: t.TempDir()})
+	dir := t.TempDir()
+	recopiee := cout == coutBcryptDesTests
+	if recopiee {
+		recopieLeGabarit(t, dir)
+	}
+
+	app := core.NewBaseApp(core.BaseAppConfig{DataDir: dir})
 	// Terminer avant de réinitialiser, et non l'inverse : c'est OnTerminate qui
 	// arrête le minuteur de purge du journal, et le commentaire de PocketBase
 	// au-dessus du crochet dit pourquoi l'ordre compte — « to avoid races with
@@ -82,36 +107,121 @@ func baseNeuveAuCout(t *testing.T, a *analyseur, cout int) core.App {
 	if err := app.Bootstrap(); err != nil {
 		t.Fatalf("amorçage : %v", err)
 	}
+	// Sur une copie, les migrations sont déjà jouées et celle-ci ne fait que
+	// le constater : une milliseconde en passe courte, quelques dizaines sous
+	// -race. Elle reste, parce qu'elle rattrape un gabarit auquel il en
+	// manquerait une.
 	if err := app.RunAllMigrations(); err != nil {
 		t.Fatalf("migrations : %v", err)
 	}
-	if cout > 0 {
-		abaisseLeCoutBcrypt(t, app, cout)
+	if cout > 0 && !recopiee {
+		if err := abaisseLeCoutBcrypt(app, cout); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return app
+}
+
+// Le gabarit : une base migrée une fois par passe, que chaque test recopie.
+//
+// Construit à la demande, au premier test qui monte une base, et jamais avant :
+// le binaire relancé en sous-processus par sante_test.go n'en construit donc
+// aucun. Jamais gardé sur disque d'une passe à l'autre non plus — une base
+// migrée par une version antérieure des migrations se ferait passer pour
+// neuve. C'est TestMain qui le retire, les tests joués.
+var (
+	gabaritUneFois sync.Once
+	gabaritDir     string
+	gabaritErr     error
+)
+
+// recopieLeGabarit recopie le gabarit dans dst, en le construisant s'il
+// n'existe pas encore.
+func recopieLeGabarit(t *testing.T, dst string) {
+	t.Helper()
+
+	gabaritUneFois.Do(func() {
+		gabaritDir, gabaritErr = construitLeGabarit()
+		if gabaritErr == nil {
+			t.Logf("gabarit de base construit dans %s", gabaritDir)
+		}
+	})
+	if gabaritErr != nil {
+		t.Fatalf("gabarit de base : %v", gabaritErr)
+	}
+	if err := os.CopyFS(dst, os.DirFS(gabaritDir)); err != nil {
+		t.Fatalf("recopie du gabarit : %v", err)
+	}
+}
+
+// construitLeGabarit monte une base comme baseNeuveAuCout le faisait pour
+// chaque test — hooks, amorçage, migrations, facteur bcrypt abaissé —, puis la
+// ferme. Le facteur voyage avec la copie : le reposer après coûterait un
+// enregistrement de collection par test, plus d'un tiers de seconde sous -race.
+//
+// Elle rend une erreur plutôt que d'échouer le test : elle tourne sous un
+// sync.Once, et un t.Fatal y marquerait le gabarit construit sans qu'il le soit.
+func construitLeGabarit() (dir string, err error) {
+	dir, err = os.MkdirTemp("", "patachoo-gabarit-")
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		if err != nil {
+			_ = os.RemoveAll(dir)
+		}
+	}()
+
+	a, err := analyseurFR()
+	if err != nil {
+		return "", fmt.Errorf("chargement du pack français : %w", err)
+	}
+	app := core.NewBaseApp(core.BaseAppConfig{DataDir: dir})
+	defer func() {
+		_ = app.OnTerminate().Trigger(&core.TerminateEvent{App: app})
+		_ = app.ResetBootstrapState()
+	}()
+
+	brancheLesHooks(app, a)
+	if err := app.Bootstrap(); err != nil {
+		return "", fmt.Errorf("amorçage : %w", err)
+	}
+	if err := app.RunAllMigrations(); err != nil {
+		return "", fmt.Errorf("migrations : %w", err)
+	}
+	if err := abaisseLeCoutBcrypt(app, coutBcryptDesTests); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+// retireLeGabarit efface le gabarit de la passe, s'il a été construit.
+func retireLeGabarit() {
+	if gabaritDir != "" {
+		_ = os.RemoveAll(gabaritDir)
+	}
 }
 
 // abaisseLeCoutBcrypt repose le facteur du champ mot de passe des deux
 // collections d'authentification. Après les migrations : ce sont elles qui
 // créent les collections.
-func abaisseLeCoutBcrypt(t *testing.T, app core.App, cout int) {
-	t.Helper()
-
+func abaisseLeCoutBcrypt(app core.App, cout int) error {
 	for _, nom := range []string{"users", core.CollectionNameSuperusers} {
 		collection, err := app.FindCollectionByNameOrId(nom)
 		if err != nil {
-			t.Fatalf("collection %s : %v", nom, err)
+			return fmt.Errorf("collection %s : %w", nom, err)
 		}
 		champ, ok := collection.Fields.GetByName(core.FieldNamePassword).(*core.PasswordField)
 		if !ok {
-			t.Fatalf("collection %s : champ %q absent ou d'un autre type",
+			return fmt.Errorf("collection %s : champ %q absent ou d'un autre type",
 				nom, core.FieldNamePassword)
 		}
 		champ.Cost = cout
 		if err := app.Save(collection); err != nil {
-			t.Fatalf("collection %s : %v", nom, err)
+			return fmt.Errorf("collection %s : %w", nom, err)
 		}
 	}
+	return nil
 }
 
 // recetteNeuve pose la recette à laquelle rattacher les lignes : ingredients
