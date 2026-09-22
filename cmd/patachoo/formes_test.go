@@ -769,6 +769,45 @@ func TestLaProvenanceListeLesRecettesEtChacuneMeneASaFiche(t *testing.T) {
 	}
 }
 
+// Le titre d'une recette du carnet vient d'un site tiers, par l'import, et la
+// provenance le réaffiche : c'est du contenu étranger au même titre que le
+// corpus. Le dépôt porte déjà ce garde-fou écran par écran sur ce champ — le
+// rapport d'import, la suppression, la liste et la fiche du carnet — et la
+// fiche d'une forme est un écran de plus qui l'affiche.
+//
+// Rien n'est ouvert aujourd'hui : html/template échappe. C'est le test qui
+// manquait, pas la protection — et il rougirait le jour où cette ligne
+// passerait en template.HTML.
+func TestLeTitreDUneRecetteEnProvenanceEstEchappe(t *testing.T) {
+	const brut = "1 feuille de laurier"
+	const titre = `<script>alert(1)</script>`
+
+	app, mux, cookie := atelierDeLEtabli(t)
+	creeRecette(t, app, recetteVoulue{titre: titre, ingredients: []string{brut}})
+
+	passe := passeSurLInstance(t, app,
+		formeResolue(brut, "feuille de laurier", "Épices", 1, SignalMotsPerdus))
+
+	fiche := laFiche(t, mux, cookie, laForme(t, app, passe, brut))
+
+	// Borné au bloc de provenance : c'est lui qui rend le titre, et un
+	// contrôle sur la page entière rougirait aussi bien sur une autre sortie.
+	provenance := entreBalises(fiche, `<ul class="provenance">`, "</ul>")
+	if provenance == "" {
+		t.Fatalf("la fiche ne porte aucune provenance — corps :\n%s", fiche)
+	}
+
+	// Le fragment est celui de la charge, et non « <script> » nu : la mise en
+	// page porte sa propre balise de script.
+	exigeSansAucun(t, provenance, `<script>alert(`)
+
+	// Échappé, et présent : une provenance qui aurait simplement perdu le
+	// titre passerait le contrôle ci-dessus sans rien protéger.
+	if !strings.Contains(provenance, html.EscapeString(titre)) {
+		t.Errorf("le titre échappé est absent de la provenance : %q", provenance)
+	}
+}
+
 // Une même recette qui porte deux fois la ligne n'est listée qu'une fois : la
 // provenance nomme des recettes, pas des occurrences.
 func TestUneRecetteQuiPorteDeuxFoisLaLigneNEstListeeQuUneFois(t *testing.T) {
