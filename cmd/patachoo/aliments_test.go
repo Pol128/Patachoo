@@ -149,18 +149,11 @@ func annotationDeGroupe(t *testing.T, app core.App, passe *core.Record, aliment 
 	}
 }
 
-// annotationDeForme annote une ligne plutôt qu'un groupe, comme PATA-127 le
-// fera : la cible est la forme, et le champ food reste vide — c'est food seul
-// qui désigne un groupe.
+// annotationDeForme annote une ligne plutôt qu'un groupe : la cible est la
+// ligne brute, et le champ food reste vide — c'est food seul qui désigne un
+// groupe.
 func annotationDeForme(t *testing.T, app core.App, passe *core.Record, brut string) {
 	t.Helper()
-
-	forme, err := app.FindFirstRecordByFilter("analyses_formes",
-		"analysis = {:passe} && raw = {:brut}",
-		dbx.Params{"passe": passe.Id, "brut": brut})
-	if err != nil {
-		t.Fatalf("forme %q de la passe : %v", brut, err)
-	}
 
 	collection, err := app.FindCollectionByNameOrId("analyses_annotations")
 	if err != nil {
@@ -168,7 +161,7 @@ func annotationDeForme(t *testing.T, app core.App, passe *core.Record, brut stri
 	}
 	annotation := core.NewRecord(collection)
 	annotation.Set("analysis", passe.Id)
-	annotation.Set("form", forme.Id)
+	annotation.Set("raw", brut)
 	annotation.Set("food", "")
 	annotation.Set("local_note", "forme douteuse")
 	if err := app.Save(annotation); err != nil {
