@@ -569,6 +569,67 @@ func TestChercherDepuisUnGroupeGardeLeFiltreEtLaPasse(t *testing.T) {
 	}
 }
 
+// --- Le bandeau de bascule ----------------------------------------------------
+
+// bandeauDeBascule reconnaît, dans le bandeau d'un groupe filtré, l'adresse
+// qui remonte à toutes les formes de la passe.
+var bandeauDeBascule = regexp.MustCompile(`(?s)<p class="bascule">.*?<a href="([^"]*)">`)
+
+// lienDeLaBascule rend cette adresse, telle que la page l'écrit — elle se suit
+// comme un lien, elle ne se recompose pas.
+func lienDeLaBascule(t *testing.T, corps string) string {
+	t.Helper()
+
+	trouve := bandeauDeBascule.FindStringSubmatch(corps)
+	if trouve == nil {
+		t.Fatalf("aucun bandeau de bascule dans la page — corps :\n%s", corps)
+	}
+	return html.UnescapeString(trouve[1])
+}
+
+// « Toutes les formes de la passe » retire le groupe, et ne retire que lui :
+// la passe et le terme partent avec.
+//
+// C'est la seule ligne de logique du bandeau, et trois façons de la casser
+// passeraient autrement en silence — la supprimer, y laisser le filtre, ou
+// oublier l'analyse. Chacune rendrait une page plausible : celle du groupe
+// qu'on voulait justement quitter, ou celle de la passe la plus récente. Les
+// formes posées ici sont celles qui trahissent chaque étourderie.
+func TestLaBasculeRetireLeGroupeEtLuiSeul(t *testing.T) {
+	app, mux, cookie := atelierDeLEtabli(t)
+
+	ancienne := passeTermineeDeTest(t, app,
+		formeResolue("1 feuille de laurier", "feuille de laurier", "Épices", 400, SignalMotsPerdus),
+		formeResolue("laurier moulu", "poudre de laurier", "Épices", 40, SignalMotsPerdus),
+		formeResolue("2 oignons", "oignon", "Légumes", 4, SignalMotsPerdus))
+	recule(t, app, ancienne, "2026-09-18 10:00:00.000Z")
+
+	passeTermineeDeTest(t, app,
+		formeResolue("3 feuilles de laurier", "feuille de laurier", "Épices", 7, SignalMotsPerdus))
+
+	filtree := laListeDesFormes(t, mux, cookie, url.Values{
+		parametreDeLAnalyse: {ancienne.Id},
+		parametreDeLAliment: {"feuille de laurier"},
+		parametreDuTerme:    {"laurier"},
+	})
+	toutes := laPageA(t, mux, cookie, lienDeLaBascule(t, filtree))
+
+	// Les deux groupes de l'ancienne passe qui parlent de laurier, et eux
+	// seuls : « laurier moulu » dit que le groupe est bien tombé, les oignons
+	// diraient que le terme est tombé avec lui, et « 3 feuilles de laurier »
+	// que l'analyse ne l'a pas suivi.
+	attendu := []string{"1 feuille de laurier", "laurier moulu"}
+	if bruts := brutsAffiches(toutes); strings.Join(bruts, "|") != strings.Join(attendu, "|") {
+		t.Errorf("la bascule ramène %v, attendu %v — corps :\n%s", bruts, attendu, toutes)
+	}
+
+	// Et le bandeau a disparu : il annonce un groupe, sa survie dirait qu'un
+	// groupe filtre encore.
+	if strings.Contains(toutes, `class="bascule"`) {
+		t.Errorf("le bandeau de bascule survit à la bascule — corps :\n%s", toutes)
+	}
+}
+
 // --- L'échappement — le point de sécurité du lot -----------------------------
 
 // Le corpus est du texte étranger affiché dans une page, et c'est tout l'objet
@@ -606,6 +667,58 @@ func TestUneLigneBruteContenantDuBalisageEstAfficheeLitteralement(t *testing.T) 
 			// simplement perdu passerait le contrôle ci-dessus.
 			if !strings.Contains(corps, html.EscapeString(brut)) {
 				t.Errorf("la ligne brute échappée est absente de la page — corps :\n%s", corps)
+			}
+		})
+	}
+}
+
+// Le corpus n'est pas la seule entrée étrangère de la page : le terme et la
+// clé du groupe viennent de la chaîne de requête, donc de n'importe qui, et la
+// page les réaffiche à quatre endroits. Le carnet porte déjà le même garde-fou
+// sur sa propre recherche — TestLeChampDeRechercheEchappeLeTerme et
+// TestLeMessageDAbsenceEchappeLeTerme, dans recettes_test.go.
+//
+// Rien n'est ouvert aujourd'hui : html/template échappe les quatre. C'est le
+// test qui manquait, pas la protection — et il rougirait le jour où l'un des
+// quatre passerait en template.HTML.
+func TestLesParametresReflechisDeLaListeSontEchappes(t *testing.T) {
+	const terme = `<script>alert("xss")</script>`
+	const aliment = `"><script>alert('groupe')</script>`
+
+	app, mux, cookie := atelierDeLEtabli(t)
+	passeTermineeDeTest(t, app,
+		formeResolue("2 oignons", "oignon", "Légumes", 30, SignalMotsPerdus))
+
+	// Une clé de groupe que rien ne porte et un terme que rien ne contient :
+	// la page rend donc ses quatre réflexions d'un coup — les deux champs du
+	// formulaire, le bandeau du groupe et le message d'absence.
+	corps := laListeDesFormes(t, mux, cookie, url.Values{
+		parametreDeLAliment: {aliment},
+		parametreDuTerme:    {terme},
+	})
+
+	// Les fragments sont ceux des charges, et non « <script> » nu : la mise en
+	// page porte sa propre balise de script.
+	exigeSansAucun(t, corps, terme, aliment,
+		`<script>alert(`, `alert("xss")</script>`, `alert('groupe')</script>`)
+
+	for nom, cas := range map[string]struct {
+		extrait string
+		charge  string
+	}{
+		"le champ de recherche":    {entreBalises(corps, `name="q" value="`, `"`), terme},
+		"le champ caché du groupe": {entreBalises(corps, `name="aliment" value="`, `"`), aliment},
+		"le bandeau de bascule":    {entreBalises(corps, `<p class="bascule">`, "</p>"), aliment},
+		"le message d'absence":     {entreBalises(corps, `<p class="absence">`, "</p>"), terme},
+	} {
+		t.Run(nom, func(t *testing.T) {
+			if cas.extrait == "" {
+				t.Fatalf("%s est absent de la page — corps :\n%s", nom, corps)
+			}
+			// Échappée, et présente : une page qui aurait simplement perdu la
+			// valeur passerait le contrôle ci-dessus sans rien protéger.
+			if !strings.Contains(cas.extrait, html.EscapeString(cas.charge)) {
+				t.Errorf("la charge n'est pas rendue échappée dans %s : %q", nom, cas.extrait)
 			}
 		})
 	}
