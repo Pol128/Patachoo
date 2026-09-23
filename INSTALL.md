@@ -800,6 +800,12 @@ système à reproduire** — c'est ce que dit déjà le `FROM scratch` de l'imag
 ne contient rien d'autre que cet exécutable.
 
 Cette section est le chemin pour qui ne veut pas de démon Docker sur sa machine.
+Le binaire s'y obtient par défaut **tout compilé**, dans l'archive de sa
+plateforme : voir [« Les binaires publiés »](#les-binaires-publiés) pour la
+télécharger et la vérifier, puis reprendre ici à « Lancer ». Compiler soi-même
+reste le chemin de deux cas seulement : un Raspberry Pi 1 ou un Pi Zero premier
+modèle, pour lequel aucune archive n'est publiée — il n'y en a pas pour
+`armv6` —, et qui préfère compiler.
 
 ### Ce que ça change, et ce que ça ne change pas
 
@@ -830,6 +836,11 @@ est plus léger *et moins bien enfermé*. C'est l'unité systemd, plus bas, qui
 rattrape cet écart ; elle n'est pas un bonus.
 
 ### Construire
+
+On n'a besoin de cette sous-section que dans les deux cas dits plus haut : un
+Raspberry Pi 1 ou un Pi Zero premier modèle, ou l'envie de compiler soi-même.
+Pour toute autre machine, l'archive publiée contient le même binaire, déjà
+construit.
 
 Il faut **Go 1.26.6** — la version déclarée par `go.mod`. Rien d'autre : pas de
 compilateur C, pas d'en-têtes de développement.
@@ -1077,10 +1088,27 @@ binaire exactement comme en Docker.
 
 ### Mettre à jour
 
-Aucun `docker compose pull` ici, et pour une raison qu'il vaut mieux dire
-franchement : **il n'existe aucun binaire publié**. `publier.yml` ne produit que
-l'image `ghcr.io` et son attestation de provenance. La mise à jour consiste donc
-à refaire soi-même ce qu'on a fait la première fois :
+Aucun `docker compose pull` ici : on télécharge l'archive de la nouvelle
+version, on la vérifie, on remplace l'exécutable et on redémarre le service.
+Les commandes de téléchargement et de vérification sont celles de
+[« Les binaires publiés »](#les-binaires-publiés) — `amd64` y est un exemple, à
+remplacer par l'archive de votre machine :
+
+```sh
+base=https://github.com/Pol128/Patachoo/releases/latest/download
+curl -fLO "$base/patachoo_linux_amd64.tar.gz"
+curl -fLO "$base/sommes-sha256.txt"
+grep ' patachoo_linux_amd64.tar.gz$' sommes-sha256.txt | sha256sum -c -
+tar xzf patachoo_linux_amd64.tar.gz patachoo
+sudo install -m 0755 patachoo /usr/local/bin/patachoo
+sudo systemctl restart patachoo
+```
+
+Pour monter vers une version précise plutôt que vers la dernière, `base=` prend
+la forme `download/<le tag>` décrite au même endroit.
+
+Qui a compilé son binaire, faute d'archive pour sa machine ou par choix, le
+met à jour en refaisant ce qu'il a fait la première fois :
 
 ```sh
 cd Patachoo
@@ -1095,10 +1123,13 @@ Les données restent où elles sont ; seul l'exécutable est remplacé. Sauvegar
 `pb_data` avant une montée de version reste la précaution d'usage.
 
 **Ce que la vérification devient ici.** En Docker, on vérifie une empreinte et
-une attestation — « cette image vient bien de ce dépôt ». En mode binaire, on ne
-vérifie rien de tel, puisqu'on ne télécharge rien : on **compile soi-même depuis
-un tag du dépôt**, et c'est la confiance accordée au dépôt qui remplace celle
-accordée au registre. Ce n'est pas moins sûr, c'est déplacé ailleurs.
+une attestation — « cette image vient bien de ce dépôt ». L'archive se vérifie
+de la même façon, par ses sommes et sa provenance, comme le décrit
+[« Les binaires publiés »](#les-binaires-publiés) : la seconde dit qu'elle a été
+produite par ce dépôt, ce que les premières ne peuvent pas dire. Qui compile
+n'a rien de tel à vérifier : il **compile lui-même depuis un tag du dépôt**,
+et c'est la confiance accordée au dépôt qui remplace celle accordée à
+la Release. Ce n'est pas moins sûr, c'est déplacé ailleurs.
 
 ### Exposer hors de chez soi
 
