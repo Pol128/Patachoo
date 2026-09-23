@@ -164,6 +164,12 @@ jobs:
       # que l'hébergeant télécharge, donc ce qu'il doit pouvoir vérifier avant
       # de l'ouvrir. Calculées depuis `actifs/`, elles nomment les archives sans
       # chemin, et `sha256sum -c` passe là où on les a téléchargées.
+      #
+      # installer.sh les rejoint tel qu'il est dans le dépôt, au commit du tag :
+      # ni copie tenue ailleurs, ni fichier généré. C'est un actif comme les
+      # autres, avec sa somme dans le même fichier et son attestation — on doit
+      # pouvoir vérifier le script avant de le lire, et le lire avant de le
+      # lancer (INSTALL.md, « Installer par le script »).
       - name: Archiver les binaires
         run: |
           set -euo pipefail
@@ -179,18 +185,21 @@ jobs:
             tar -C "$racine" --owner=0 --group=0 --numeric-owner \
               -czf "actifs/patachoo_linux_$cible.tar.gz" patachoo LICENSE NOTICE
           done
+          install -m 0755 installer.sh actifs/installer.sh
           cd actifs
-          sha256sum patachoo_linux_*.tar.gz > sommes-sha256.txt
+          sha256sum patachoo_linux_*.tar.gz installer.sh > sommes-sha256.txt
 
-      # Les archives, attestées comme l'image : ici, parce que c'est ce job qui
-      # porte `id-token: write` et `attestations: write`. Une seule attestation
-      # couvre les trois sujets, et `gh attestation verify` la retrouve depuis
-      # n'importe laquelle des trois archives.
+      # Les archives et le script, attestés comme l'image : ici, parce que c'est
+      # ce job qui porte `id-token: write` et `attestations: write`. Une seule
+      # attestation couvre les quatre sujets, et `gh attestation verify` la
+      # retrouve depuis n'importe lequel d'entre eux.
       - name: Attester les archives
         id: attester-archives
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8   # v4.2.2
         with:
-          subject-path: actifs/patachoo_linux_*.tar.gz
+          subject-path: |
+            actifs/patachoo_linux_*.tar.gz
+            actifs/installer.sh
 
       # Le paquet d'attestation, publié à côté des archives : avec lui,
       # `gh attestation verify --bundle` vérifie sans interroger l'API GitHub.
@@ -244,8 +253,9 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4.4.0
 
-      # Les archives, leurs sommes et leur paquet d'attestation, tels que le job
-      # précédent les a produits et attestés. Ici, on ne fait que les poser.
+      # Les archives, le script, leurs sommes et leur paquet d'attestation, tels
+      # que le job précédent les a produits et attestés. Ici, on ne fait que les
+      # poser.
       - name: Récupérer les actifs
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c   # v8.0.1
         with:
@@ -307,12 +317,13 @@ jobs:
             *-*) drapeaux+=(--prerelease) ;;
           esac
 
-          # Les cinq actifs, nommés un par un plutôt que par un motif : un
+          # Les six actifs, nommés un par un plutôt que par un motif : un
           # fichier qui manquerait fait échouer la commande, au lieu de publier
           # une Release amputée sans le dire.
           gh release create "$GITHUB_REF_NAME" "${drapeaux[@]}" \
             actifs/patachoo_linux_amd64.tar.gz \
             actifs/patachoo_linux_arm64.tar.gz \
             actifs/patachoo_linux_armv7.tar.gz \
+            actifs/installer.sh \
             actifs/sommes-sha256.txt \
             actifs/provenance.jsonl

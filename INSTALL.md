@@ -718,6 +718,64 @@ Un binaire publié annonce son numéro — `0.3.0` —, jamais `dev`. La suite, 
 lancement à l'unité systemd, est celle d'[« Installation par
 binaire »](#installation-par-binaire), à partir de « Lancer ».
 
+### Installer par le script
+
+Les quatre étapes ci-dessus — télécharger, vérifier la somme, extraire, poser —,
+`installer.sh` les fait d'un seul geste. Il est publié dans chaque Release comme
+un actif de plus : sa somme est dans `sommes-sha256.txt`, et l'attestation de
+provenance le couvre au même titre que les archives. On le vérifie donc, et on
+le lit, **avant** de le lancer :
+
+```sh
+base=https://github.com/Pol128/Patachoo/releases/latest/download
+curl -fLO "$base/installer.sh"
+curl -fLO "$base/sommes-sha256.txt"
+curl -fLO "$base/provenance.jsonl"
+
+grep ' installer.sh$' sommes-sha256.txt | sha256sum -c -
+gh attestation verify installer.sh --repo Pol128/Patachoo --bundle provenance.jsonl
+
+less installer.sh      # lisez-le : c'est ce que vous allez exécuter
+sh ./installer.sh
+```
+
+Sans `--bundle provenance.jsonl`, la même commande
+`gh attestation verify installer.sh --repo Pol128/Patachoo` va chercher
+l'attestation auprès de GitHub. Ce qu'elle prouve, et ce qu'elle ne prouve pas,
+est ce qu'en dit [« Vérifier la provenance »](#vérifier-la-provenance) pour les
+archives.
+
+Le script télécharge l'archive de votre plateforme et `sommes-sha256.txt`,
+**compare** la somme de l'archive à celle que ce fichier annonce — rien n'est
+posé si elles diffèrent —, puis pose le binaire dans `/usr/local/bin` et
+l'exécute pour en imprimer la version. Trois options :
+
+| Option | Ce qu'elle change |
+| --- | --- |
+| `--prefix <répertoire>` | Où poser le binaire. Défaut : `/usr/local/bin`, qui demande d'être root ; `--prefix "$HOME/.local/bin"` s'en passe. Le script ne s'élève jamais de lui-même : un préfixe où il ne peut pas écrire le fait s'arrêter en le disant. |
+| `--version <tag>` | Installer une version précise — `--version v0.3.0` — plutôt que la dernière. |
+| `--force` | Remplacer un `patachoo` déjà présent dans le préfixe. Sans elle, le script annonce la version en place et celle qu'il aurait posée, et s'arrête sans rien changer. |
+
+Il sait installer les trois plateformes des archives : Linux `x86_64`,
+`aarch64` et `armv7l`. Sur toute autre machine — macOS, Windows, un Raspberry
+Pi 1 ou un Pi Zero premier modèle en `armv6l` — il ne télécharge rien, dit
+qu'aucun binaire n'est distribué pour elle, et donne la ligne `go build` qui la
+construit ; le tableau [« Votre machine → ce que vous
+compilez »](#votre-machine--ce-que-vous-compilez) dit la même chose en entier.
+
+**Ce qu'il ne fait pas**, et ne fera pas : créer un utilisateur système,
+déposer une unité systemd, activer ou démarrer un service, ouvrir un port,
+écrire ailleurs que dans le préfixe. Ce sont précisément les gestes qu'on ne
+peut pas relire quand un script les fait à sa place. Ils se font à la main, en
+voyant ce qu'on pose : [« L'unité systemd »](#lunité-systemd).
+
+Le raccourci en une ligne existe, et il vient **après** ce qui précède, jamais à
+sa place — il exécute le script sans qu'on l'ait vérifié ni lu :
+
+```sh
+curl -fsSL https://github.com/Pol128/Patachoo/releases/latest/download/installer.sh | sh -s -- --prefix "$HOME/.local/bin"
+```
+
 ### Pour qui a déjà Go : `go install`
 
 Une troisième voie, qui ne passe ni par l'image ni par la Release :
