@@ -347,8 +347,14 @@ func TestUnPrefixeNonAccessibleEnEcritureEstNommeSansSElever(t *testing.T) {
 	if e.code == 0 {
 		t.Errorf("le script dit avoir réussi dans un préfixe en lecture seule :\n%s", e)
 	}
+	// Le préfixe seul ne suffit pas : le `cp` d'un script qui ne vérifierait
+	// rien le nommerait aussi, en échouant. Ce sont les deux issues qui disent
+	// que le script a vu le problème avant de s'y heurter.
 	if !strings.Contains(e.erreur, prefixe) {
 		t.Errorf("la sortie d'erreur ne nomme pas le préfixe %s :\n%s", prefixe, e)
+	}
+	if !strings.Contains(e.erreur, "root") || !strings.Contains(e.erreur, "--prefix") {
+		t.Errorf("la sortie d'erreur ne dit pas les deux issues, root ou --prefix :\n%s", e)
 	}
 	if _, err := os.Stat(filepath.Join(e.outils, "sudo-appele")); err == nil {
 		t.Errorf("le script a appelé sudo de lui-même")
