@@ -1,0 +1,1 @@
+- `./journal publier` ne recopie plus la ligne « Rien pour l'instant » sous la version qu'il ouvre : la nouvelle section se termine sur sa dernière puce, sans retouche à la main.
