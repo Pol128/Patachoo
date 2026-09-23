@@ -207,13 +207,23 @@ fi
 
 tar -xzf "$temporaire/$archive" -C "$temporaire" patachoo ||
 	echec "archive illisible : $archive"
-visee=$("$temporaire/patachoo" version </dev/null) ||
+
+# version_de <binaire> : ce qu'annonce `patachoo version`. Sans --dir, le
+# binaire ouvrirait sa base dans ./pb_data, c'est-à-dire dans le répertoire de
+# qui lance ce script ; lancé depuis le répertoire temporaire du système, sans
+# --dev=false, PocketBase se croirait sous `go run` et imprimerait ses requêtes
+# SQL avec la version. Les deux se sont vus en jouant le script à la main.
+version_de() {
+	"$1" version --dev=false --dir "$temporaire/pb_data" </dev/null
+}
+
+visee=$(version_de "$temporaire/patachoo") ||
 	echec "le binaire téléchargé ne s'exécute pas sur cette machine"
 
 # ─── 4. La pose ──────────────────────────────────────────────────────────────
 
 if [ -e "$cible_finale" ] && [ "$force" -ne 1 ]; then
-	presente=$("$cible_finale" version </dev/null 2>/dev/null || echo "inconnue")
+	presente=$(version_de "$cible_finale" 2>/dev/null || echo "inconnue")
 	erreur "un patachoo est déjà installé : $cible_finale"
 	erreur "  version présente : $presente"
 	erreur "  version visée    : $visee"
@@ -227,7 +237,7 @@ chmod 0755 "$pose"
 mv -f "$pose" "$cible_finale"
 pose=
 
-installee=$("$cible_finale" version </dev/null)
+installee=$(version_de "$cible_finale")
 cat <<FIN
 Patachoo $installee est installé : $cible_finale
 
