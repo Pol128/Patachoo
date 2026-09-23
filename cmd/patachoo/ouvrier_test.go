@@ -577,6 +577,60 @@ func TestLOuvrierBorneLesHotesMenesDeFront(t *testing.T) {
 	}
 }
 
+// TestLOuvrierEspaceLesRequetesVersUnMemeSite : la promesse d'une requête par
+// seconde porte sur un site, et non sur un nom. Huit sous-domaines d'un même
+// domaine — un DNS générique suffit à les rendre tous résolvables — ne font
+// pas huit créneaux : le site reçoit au plus une requête par seconde,
+// robots.txt compris.
+func TestLOuvrierEspaceLesRequetesVersUnMemeSite(t *testing.T) {
+	app, titulaire, horloge, o := atelierDeLOuvrier(t)
+	var urls []string
+	for rang := 1; rang <= 8; rang++ {
+		urls = append(urls, fmt.Sprintf("https://s%d.exemple.fr/1", rang))
+	}
+	reseau := avecReseau(t, horloge, siteServi("User-agent: *\nDisallow: /prive\n", urls...))
+
+	traite(t, o, lotDe(t, app, titulaire, urls...))
+
+	appels := reseau.appels()
+	// Un robots.txt par sous-domaine — le REP est par origine —, et une page.
+	if len(appels) != 2*len(urls) {
+		t.Fatalf("%d requêtes émises, attendu %d :\n%v", len(appels), 2*len(urls), appels)
+	}
+	for i, ecart := range ecartsEntre(appels) {
+		if ecart < delaiEntreRequetes {
+			t.Errorf("requêtes %q et %q espacées de %v, attendu au moins %v : les sous-domaines d'un site "+
+				"ont chacun leur créneau", appels[i].url, appels[i+1].url, ecart, delaiEntreRequetes)
+		}
+	}
+}
+
+// TestLesSousDomainesDUnSiteNOccupentQuUneFile : les files suivent la clé de
+// la cadence. Autant de files que de sous-domaines rempliraient une vague
+// entière de filesMax files qui se disputent un seul créneau, et l'hôte
+// suivant attendrait la fin de cette vague sans que rien ne l'y oblige.
+func TestLesSousDomainesDUnSiteNOccupentQuUneFile(t *testing.T) {
+	app, titulaire, horloge, o := atelierDeLOuvrier(t)
+	var urls []string
+	for rang := 1; rang <= filesMax; rang++ {
+		urls = append(urls, fmt.Sprintf("https://s%d.exemple.fr/1", rang))
+	}
+	const autre = "https://autre.example/1"
+	urls = append(urls, autre)
+	reseau := avecReseau(t, horloge, siteServi("User-agent: *\nDisallow: /prive\n", urls...))
+
+	traite(t, o, lotDe(t, app, titulaire, urls...))
+
+	versAutre := reseau.appelsVers("autre.example")
+	if len(versAutre) != 2 {
+		t.Fatalf("%d requêtes vers autre.example, attendu 2 — son robots.txt et sa page", len(versAutre))
+	}
+	if attente := depuisLeDepart(versAutre[0].instant); attente != 0 {
+		t.Errorf("autre.example a démarré à %v, attendu 0 : il a attendu derrière les sous-domaines "+
+			"d'exemple.fr, qui occupent chacun une file", attente)
+	}
+}
+
 // TestLOuvrierSuitLeCrawlDelayAnnonce : quand l'hôte demande plus que notre
 // seconde, c'est lui qui décide — et pour lui seul.
 func TestLOuvrierSuitLeCrawlDelayAnnonce(t *testing.T) {
