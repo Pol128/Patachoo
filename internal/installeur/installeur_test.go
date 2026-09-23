@@ -45,10 +45,26 @@ const (
 	tagPublie      = "v1.2.3"
 )
 
-// fauxBinaire est un « patachoo » qui ne fait qu'une chose : dire sa version,
-// comme `patachoo version`.
+// fauxBinaire est un « patachoo » qui dit sa version, comme `patachoo
+// version` — et qui imite les deux travers du vrai, constatés en jouant le
+// script à la main : faute de --dir, il ouvre sa base dans ./pb_data, donc
+// dans le répertoire courant de qui l'appelle ; et, lancé depuis le répertoire
+// temporaire du système sans --dev=false, PocketBase se croit sous `go run` et
+// imprime ses requêtes SQL sur la sortie standard.
 func fauxBinaire(version string) []byte {
-	return []byte("#!/bin/sh\necho " + version + "\n")
+	return []byte(`#!/bin/sh
+dir=./pb_data dev=true
+for a in "$@"; do
+	case "$a" in
+	--dev=false) dev=false ;;
+	--dir=*) dir=${a#--dir=} ;;
+	esac
+	[ "$precedent" = --dir ] && dir=$a
+	precedent=$a
+done
+mkdir -p "$dir"
+[ "$dev" = true ] && echo "[0.00ms] SELECT 1"
+echo ` + version + "\n")
 }
 
 // archive rend un tar.gz qui porte `patachoo` à sa racine, comme ceux de
@@ -131,6 +147,7 @@ type execution struct {
 	code           int
 	sortie, erreur string
 	outils         string // le répertoire du uname et du sudo factices
+	courant        string // le répertoire courant du script
 }
 
 // lancer joue installer.sh par /bin/sh, sous la plateforme `systeme`/`archi`
@@ -156,6 +173,7 @@ func lancer(t *testing.T, systeme, archi, base string, args ...string) execution
 	}
 
 	cmd := exec.Command("/bin/sh", append([]string{script}, args...)...)
+	cmd.Dir = t.TempDir()
 	cmd.Env = append(os.Environ(),
 		"PATH="+outils+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"PATACHOO_URL_BASE="+base,
@@ -172,7 +190,7 @@ func lancer(t *testing.T, systeme, archi, base string, args ...string) execution
 	} else if err != nil {
 		t.Fatal(err)
 	}
-	return execution{code, sortie.String(), erreur.String(), outils}
+	return execution{code, sortie.String(), erreur.String(), outils, cmd.Dir}
 }
 
 func (e execution) String() string {
@@ -210,6 +228,38 @@ func TestInstallationNominalePoseLeBinaireEtImprimeSaVersion(t *testing.T) {
 	}
 	if !strings.Contains(e.sortie, versionPubliee) {
 		t.Errorf("la version posée n'est pas imprimée sur la sortie standard :\n%s", e)
+	}
+}
+
+func TestInterrogerLeBinaireNEcritRienDansLeRepertoireCourant(t *testing.T) {
+	s := release(t, "/latest/download", "")
+	prefixe := t.TempDir()
+
+	e := lancer(t, "Linux", "x86_64", s.URL, "--prefix", prefixe)
+
+	if e.code != 0 {
+		t.Fatalf("installation refusée :\n%s", e)
+	}
+	entrees, err := os.ReadDir(e.courant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, en := range entrees {
+		t.Errorf("le script a laissé %s dans le répertoire courant", en.Name())
+	}
+}
+
+func TestLaVersionImprimeeNePortePasLesTracesDuModeDev(t *testing.T) {
+	s := release(t, "/latest/download", "")
+	prefixe := t.TempDir()
+
+	e := lancer(t, "Linux", "x86_64", s.URL, "--prefix", prefixe)
+
+	if e.code != 0 {
+		t.Fatalf("installation refusée :\n%s", e)
+	}
+	if strings.Contains(e.sortie, "SELECT") {
+		t.Errorf("la sortie porte les requêtes du mode dev de PocketBase :\n%s", e)
 	}
 }
 
