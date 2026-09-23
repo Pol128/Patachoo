@@ -21,6 +21,177 @@ diverger.
 
 _Rien pour l'instant._
 
+## v0.3.0 — 2026-09-23
+
+- La section « Installation par binaire » d'INSTALL.md ne dit plus qu'aucun
+  binaire n'est publié : elle part désormais de l'archive toute compilée de la
+  Release, et garde la compilation pour les Raspberry Pi 1 et Pi Zero premier
+  modèle, qui n'ont pas d'archive, et pour qui préfère compiler. La mise à jour
+  se fait en téléchargeant l'archive de la nouvelle version, en la vérifiant,
+  puis en remplaçant l'exécutable et en redémarrant le service.
+- La vérification automatique ne lance plus qu'une passe à la fois sur la
+  machine qui l'héberge : les suivantes attendent leur tour au lieu de se
+  partager les mêmes processeurs, et aucune n'est plus annulée pour faire de
+  la place. Une demande de fusion peut donc attendre derrière une autre avant
+  d'être vérifiée, mais chaque passe dure ce qu'elle doit durer.
+- Pour qui contribue : la passe `AVEC_RACE=1 ./verifie` tient désormais en une
+  douzaine de minutes, et la courte en deux. Les tests de `cmd/patachoo` ne
+  migrent plus chacun leur base : ils recopient une base migrée une fois par
+  passe, et chacun garde la sienne. Le `-timeout` de la passe longue redescend
+  de trois heures à une.
+- Un compte peut désormais être désigné comme curateur, en cochant une case sur
+  sa fiche depuis l'interface d'administration. Le droit ne se donne pas
+  autrement : personne ne peut se l'attribuer lui-même, et le retirer prend
+  effet à la requête suivante, sans avoir à déconnecter qui que ce soit. Rien
+  n'en est visible à cette étape — ce sont les écrans de l'établi, à venir, qui
+  s'en serviront pour réserver leur accès.
+- L'établi garde le verdict de l'œil humain, et le range en deux champs. Depuis
+  la vue par aliment, un bouton ouvre le formulaire sur la ligne d'un groupe ;
+  depuis la fiche d'une forme, le même formulaire porte sur cette seule ligne.
+  Le verdict se pose par mots — saisie libre, liste existante proposée en
+  premier, création à la volée —, dans un vocabulaire propre à l'établi qui ne
+  se mélange pas aux tags des recettes. À côté, deux champs de texte, et leur
+  séparation est le point de cet écran : ce qui pourra partir un jour vers
+  patachoo.org parle de la règle ou de l'entrée du lexique, ce qui reste ici
+  cite la ligne du corpus et n'en sort pas. Sur une ligne, la lecture attendue
+  se saisit en plus champ à champ — « il fallait lire 2 oignons jaunes » —, et
+  reste elle aussi du côté local. Chaque annotation garde l'empreinte de la
+  passe qu'elle jugeait : elle dit quel parser elle visait, et se retrouve
+  telle quelle après une nouvelle analyse du même corpus, la cible étant
+  l'aliment canonique ou la ligne brute plutôt qu'une ligne d'analyse recréée à
+  chaque passe. Un groupe portant au moins un mot de verdict quitte l'ordre par
+  défaut de la vue agrégée ; une note sans mot l'y laisse. Et le verdict vaut
+  tant que la lecture qu'il jugeait n'a pas changé : à la passe suivante, un
+  groupe relu autrement revient dans la file avec son verdict précédent
+  affiché, à confirmer d'un geste.
+- L'établi descend du groupe à la ligne : `/etabli/formes` montre les formes
+  distinctes d'une analyse — la ligne brute telle que le corpus la porte, ce
+  que le parser en a lu champ à champ, ses signaux et le nombre de fois qu'elle
+  a été vue —, et chaque forme a sa fiche. Une ligne par forme et non par
+  occurrence : un verdict se pose une fois, même sur les milliers d'occurrences
+  d'une ligne banale. La page s'ouvre par son adresse seule, se cherche par un
+  champ qui ignore les accents et accepte les débuts de mot, et se parcourt
+  page à page. Le chemin remonte aussi : depuis une forme, un lien mène au
+  groupe qui l'a attrapée et dit combien d'autres formes s'y rangent ; depuis
+  un groupe de la vue par aliment, une colonne descend sur ses formes. Quand
+  l'analyse a porté sur la base de l'instance, la fiche d'une forme liste les
+  recettes du carnet qui portent cette ligne, chacune menant à sa page ; un
+  corpus fourni, lui, n'est pas conservé et n'a donc pas de provenance à
+  montrer. Comme les autres écrans de l'établi, les deux pages sont réservées
+  aux comptes qui en portent le droit, et ne modifient rien.
+- L'établi montre le résultat d'une analyse regroupé par aliment :
+  `/etabli/aliments`, réservé aux mêmes comptes que le lancement. Une ligne par
+  aliment canonique — sa catégorie, ses signaux de relecture, le nombre de
+  formes qu'il avale et le total de leurs occurrences — au lieu d'une ligne par
+  forme : un verdict porté sur un groupe tranche toutes ses lignes d'un coup.
+  L'écran s'ouvre sur ce qui coûte le plus cher à relire, c'est-à-dire les
+  groupes qui portent au moins un signal et que personne n'a encore tranchés,
+  classés par occurrences décroissantes ; la liste complète reste à un clic.
+  Trois autres ordres de lecture sont proposés : par dispersion — combien de
+  formes brutes une entrée avale —, par catégorie, et par rareté. Les aliments
+  que le lexique ne connaît pas forment leur propre tas, sans catégorie : c'est
+  sa file d'attente. La vue porte sur la dernière analyse terminée, et un
+  paramètre d'adresse permet d'en relire une autre.
+- L'établi a sa page de lancement, réservée aux comptes qui portent le droit de
+  curateur : `/etabli`. Deux entrées, et une seule à la fois — les lignes
+  d'ingrédients de l'instance, lues et jamais modifiées, ou un corpus fourni,
+  collé dans le champ ou joint en fichier, une ligne d'ingrédient par ligne. Le
+  corpus fourni n'est conservé nulle part : il est lu en mémoire, analysé, et
+  seules les formes qu'il donne sont écrites. La page annonce la taille acceptée
+  avant l'envoi et refuse ce qui la dépasse en le disant, montre l'avancement de
+  la passe en cours et le résultat de la dernière. Les lancements sont plafonnés
+  à cinq par minute et par adresse.
+- Patachoo sait désormais passer un corpus entier de lignes d'ingrédients au
+  parser, hors de toute page : les lignes de la base de l'instance, ou un
+  fichier du disque de la machine. Le travail dédoublonne les lignes en formes
+  distinctes, compte leurs occurrences, garde la lecture du parser et les
+  signaux de relecture de chacune. Rien n'est écrit dans les recettes ni dans
+  leurs ingrédients : l'établi lit le carnet, il ne le modifie pas. Une analyse
+  à la fois, et trois garde-fous qui refusent un corpus hors de proportion —
+  500 000 lignes, 32 Mio, trente minutes. Deux commandes le pilotent en
+  attendant ses écrans : `patachoo analyse lancer [fichier]` et
+  `patachoo analyse resume <identifiant>`, qui rend le compte des formes, des
+  signaux, des aliments reconnus ou non, et leur répartition par catégorie.
+- La base sait désormais accueillir ce que produira l'établi d'analyse de
+  corpus : une passe d'analyse, les formes distinctes qu'elle a lues avec leur
+  nombre d'occurrences et leur provenance, et les annotations portées dessus.
+  Les formes se cherchent sans accents ni majuscules — « creme » ramène
+  « Crème ». Rien n'en est visible à cette étape : ce sont les écrans de
+  l'établi, à venir, qui rempliront et liront ces tables, et l'API reste
+  réservée à l'administration de l'instance.
+- Patachoo sait désormais dire d'une ligne d'ingrédient ce qui a pu mal se
+  passer à sa lecture : un mot du texte d'origine que plus aucun champ ne
+  porte, un aliment resté vide, une unité répétée dans l'aliment — « 1 feuille
+  de feuille de laurier » —, un aliment absent du dictionnaire, ou des mots
+  remis dans un autre ordre. Rien n'en est visible à cette étape : ce sont les
+  écrans de relecture, à venir, qui s'en serviront pour trier ce qui mérite un
+  œil.
+- `patachoo analyse comparer` dit ce que la montée du parser change sur un
+  corpus, sans avoir besoin d'une vérité de référence : entre deux analyses du
+  même corpus, ou entre les colonnes déjà écrites dans les ingrédients et une
+  analyse, ce qui est la seule façon de comparer à une version du parser qui ne
+  se rejoue plus. Le rapprochement se fait sur la ligne brute, qui ne bouge
+  jamais. La sortie donne de part et d'autre le nombre de formes qu'aucun signal
+  de relecture n'allume, le taux d'aliments reconnus, le compte de chaque signal
+  et de chaque motif de lecture, avec leur écart ; puis les formes qui ont
+  changé, rangées par famille — celles dont seul l'aliment prend sa forme
+  canonique, tenues hors du verdict, celles qui n'allumaient aucun signal et en
+  allument désormais, listées en entier pour être relues, et le reste. Rien
+  n'est écrit dans les recettes ni dans leurs ingrédients. `analyse resume`
+  gagne au passage le compte des formes sans aucun signal.
+- La section d'`INSTALL.md` qui explique comment vérifier la provenance de
+  l'image dit maintenant quelle version de `gh` la commande réclame — 2.49 au
+  minimum —, comment lire la sienne, et ce que rend un `gh` plus ancien : un
+  `unknown command`, qui ressemble à une coquille dans la page sans en être
+  une. Pour qui ne peut pas mettre `gh` à jour, elle donne une voie de repli
+  avec `curl` et `jq` seuls, qui lit l'attestation directement dans le
+  registre et montre ce qu'elle affirme. Cette voie dit aussi, sans détour, ce
+  qu'elle ne fait pas : elle ne vérifie aucune signature.
+- Patachoo s'installe désormais **en une commande** sur un Linux sans Docker ni
+  Go : `installer.sh`, publié avec chaque Release, détecte la plateforme,
+  télécharge l'archive, **compare sa somme** et pose le binaire — dans
+  `/usr/local/bin` ou le préfixe choisi, pour la dernière version ou celle
+  demandée. Il est lui-même couvert par les sommes et l'attestation de
+  provenance : INSTALL.md montre d'abord comment le vérifier et le lire avant
+  de le lancer. Il ne crée ni compte ni service, et renvoie macOS, Windows et
+  les Raspberry Pi en armv6 vers la compilation depuis les sources.
+- Chaque version publie désormais Patachoo **tout compilé**, dans sa Release
+  GitHub : une archive par plateforme de l'image (`linux_amd64`, `linux_arm64`,
+  `linux_armv7`), sous des noms qui ne changeront plus d'une version à l'autre,
+  avec un fichier de sommes de contrôle et une attestation de provenance. Il
+  n'est plus nécessaire d'installer Go pour se passer de Docker. INSTALL.md
+  dit où les télécharger, comment vérifier les sommes et la provenance, et ce
+  que cette vérification prouve — et ne prouve pas.
+- INSTALL.md décrit désormais l'installation **sans Docker**, en binaire : la
+  ligne de construction complète avec son numéro de version, un tableau des
+  machines qui dit quoi compiler pour un PC comme pour un Raspberry Pi — y
+  compris les Pi 1 et Pi Zero, que l'image Docker ne couvre pas —, les deux
+  drapeaux qu'un binaire lancé nu ne peut pas oublier (`--http`, sans quoi
+  l'instance ne répond qu'à elle-même, et `--dir` en chemin absolu), la création
+  du premier compte, la sauvegarde et la mise à jour. La section livre aussi une
+  unité systemd complète et copiable telle quelle, qui relance le service après
+  une panne et lui rend l'isolation que le conteneur donnait gratuitement. Elle
+  dit franchement ce que le mode binaire fait gagner — rien sur une machine qui
+  héberge déjà des conteneurs, environ 550 Mo sur une machine où Docker ne
+  servait qu'à Patachoo.
+- Le rythme d'au plus une requête par seconde vaut désormais par site, et non
+  par nom d'hôte : les sous-domaines d'un même site — `a.exemple.fr`,
+  `b.exemple.fr` — se partagent ce rythme, et le délai entre deux visites
+  qu'en demande l'un vaut pour tous. Dans un import en lot, ils se suivent au
+  lieu de partir ensemble, sans retenir les autres sites de la fournée. Deux
+  sites hébergés sous le même nom de service — deux blogs sur un même
+  hébergeur, par exemple — comptent désormais comme un seul, et une fournée qui
+  les mêle est plus lente.
+- Les requêtes que Patachoo envoie aux sites visités suivent maintenant toutes
+  le même rythme : au plus une par seconde et par site, que l'adresse vienne
+  d'un import en lot, d'un import à l'unité ou du téléchargement d'une
+  illustration. Un import lancé à la main ne fait plus tourner l'écran plus de
+  cinq secondes pour attendre son tour : au-delà il renonce et le dit — que le
+  site soit déjà parcouru par un lot, ou qu'il demande lui-même de longs délais
+  entre deux visites. Un import en lot, lui, patiente le temps qu'il faut.
+- L'import d'une adresse est limité à dix par minute et par adresse IP.
+  Au-delà, la page revient avec son message et l'adresse saisie.
+
 ## v0.2.0 — 2026-09-19
 
 - La page « Importer un lot » liste désormais vos vingt dernières fournées, avec leur date, leur tag et leur état : le rapport d'un import se retrouve après coup, et plus seulement au moment où il s'affiche.
