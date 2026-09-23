@@ -25,7 +25,9 @@ import (
 //
 // Un seul pour l'instance, et une seule file. Deux lots menés de front sur le
 // même domaine y feraient deux requêtes par seconde, et le cadencement par
-// domaine ne voudrait plus rien dire s'il était par lot.
+// domaine ne voudrait plus rien dire s'il était par lot. Par domaine au sens
+// propre : la cadence et les files ont pour clé le domaine enregistrable
+// (siteDe, cadence.go), et non le nom d'hôte.
 //
 // C'est le seul endroit du produit qui sorte sur le réseau en rafale : la
 // politesse de PATA-8 — robots.txt, plafonds de taille et de temps — s'y tient
@@ -195,7 +197,7 @@ func (o *ouvrier) traiteLesLotsEnCours(ctx context.Context) error {
 	return nil
 }
 
-// traiteLeLot mène les lignes restantes d'un lot, une file par hôte.
+// traiteLeLot mène les lignes restantes d'un lot, une file par site.
 func (o *ouvrier) traiteLeLot(ctx context.Context, lot *core.Record) error {
 	lignes, err := o.app.FindRecordsByFilter("import_urls",
 		"batch = {:lot} && status = {:statut}", "position", 0, 0,
@@ -211,7 +213,7 @@ func (o *ouvrier) traiteLeLot(ctx context.Context, lot *core.Record) error {
 	// deux lots continuerait d'être récolté jusqu'au redémarrage.
 	robots := &recuperation.RobotsRetenus{}
 
-	files := parHote(lignes)
+	files := parSite(lignes)
 	for debut := 0; debut < len(files); debut += filesMax {
 		vague := files[debut:min(debut+filesMax, len(files))]
 
@@ -229,28 +231,33 @@ func (o *ouvrier) traiteLeLot(ctx context.Context, lot *core.Record) error {
 	return o.clotSiTermine(lot)
 }
 
-// parHote range les lignes en une file par hôte : chaque file dans l'ordre de
+// parSite range les lignes en une file par site : chaque file dans l'ordre de
 // position, les files dans l'ordre d'apparition de leur première ligne.
 //
 // L'ordre importe : c'est la liste que l'utilisateur a collée, et le rapport de
 // la sous-tâche 4 la relira dans le même sens.
-func parHote(lignes []*core.Record) [][]*core.Record {
+//
+// La clé est celle de la cadence. Une file par hôte ferait, de cinq cents
+// sous-domaines d'un même site, cinq cents files qui se disputent un seul
+// créneau : elles occuperaient chaque vague de filesMax pendant que les autres
+// sites de la fournée attendent.
+func parSite(lignes []*core.Record) [][]*core.Record {
 	rang := map[string]int{}
 	var files [][]*core.Record
 
 	for _, ligne := range lignes {
-		hote := hoteDe(ligne.GetString("url"))
-		if _, vu := rang[hote]; !vu {
-			rang[hote] = len(files)
+		site := siteDe(hoteDe(ligne.GetString("url")))
+		if _, vu := rang[site]; !vu {
+			rang[site] = len(files)
 			files = append(files, nil)
 		}
-		files[rang[hote]] = append(files[rang[hote]], ligne)
+		files[rang[site]] = append(files[rang[site]], ligne)
 	}
 	return files
 }
 
-// hoteDe rend l'hôte d'une adresse, en minuscules : c'est la clé du
-// cadencement, et Example.com est le même site qu'example.com.
+// hoteDe rend l'hôte d'une adresse, en minuscules : Example.com est le même
+// hôte qu'example.com. La clé du cadencement en est tirée par siteDe.
 func hoteDe(adresse string) string {
 	cible, err := url.Parse(adresse)
 	if err != nil {
@@ -261,7 +268,7 @@ func hoteDe(adresse string) string {
 	return strings.ToLower(cible.Hostname())
 }
 
-// traiteLaFile mène les lignes d'un même hôte, l'une après l'autre.
+// traiteLaFile mène les lignes d'un même site, l'une après l'autre.
 func (o *ouvrier) traiteLaFile(ctx context.Context, lot *core.Record, lignes []*core.Record,
 	robots *recuperation.RobotsRetenus) {
 	for _, ligne := range lignes {

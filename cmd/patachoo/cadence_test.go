@@ -488,3 +488,100 @@ func TestLaBorneUnitaireEstCelleDeLAppelEtNonDeChaqueEchange(t *testing.T) {
 		t.Errorf("%d requêtes émises, attendu 1 — le robots.txt seul :\n%v", len(appels), appels)
 	}
 }
+
+// --- La clé du tour de rôle : le site, pas le nom d'hôte -------------------
+
+// attenteDuSecond prend le tour de premier, puis celui de second, sur une
+// cadence neuve, et rend ce que le second a attendu : une seconde de politesse
+// s'ils tombent sur le même site, rien s'ils sont deux sites.
+//
+// Rien ne tourne en parallèle : aucune file n'est annoncée à l'horloge
+// virtuelle, qui saute donc d'elle-même à l'échéance du second.
+func attenteDuSecond(t *testing.T, premier, second string) time.Duration {
+	t.Helper()
+
+	c := nouvelleCadence(nouvelleHorlogeVirtuelle())
+	if _, err := c.attendSonTour(context.Background(), premier, 0); err != nil {
+		t.Fatalf("tour de %q : %v", premier, err)
+	}
+	attendu, err := c.attendSonTour(context.Background(), second, 0)
+	if err != nil {
+		t.Fatalf("tour de %q : %v", second, err)
+	}
+	return attendu
+}
+
+// Deux sous-domaines d'un suffixe privé de la liste des suffixes publics
+// tombent sur le même site : l'arbitrage du 23/09/2026 écarte les règles
+// privées. Avec elles, x.duckdns.org et y.duckdns.org seraient deux sites, et
+// le créneau par sous-domaine resterait gratuit à obtenir.
+func TestDeuxSousDomainesDUnSuffixePriveSeSuivent(t *testing.T) {
+	if attendu := attenteDuSecond(t, "x.duckdns.org", "y.duckdns.org"); attendu != delaiEntreRequetes {
+		t.Errorf("y.duckdns.org a attendu %v après x.duckdns.org, attendu %v : les règles privées de la "+
+			"liste des suffixes publics ne doivent pas faire deux sites", attendu, delaiEntreRequetes)
+	}
+}
+
+// La clé du site ne transforme pas le tour de rôle en file unique : deux sites
+// distincts gardent chacun leur créneau — y compris sous un suffixe public de
+// deux étiquettes, où prendre les deux dernières étiquettes du nom les
+// confondrait.
+func TestDeuxSitesDistinctsGardentChacunLeurCreneau(t *testing.T) {
+	for _, paire := range [][2]string{
+		{"www.exemple.fr", "www.autre.fr"},
+		{"cuisine.exemple.co.uk", "jardin.co.uk"},
+	} {
+		if attendu := attenteDuSecond(t, paire[0], paire[1]); attendu != 0 {
+			t.Errorf("%s a attendu %v après %s, attendu 0 : deux sites se partagent un créneau",
+				paire[1], attendu, paire[0])
+		}
+	}
+}
+
+// Un hôte dont aucun domaine enregistrable ne se tire — nom à une étiquette,
+// littéral IP — est son propre site. Un repli commun à tous ces hôtes les
+// mettrait dans un même créneau : le défaut de PATA-84 retourné.
+func TestLesHotesSansDomaineEnregistrableGardentChacunLeurCreneau(t *testing.T) {
+	for _, paire := range [][2]string{
+		{"localhost", "192.0.2.1"},
+		{"localhost", "intranet"},
+		{"::1", "2001:db8::1"},
+	} {
+		if attendu := attenteDuSecond(t, paire[0], paire[1]); attendu != 0 {
+			t.Errorf("%s a attendu %v après %s, attendu 0 : deux hôtes sans domaine se partagent un créneau",
+				paire[1], attendu, paire[0])
+		}
+	}
+}
+
+// Deux adresses IPv4 dont les étiquettes de droite coïncident ne sont pas un
+// même site. Lue comme un nom, 10.0.2.1 et 192.0.2.1 donneraient toutes deux
+// « 2.1 » : c'est le seul cas mesuré où une recette plausible confond deux
+// machines sans rien en dire.
+func TestDeuxAdressesIPv4VoisinesGardentChacunLeurCreneau(t *testing.T) {
+	if attendu := attenteDuSecond(t, "10.0.2.1", "192.0.2.1"); attendu != 0 {
+		t.Errorf("192.0.2.1 a attendu %v après 10.0.2.1, attendu 0 : deux adresses se partagent un créneau",
+			attendu)
+	}
+}
+
+// Le Crawl-delay qu'annonce un sous-domaine vaut pour tout son site. C'est la
+// conséquence d'un tour de rôle par site, et elle est choisie : elle va dans le
+// sens de la politesse, retiens gardant déjà le plus long des délais annoncés.
+func TestUnCrawlDelayAnnonceParUnSousDomaineVautPourToutLeSite(t *testing.T) {
+	const annonce = 5 * time.Second
+
+	c := nouvelleCadence(nouvelleHorlogeVirtuelle())
+	c.retiens("lent.exemple.fr", annonce)
+	if _, err := c.attendSonTour(context.Background(), "a.exemple.fr", 0); err != nil {
+		t.Fatalf("tour de a.exemple.fr : %v", err)
+	}
+	attendu, err := c.attendSonTour(context.Background(), "b.exemple.fr", 0)
+	if err != nil {
+		t.Fatalf("tour de b.exemple.fr : %v", err)
+	}
+	if attendu != annonce {
+		t.Errorf("b.exemple.fr a attendu %v après a.exemple.fr, attendu %v — le Crawl-delay annoncé par "+
+			"lent.exemple.fr", attendu, annonce)
+	}
+}

@@ -2,16 +2,20 @@ package main
 
 import (
 	"context"
+	"net"
+	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/net/publicsuffix"
 
 	"github.com/Pol128/Patachoo/recuperation"
 )
 
-// Le rythme des requêtes sortantes de l'import en lot, hôte par hôte.
+// Le rythme des requêtes sortantes de l'import en lot, site par site.
 //
 // Le seau à jetons du récolteur de référence a déjà tranché la question, et
-// c'est son principe qui est porté ici : un jeton par hôte, pas de rafale
+// c'est son principe qui est porté ici : un jeton par site, pas de rafale
 // accumulée, l'attente calculée depuis la dernière requête. Ce qu'il fait en
 // plus — ajustement AIMD sur les 429, remontée progressive, réglage à chaud —
 // n'a pas de sens pour une fournée que quelqu'un a collée à la main : ce
@@ -19,7 +23,7 @@ import (
 // c'est du Python, et DOD.md §4 tient.
 
 // delaiEntreRequetes est notre propre politesse : au plus une requête par
-// seconde vers un même hôte. Un Crawl-delay plus généreux ne l'accélère pas —
+// seconde vers un même site — au sens de siteDe. Un Crawl-delay plus généreux ne l'accélère pas —
 // un site qui nous autorise dix requêtes par seconde ne nous oblige pas à les
 // faire.
 const delaiEntreRequetes = time.Second
@@ -86,24 +90,85 @@ func (horlogeSysteme) Attends(ctx context.Context, d time.Duration) error {
 
 func (horlogeSysteme) Files(int) {}
 
-// cadence tient le rythme, hôte par hôte. Une seule pour l'instance : deux
+// cadence tient le rythme, site par site. Une seule pour l'instance : deux
 // lots menés de front sur le même domaine y feraient deux requêtes par
 // seconde, et le cadencement ne voudrait plus rien dire.
+//
+// Ses appelants passent un hôte ; elle le ramène à son site (siteDe) avant
+// toute lecture. C'est ici, et non chez eux, que la clé se calcule : la page,
+// le robots.txt et l'image de la fournée passent tous par là.
 type cadence struct {
 	horloge horlogeDuLot
 
 	mu sync.Mutex
-	// dernier est l'instant réservé par la requête précédente vers cet hôte,
+	// dernier est l'instant réservé par la requête précédente vers ce site,
 	// et non le prochain créneau : c'est ce qui permet à un Crawl-delay appris
 	// entre-temps de s'appliquer dès la requête suivante.
 	//
-	// Rien n'en sort : une entrée par hôte pèse une clé et un instant, et le
-	// nombre d'hôtes distincts qu'une instance verra se compte en milliers.
+	// Rien n'en sort : une entrée par site pèse une clé et un instant, et le
+	// nombre de sites distincts qu'une instance verra se compte en milliers.
 	// Une péremption coûterait plus cher à écrire et à tester qu'elle ne
 	// rendrait.
 	dernier map[string]time.Time
-	// delais garde ce que chaque hôte a annoncé.
+	// delais garde, par site, le plus long des Crawl-delay que ses hôtes ont
+	// annoncés : celui d'un sous-domaine vaut pour tout le site. C'est choisi,
+	// et dans le sens de la politesse.
 	delais map[string]time.Duration
+}
+
+// siteDe rend le site d'un hôte, c'est-à-dire la clé du tour de rôle : son
+// domaine enregistrable calculé sur le seul suffixe ICANN de la liste des
+// suffixes publics, en minuscules. a.exemple.fr et b.exemple.fr sont un même
+// site, et partagent une requête par seconde.
+//
+// Sans cette clé, un compte ordinaire collait une fournée sur cinq cents
+// sous-domaines d'un même site — un DNS générique suffit à les rendre tous
+// résolvables — et le site visé recevait filesMax requêtes par seconde, sous
+// notre nom, au lieu d'une.
+//
+// Les règles privées de la liste ne sont pas appliquées, et c'est l'arbitrage
+// du 23/09/2026 : x.duckdns.org et y.duckdns.org sont un même site,
+// duckdns.org. Avec elles, le créneau par sous-domaine resterait gratuit à
+// obtenir. Ce que ça coûte, et qui est accepté : deux blogs hébergés sur un
+// même service mutualisé se partagent un créneau, et une fournée qui les mêle
+// est plus lente. C'est pourquoi publicsuffix.EffectiveTLDPlusOne ne sert pas
+// ici : il applique les règles privées.
+//
+// Le calcul remonte les règles privées une étiquette à la fois, tant qu'il en
+// reste : l'une d'elles peut porter plusieurs étiquettes, et
+// x.foo.s3.amazonaws.com tombe ainsi sur amazonaws.com. Il s'arrête sur un
+// suffixe sans point : c'est la règle « * » par défaut d'un domaine de premier
+// niveau non listé, pas une règle privée — a.example et b.example restent deux
+// sites.
+//
+// Un littéral IP est écarté avant tout calcul. Lu comme un nom, 10.0.2.1 et
+// 192.0.2.1 donneraient tous deux « 2.1 » : deux machines dans un créneau.
+// Lui, et tout hôte dont aucun domaine enregistrable ne se tire — localhost,
+// un nom à une étiquette, la chaîne vide —, est son propre site. Un repli
+// commun à tous ces hôtes en ferait un créneau unique.
+//
+// Ce que cette clé ne couvre pas : cinq cents domaines enregistrés distincts
+// qui pointent vers une même machine y refont filesMax requêtes par seconde.
+// La clé relève le coût de l'abus — un nom de domaine enregistré par créneau,
+// au lieu d'un sous-domaine —, elle ne le supprime pas. L'adresse résolue le
+// fermerait, mais la résolution a lieu dans le transport de recuperation, après
+// que la cadence a donné son tour.
+func siteDe(hote string) string {
+	hote = strings.TrimSuffix(strings.ToLower(hote), ".")
+	if net.ParseIP(hote) != nil {
+		return hote
+	}
+
+	suffixe, icann := publicsuffix.PublicSuffix(hote)
+	for !icann && strings.Contains(suffixe, ".") {
+		suffixe, icann = publicsuffix.PublicSuffix(suffixe[strings.Index(suffixe, ".")+1:])
+	}
+
+	avant, trouve := strings.CutSuffix(hote, "."+suffixe)
+	if !trouve || avant == "" {
+		return hote
+	}
+	return avant[strings.LastIndex(avant, ".")+1:] + "." + suffixe
 }
 
 // cadenceDeLInstance est le tour de rôle unique du service : l'ouvrier du lot
@@ -117,7 +182,7 @@ type cadence struct {
 // sienne, bâtie sur l'horloge virtuelle.
 //
 // Deux cadences, une par chemin, reviendraient à deux requêtes par seconde vers
-// un même hôte, et le cadencement ne voudrait plus rien dire : c'est le même
+// un même site, et le cadencement ne voudrait plus rien dire : c'est le même
 // argument qui veut qu'il n'y ait qu'un ouvrier.
 var cadenceDeLInstance = nouvelleCadence(horlogeSysteme{})
 
@@ -129,7 +194,8 @@ func nouvelleCadence(h horlogeDuLot) *cadence {
 	}
 }
 
-// attendSonTour réserve le prochain créneau de l'hôte et patiente jusque-là.
+// attendSonTour réserve le prochain créneau du site de l'hôte et patiente
+// jusque-là.
 //
 // La réservation et l'attente sont séparées, et c'est ce qui fait progresser
 // les hôtes de front : le verrou n'est tenu que le temps du calcul, jamais
@@ -152,22 +218,24 @@ func nouvelleCadence(h horlogeDuLot) *cadence {
 // Crawl-delay est rapporté avant la requête de page du même appel,
 // delaiAnnonceMax en accepte cinq minutes, et cette attente est prise hors du
 // budget delaiMax de echange : plus rien ne la borne. Un serveur hostile
-// annoncerait « Crawl-delay: 300 » et immobiliserait un gestionnaire par hôte
+// annoncerait « Crawl-delay: 300 » et immobiliserait un gestionnaire par site
 // importé, le plafond de dix imports par minute n'y changeant rien puisqu'un
-// sous-domaine par import suffit à en changer.
+// domaine par import suffit à en changer.
 //
 // Ce que ce refus coûte, et qui est assumé : un site annonçant plus que la
 // borne n'est pas importable à la main. L'import en lot, lui, l'attend sans
 // limite — personne n'est devant son écran —, et c'est ce que le message du
 // renoncement dit à l'utilisateur.
 func (c *cadence) attendSonTour(ctx context.Context, hote string, attenteMax time.Duration) (time.Duration, error) {
+	site := siteDe(hote)
+
 	c.mu.Lock()
 	maintenant := c.horloge.Maintenant()
 	creneau := maintenant
-	if precedent, vu := c.dernier[hote]; vu {
-		// Pas de rafale accumulée : un hôte laissé de côté dix minutes ne
+	if precedent, vu := c.dernier[site]; vu {
+		// Pas de rafale accumulée : un site laissé de côté dix minutes ne
 		// gagne pas dix minutes de jetons, il repart de maintenant.
-		if prochain := precedent.Add(c.delaiDe(hote)); prochain.After(creneau) {
+		if prochain := precedent.Add(c.delaiDe(site)); prochain.After(creneau) {
 			creneau = prochain
 		}
 	}
@@ -176,7 +244,7 @@ func (c *cadence) attendSonTour(ctx context.Context, hote string, attenteMax tim
 		c.mu.Unlock()
 		return 0, recuperation.ErrAttenteTropLongue
 	}
-	c.dernier[hote] = creneau
+	c.dernier[site] = creneau
 	c.mu.Unlock()
 
 	if err := c.horloge.Attends(ctx, attente); err != nil {
@@ -187,19 +255,20 @@ func (c *cadence) attendSonTour(ctx context.Context, hote string, attenteMax tim
 	return attente, nil
 }
 
-// retiens garde le Crawl-delay qu'un hôte annonce, quand il dépasse le nôtre.
-// Cadencer à une requête par seconde un site qui en demande une toutes les dix
-// secondes, c'est ignorer un refus poli.
+// retiens garde le Crawl-delay qu'un hôte annonce, quand il dépasse le nôtre,
+// pour tout son site. Cadencer à une requête par seconde un site qui en demande
+// une toutes les dix secondes, c'est ignorer un refus poli.
 func (c *cadence) retiens(hote string, annonce time.Duration) {
 	if annonce <= 0 {
 		return
 	}
+	site := siteDe(hote)
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if annonce > c.delais[hote] {
-		c.delais[hote] = annonce
+	if annonce > c.delais[site] {
+		c.delais[site] = annonce
 	}
 }
 
@@ -216,9 +285,9 @@ func (c cadenceDeRecuperation) Retiens(hote string, annonce time.Duration) {
 	c.retiens(hote, annonce)
 }
 
-// delaiDe rend l'écart à respecter vers un hôte. À appeler sous le verrou.
-func (c *cadence) delaiDe(hote string) time.Duration {
-	if annonce := c.delais[hote]; annonce > delaiEntreRequetes {
+// delaiDe rend l'écart à respecter vers un site. À appeler sous le verrou.
+func (c *cadence) delaiDe(site string) time.Duration {
+	if annonce := c.delais[site]; annonce > delaiEntreRequetes {
 		return annonce
 	}
 	return delaiEntreRequetes
