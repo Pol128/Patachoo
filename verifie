@@ -52,22 +52,27 @@ go vet ./...
 # doit parler d'une course, pas d'un délai. Jamais -timeout=0 en revanche : un
 # test bloqué doit finir par rendre la main et sa pile.
 #
-# Trois heures, et non plus une. Ce plafond se dimensionne sur la durée réelle
-# de cmd/patachoo, qui grandit avec le nombre de ses tests, et la marge doit
-# couvrir la charge de la machine autant que le nombre de tests : le runner est
-# auto-hébergé, et les cycles d'agents lancent leur propre ./verifie pendant
-# qu'un job tourne. Relevé le 22/09/2026, à 689 tests :
-#   - machine peu chargée : ~3,9 s par test, soit ~45 min pour le paquet ;
-#   - en concurrence avec un job de CI : ~8,5 s par test, soit ~100 min.
-# Une heure tombait donc au milieu de cette plage — c'est ce qui a fait rougir
-# la CI sur un délai, avec des tests encore en attente et la passe jamais
-# terminée : une course dans les tests non joués serait passée inaperçue. La
-# durée du paquet reste le vrai sujet, et il a sa tâche (PATA-129) ; ce plafond
-# n'est pas l'endroit où l'on borne un temps d'exécution, seulement celui où
-# l'on garantit qu'un rouge parle d'une course.
+# Une heure. Ce plafond se dimensionne sur le paquet le plus long sous -race,
+# et la marge doit couvrir la charge de la machine autant que le nombre de
+# tests : le runner est auto-hébergé, et les cycles d'agents lancent leur propre
+# ./verifie pendant qu'un job tourne — ce qui a déjà doublé la durée d'une passe.
+# Relevé le 23/09/2026 sur une machine au repos (PATA-129) : la passe entière en
+# 13 min, dont 13 min pour `migrations`, désormais le paquet le plus long, et
+# 8 min 30 pour `cmd/patachoo` à 699 tests. Ces derniers recopient une base
+# migrée au lieu d'en migrer une chacun : un test y coûte ~0,7 s sous -race, et
+# non plus ~6,8 s — la même passe durait 1 h 19 la veille du changement, au
+# repos elle aussi. Le coût reste linéaire en nombre de tests, neuf fois moins
+# raide.
+#
+# Le plafond est redescendu de trois heures, posées quand la passe durait de
+# 45 min à 1 h 40 et qu'une heure avait fait rougir la CI sur un délai — avec
+# des tests encore en attente, et donc une course éventuelle jamais jouée. Un
+# plafond n'est pas l'endroit où l'on borne un temps d'exécution, seulement
+# celui où l'on garantit qu'un rouge parle d'une course : s'il faut le relever
+# un jour, c'est que la durée a repris, et c'est elle qu'il faut regarder.
 if [ "${AVEC_RACE:-}" = "1" ]; then
 	echo "→ go test -race"
-	go test -race -timeout=180m ./...
+	go test -race -timeout=60m ./...
 else
 	echo "→ go test"
 	go test ./...

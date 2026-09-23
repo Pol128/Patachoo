@@ -199,11 +199,14 @@ func lancePatachoo(t *testing.T, args ...string) (string, int) {
 
 // TestMain donne au binaire de test un second rôle : lancé avec
 // PATACHOO_SOUS_PROCESSUS=1, il est le programme lui-même. Sans la variable,
-// il se comporte en binaire de test ordinaire.
+// il se comporte en binaire de test ordinaire, et retire en sortant le gabarit
+// de base que ses tests ont recopié (ingredients_test.go).
 func TestMain(m *testing.M) {
 	if os.Getenv("PATACHOO_SOUS_PROCESSUS") == "1" {
 		main()
 		return
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	retireLeGabarit()
+	os.Exit(code)
 }
