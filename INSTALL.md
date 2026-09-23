@@ -623,6 +623,115 @@ du conteneur sur 8080 et 8443 — plus rien ne répond sur 8090. Le
 « Hors de la machine locale : il faut du TLS » la désactive pour cette raison,
 et dit par quoi la remplacer.
 
+## Les binaires publiés
+
+Chaque version publie dans sa
+[Release](https://github.com/Pol128/Patachoo/releases) le binaire de Patachoo,
+tout compilé, pour les trois plateformes de l'image. Ce n'est pas une seconde
+construction : [le workflow `publier`](.github/workflows/publier.yml) les tire
+de celle qui produit l'image, et le binaire d'une archive est celui que l'image
+contient.
+
+| L'archive | La machine qui la fera tourner |
+| --- | --- |
+| `patachoo_linux_amd64.tar.gz` | PC, serveur ou VPS x86 64 bits |
+| `patachoo_linux_arm64.tar.gz` | Raspberry Pi 3 / 4 / 5, Pi Zero 2 W, sous un OS 64 bits |
+| `patachoo_linux_armv7.tar.gz` | Raspberry Pi 2, ou Pi 3 / 4 sous un OS 32 bits |
+
+Un Raspberry Pi 1 ou un Pi Zero premier modèle n'a pas d'archive, pas plus
+qu'il n'a d'image : il compile la sienne, comme le dit
+[« Installation par binaire »](#installation-par-binaire).
+
+Chaque archive contient `patachoo`, `LICENSE` et `NOTICE`, à sa racine. À côté,
+deux fichiers servent à la vérifier : `sommes-sha256.txt` et
+`provenance.jsonl`.
+
+### Télécharger
+
+Les noms ne portent pas de numéro de version, et ne changeront pas : l'adresse
+`/releases/latest/download/` désigne toujours la dernière version publiée — une
+pré-version ne la déplace pas.
+
+```sh
+base=https://github.com/Pol128/Patachoo/releases/latest/download
+curl -fLO "$base/patachoo_linux_amd64.tar.gz"
+curl -fLO "$base/sommes-sha256.txt"
+curl -fLO "$base/provenance.jsonl"
+```
+
+Pour une version précise, `latest/download` devient `download/<le tag>` —
+`https://github.com/Pol128/Patachoo/releases/download/v0.3.0`. C'est aussi ce
+qui garantit que les trois fichiers viennent de la même version, si une
+publication tombe entre deux téléchargements.
+
+### Vérifier les sommes
+
+```sh
+grep ' patachoo_linux_amd64.tar.gz$' sommes-sha256.txt | sha256sum -c -
+```
+
+Le `grep` n'est là que parce qu'on n'a téléchargé qu'une archive sur trois ;
+avec les trois dans le répertoire, `sha256sum -c sommes-sha256.txt` suffit. La
+forme ci-dessus marche aussi avec le `sha256sum` de BusyBox, qui ne connaît pas
+`--ignore-missing`.
+
+Ce que cela prouve : l'archive est arrivée entière, telle que la Release la
+porte. Ce que cela ne prouve pas : d'où elle vient. Le fichier des sommes est
+servi par la même page que l'archive, et qui pourrait remplacer l'une
+remplacerait l'autre. C'est la provenance qui répond à cette question-là.
+
+### Vérifier la provenance
+
+```sh
+gh attestation verify patachoo_linux_amd64.tar.gz --repo Pol128/Patachoo
+```
+
+Il y faut `gh` 2.49 au minimum, pour la raison dite dans
+[« Épingler une version, et vérifier ce qu'on a tiré »](#épingler-une-version-et-vérifier-ce-quon-a-tiré).
+
+La commande va chercher l'attestation auprès de GitHub, par l'empreinte de
+l'archive. `provenance.jsonl` en est la copie publiée avec la Release : avec
+lui, la même vérification se fait sans interroger l'API des attestations.
+
+```sh
+gh attestation verify patachoo_linux_amd64.tar.gz --repo Pol128/Patachoo \
+    --bundle provenance.jsonl
+```
+
+Ce que cela prouve : cette archive a été produite par ce dépôt, par le workflow
+`publier`, à partir du tag et du commit que nomme l'attestation — pas construite
+sur une machine tierce, ni substituée dans la Release après coup.
+
+Ce que cela ne prouve pas : que le commit attesté soit digne de confiance. La
+provenance dit d'où vient l'archive, jamais ce que fait le code qu'elle
+contient. Elle ne promet pas non plus qu'on saurait refabriquer l'archive à
+l'octet près : aucune reproductibilité bit à bit n'est garantie.
+
+### Extraire, et lire la version
+
+```sh
+tar xzf patachoo_linux_amd64.tar.gz patachoo
+./patachoo version
+```
+
+Un binaire publié annonce son numéro — `0.3.0` —, jamais `dev`. La suite, du
+lancement à l'unité systemd, est celle d'[« Installation par
+binaire »](#installation-par-binaire), à partir de « Lancer ».
+
+### Pour qui a déjà Go : `go install`
+
+Une troisième voie, qui ne passe ni par l'image ni par la Release :
+
+```sh
+go install github.com/Pol128/Patachoo/cmd/patachoo@v0.3.0
+```
+
+Elle compile depuis le tag, sur votre machine, avec la chaîne Go et les
+drapeaux par défaut. Deux différences avec l'archive : ce binaire-là annonce
+`dev`, parce que personne ne lui passe `-X main.version=…`, et il n'y a aucune
+attestation à vérifier — c'est la confiance accordée au dépôt et au proxy de
+modules Go qui en tient lieu.
+
 ## Installation par binaire
 
 Patachoo est déjà un binaire unique, et l'image Docker n'est qu'un emballage
