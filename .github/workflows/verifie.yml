@@ -77,6 +77,34 @@ on:
   schedule:
     - cron: "17 4 * * 1"
 
+# Un seul job à la fois sur la machine, et les autres attendent leur tour.
+# Deux services de runner y sont enregistrés sur ce dépôt (PATA-132) : sans ce
+# groupe, deux passes `-race` partent ensemble sur les mêmes cœurs, chacune
+# double sa durée, et plus aucune mesure de durée n'est reproductible.
+#
+# La clé est une constante, et ce n'est pas un oubli. L'idiome habituel,
+# `${{ github.workflow }}-${{ github.ref }}`, dédoublonne les runs d'une même
+# branche : il laisserait passer précisément ce qu'on veut empêcher, deux jobs
+# sur deux refs différentes au même moment. Le problème n'est pas la
+# déduplication par branche, c'est la capacité de la machine.
+#
+# On met en file, on n'annule jamais : une passe `-race` annulée à quarante
+# minutes jette ce qu'on a de plus cher à produire, et une course ne se trouve
+# qu'en rejouant la passe (DOD.md §1). D'où `cancel-in-progress: false`, qui
+# épargne le job en cours — et `queue: max`, sans lequel il ne suffit pas : par
+# défaut, un groupe ne garde qu'un seul run en attente, et le troisième arrivé
+# annule celui qui attendait déjà.
+#
+# Le coût, accepté : les jobs se sérialisent, et une demande de fusion attend
+# derrière un job de `main`, parfois des dizaines de minutes. Deux passes
+# concurrentes n'iraient pas plus vite — elles se partagent les mêmes cœurs.
+# Ce groupe ne rend pas pour autant la machine au repos : un `./verifie` lancé
+# hors CI peut toujours y croiser un job.
+concurrency:
+  group: verifie-sd-124046
+  cancel-in-progress: false
+  queue: max
+
 jobs:
   verifie:
     # Runner auto-hébergé : les minutes hébergées par GitHub sont facturées,
