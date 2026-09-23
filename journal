@@ -68,13 +68,29 @@ publier)
 	echo "Rappel : ne publier que si aucune tâche n'est en cours de livraison."
 
 	n=$(ligne_entete)
+	# La ligne de l'en-tête qui clôt « À paraître » — la version précédente —,
+	# vide si la section court jusqu'au bout du fichier.
+	suite=$(sed -n "$((n + 1)),\$p" "$JOURNAL" | grep -n '^## ' | head -1 | cut -d: -f1)
+	if [ -n "$suite" ]; then
+		suite=$((n + suite))
+		fin=$((suite - 1))
+	else
+		fin='$'
+	fi
 	tmp=$(mktemp)
 	{
 		sed -n "1,$((n - 1))p" "$JOURNAL"
 		printf '%s\n\n_Rien pour l'\''instant._\n\n## v%s — %s\n\n' \
 			"$ENTETE" "$version" "$(date +%F)"
 		for f in $(fragments); do cat "$f"; done
-		sed -n "$((n + 2)),\$p" "$JOURNAL"
+		# Ce que « À paraître » portait encore à la main descend dans la
+		# version, sans ses lignes vides. Son placeholder, lui, reste en haut.
+		sed -n "$((n + 1)),${fin}p" "$JOURNAL" |
+			sed -e "/^_Rien pour l'instant\._\$/d" -e '/^$/d'
+		if [ -n "$suite" ]; then
+			echo
+			sed -n "$suite,\$p" "$JOURNAL"
+		fi
 	} >"$tmp"
 	mv "$tmp" "$JOURNAL"
 
