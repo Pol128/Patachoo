@@ -7,6 +7,11 @@
 # produite. `ghcr.io/pol128/patachoo:latest` cesse d'être une promesse
 # invérifiable ; INSTALL.md dit à l'hébergeant comment la vérifier.
 #
+# Les binaires publiés dans la Release suivent le même chemin : ils sortent de
+# la même construction que l'image, et portent la même sorte d'attestation. Un
+# binaire déposé à la main serait moins vérifiable que l'image, ce qui prendrait
+# ce fichier à contre-sens.
+#
 # Il ne rejoue pas `./verifie`. Le tag se pose sur un commit de `main` que
 # verifie.yml a déjà passé, et la passe `-race` coûte vingt minutes (DOD.md §1).
 # La contrepartie est assumée, et elle s'écrit : un tag posé sur un commit non
@@ -120,6 +125,95 @@ jobs:
           subject-digest: ${{ steps.pousser.outputs.digest }}
           push-to-registry: true
 
+      # ─── Les binaires ──────────────────────────────────────────────────────
+      #
+      # Ils sortent de la construction de l'image, et d'elle seule : il n'y a
+      # aucune compilation dans ce fichier. La ligne de compilation — drapeaux,
+      # version injectée, GOARM — vit dans le Dockerfile, à un seul endroit ;
+      # la recopier ici en ferait deux, et le binaire téléchargé cesserait un
+      # jour d'être celui de l'image sans que rien ne le signale.
+      #
+      # Même contexte, mêmes plateformes, même VERSION que l'étape qui a poussé
+      # l'image, sur le même constructeur buildx : chaque étape du Dockerfile
+      # est reprise du cache, rien n'est recompilé. Seule la destination
+      # change — un répertoire local au lieu du registre. L'image finale est
+      # `FROM scratch` avec le binaire à sa racine, d'où
+      # `binaires/linux_amd64/patachoo` et ses deux voisins (buildx range une
+      # plateforme par sous-répertoire, `linux_arm_v7` pour la troisième).
+      - name: Extraire les binaires
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc   # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          outputs: type=local,dest=binaires
+          build-args: |
+            VERSION=${{ steps.version.outputs.numero }}
+
+      # Les noms ne portent pas de numéro de version, et c'est un engagement :
+      # /releases/latest/download/<nom> doit rester valable d'une version à
+      # l'autre, et aucun de ces trois noms ne disparaît une fois publié.
+      #
+      # Chaque archive contient `patachoo`, `LICENSE` et `NOTICE` à sa racine,
+      # sans répertoire intermédiaire : Apache-2.0 demande que la licence
+      # accompagne ce qu'on redistribue, et `tar xzf … patachoo` doit suffire.
+      # Propriétaire numérique 0 : le nom du compte du runner n'a rien à faire
+      # chez l'hébergeant. Un binaire absent fait échouer `install`, donc le
+      # job — une Release à laquelle manquerait une plateforme ne part pas.
+      #
+      # Les sommes portent sur les archives, pas sur les binaires nus : c'est ce
+      # que l'hébergeant télécharge, donc ce qu'il doit pouvoir vérifier avant
+      # de l'ouvrir. Calculées depuis `actifs/`, elles nomment les archives sans
+      # chemin, et `sha256sum -c` passe là où on les a téléchargées.
+      - name: Archiver les binaires
+        run: |
+          set -euo pipefail
+          mkdir actifs
+          for cible in amd64 arm64 armv7; do
+            case "$cible" in
+              armv7) source=binaires/linux_arm_v7 ;;
+              *)     source="binaires/linux_$cible" ;;
+            esac
+            racine=$(mktemp -d)
+            install -m 0755 "$source/patachoo" "$racine/patachoo"
+            install -m 0644 LICENSE NOTICE "$racine/"
+            tar -C "$racine" --owner=0 --group=0 --numeric-owner \
+              -czf "actifs/patachoo_linux_$cible.tar.gz" patachoo LICENSE NOTICE
+          done
+          cd actifs
+          sha256sum patachoo_linux_*.tar.gz > sommes-sha256.txt
+
+      # Les archives, attestées comme l'image : ici, parce que c'est ce job qui
+      # porte `id-token: write` et `attestations: write`. Une seule attestation
+      # couvre les trois sujets, et `gh attestation verify` la retrouve depuis
+      # n'importe laquelle des trois archives.
+      - name: Attester les archives
+        id: attester-archives
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8   # v4.2.2
+        with:
+          subject-path: actifs/patachoo_linux_*.tar.gz
+
+      # Le paquet d'attestation, publié à côté des archives : avec lui,
+      # `gh attestation verify --bundle` vérifie sans interroger l'API GitHub.
+      # L'action l'écrit en JSON Lines, une attestation par ligne — d'où
+      # l'extension.
+      - name: Joindre le paquet d'attestation
+        env:
+          PAQUET: ${{ steps.attester-archives.outputs.bundle-path }}
+        run: cp "$PAQUET" actifs/provenance.jsonl
+
+      # Les actifs passent au job de la Release par un artefact du run, parce
+      # que ce job-ci n'a pas `contents: write` et ne doit pas l'avoir : c'est
+      # le seul moyen de téléverser ce qu'on a attesté ici sans réunir les deux
+      # jeux de droits dans un même job. Un jour de rétention suffit — la
+      # Release les garde, l'artefact n'est qu'un transit.
+      - name: Transmettre les actifs à la Release
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   # v7.0.1
+        with:
+          name: actifs
+          path: actifs/
+          if-no-files-found: error
+          retention-days: 1
+
   # ─── La Release ──────────────────────────────────────────────────────────
   #
   # Ce que ce job achète : le pied de page du produit affiche le numéro de
@@ -135,11 +229,11 @@ jobs:
   # peut pas écrire dans le dépôt ; celui qui écrit la Release ne peut pas
   # pousser d'image. C'est la règle que ce fichier s'est donnée plus haut.
   #
-  # `gh` plutôt qu'une neuvième action tierce : PATA-88 a épinglé les huit
-  # actions de ce dépôt par empreinte, et écrit que leur remontée est un geste
-  # manuel faute d'automate. Une empreinte de plus à tenir à jour pour ce que la
-  # CLI préinstallée sur le runner fait en quelques lignes serait un mauvais
-  # échange.
+  # `gh` plutôt qu'une action tierce de plus pour créer la Release : PATA-88 a
+  # épinglé les actions de ce dépôt par empreinte, et écrit que leur remontée
+  # est un geste manuel faute d'automate. Une empreinte de plus à tenir à jour
+  # pour ce que la CLI préinstallée sur le runner fait en quelques lignes serait
+  # un mauvais échange.
   release:
     needs: publier
     runs-on: ubuntu-latest
@@ -149,6 +243,21 @@ jobs:
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4.4.0
+
+      # Les archives, leurs sommes et leur paquet d'attestation, tels que le job
+      # précédent les a produits et attestés. Ici, on ne fait que les poser.
+      - name: Récupérer les actifs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c   # v8.0.1
+        with:
+          name: actifs
+          path: actifs
+
+      # Le transit n'a rien altéré, et le fichier des sommes se rejoue tel
+      # qu'on le publie : ce que l'hébergeant lancera, on le lance d'abord ici.
+      # Un rouge arrête le job avant que la Release n'existe.
+      - name: Contrôler les sommes
+        working-directory: actifs
+        run: sha256sum -c sommes-sha256.txt
 
       - name: Publier la Release
         env:
@@ -198,4 +307,12 @@ jobs:
             *-*) drapeaux+=(--prerelease) ;;
           esac
 
-          gh release create "$GITHUB_REF_NAME" "${drapeaux[@]}"
+          # Les cinq actifs, nommés un par un plutôt que par un motif : un
+          # fichier qui manquerait fait échouer la commande, au lieu de publier
+          # une Release amputée sans le dire.
+          gh release create "$GITHUB_REF_NAME" "${drapeaux[@]}" \
+            actifs/patachoo_linux_amd64.tar.gz \
+            actifs/patachoo_linux_arm64.tar.gz \
+            actifs/patachoo_linux_armv7.tar.gz \
+            actifs/sommes-sha256.txt \
+            actifs/provenance.jsonl
