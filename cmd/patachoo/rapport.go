@@ -40,7 +40,7 @@ const champDeLaReprise = "handled"
 // cadenceDuSuivi est l'intervalle du rafraîchissement HTMX.
 //
 // Deux secondes : l'ouvrier ne peut pas traiter plus d'une URL par seconde et
-// par hôte (cadence.go), donc rafraîchir plus vite ne montrerait rien de plus.
+// par site (cadence.go), donc rafraîchir plus vite ne montrerait rien de plus.
 // Le lot ouvert dans un onglet oublié coûte une requête toutes les deux
 // secondes, et ça s'arrête à la clôture — le fragment terminé ne redemande
 // rien.
@@ -324,7 +324,7 @@ func etatDuLot(app core.App, lot *core.Record) (string, error) {
 // gabarit l'échappe comme le reste.
 //
 // La plus récemment écrite, et non la dernière de la liste : les files
-// progressent en parallèle, une par hôte, et l'ordre de saisie n'est pas
+// progressent en parallèle, une par site, et l'ordre de saisie n'est pas
 // l'ordre d'arrivée.
 //
 // Une recette supprimée depuis vide la relation de sa ligne, qui est alors

@@ -9,6 +9,16 @@ Le texte intégral de la licence se trouve dans le fichier LICENSE.
 Composants tiers redistribués
 -----------------------------
 
+Liste des suffixes publics (Public Suffix List) — table de données
+    Publiée par la fondation Mozilla (https://publicsuffix.org).
+    Licence MPL-2.0.
+    Embarquée (go:embed) par le paquet golang.org/x/net/publicsuffix, sous la
+    forme compilée que ce module en tire — révision d6c92f1bbb74 de la liste
+    pour golang.org/x/net v0.58.0. Patachoo s'en sert pour ramener un nom
+    d'hôte à son domaine enregistrable, qui est la clé du rythme des requêtes
+    sortantes. Elle est compilée dans le binaire livré : elle est donc
+    redistribuée, sans retouche.
+
 htmx 2.0.10 — bibliothèque JavaScript
     Issu du projet htmx (https://github.com/bigskysoftware/htmx).
     Licence 0BSD (Zero-Clause BSD).
