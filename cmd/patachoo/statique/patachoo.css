@@ -137,6 +137,18 @@ footer {
 	border-bottom: 1px solid var(--trait);
 }
 
+/* Le choix des portions : un champ court et son bouton, sur une ligne. */
+.portions {
+	display: flex;
+	align-items: baseline;
+	gap: 0.5rem;
+	margin: 0.5rem 0;
+}
+
+.portions input {
+	width: 4.5rem;
+}
+
 .aliment {
 	font-weight: 600;
 }
