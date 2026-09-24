@@ -1,0 +1,1 @@
+- La fiche d'une recette qui indique ses portions propose d'en choisir un autre nombre : les quantités des ingrédients sont recalculées en proportion, à deux décimales au plus. C'est un réglage de lecture — la recette enregistrée ne change pas, et la fiche revient à ses propres portions à la visite suivante.

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -17,6 +18,11 @@ import (
 // le fichier d'origine. Une photo de recette pèse volontiers deux mégaoctets, et
 // c'est la page qu'on ouvre les mains dans la farine.
 const miniatureDeLaFiche = "800x0"
+
+// portionsMaximum borne le choix des portions sur la fiche (PATA-138). Au-delà,
+// le paramètre est ignoré comme toute valeur qu'on ne sait pas lire : la fiche
+// d'un gâteau pour mille n'est pas une page qu'on cuisine.
+const portionsMaximum = 100
 
 // donneesRecette porte la fiche telle que le gabarit la lit.
 //
@@ -35,6 +41,11 @@ type donneesRecette struct {
 	// promettre un 404. Le nom est celui que noteAffichee emploie déjà pour le
 	// même rôle (commentaires.go).
 	Sienne bool
+
+	// Portions est le nombre de portions affiché, celui de la recette ou celui
+	// demandé par ?portions=N. Zéro fait disparaître le choix : une recette
+	// sans portions n'a pas de base à laquelle rapporter les quantités.
+	Portions int
 
 	Titre       string
 	Image       string
@@ -124,7 +135,7 @@ func pageRecette(a *analyseur) func(*core.RequestEvent) error {
 			return err
 		}
 
-		donnees, err := ficheDeLaRecette(e.App, recette, e.Auth.Id, a)
+		donnees, err := ficheDeLaRecette(e.App, recette, e.Auth.Id, a, e.Request.URL.Query().Get("portions"))
 		if err != nil {
 			return err
 		}
@@ -144,6 +155,11 @@ func pageRecette(a *analyseur) func(*core.RequestEvent) error {
 	}
 }
 
+// PortionsMaximum expose la borne au gabarit, qui la pose sur le champ.
+func (donneesRecette) PortionsMaximum() int {
+	return portionsMaximum
+}
+
 // pageRecetteIntrouvable répond par une page lisible, et non par une 500 ni une
 // page vide.
 func pageRecetteIntrouvable(e *core.RequestEvent) error {
@@ -159,7 +175,10 @@ func pageRecetteIntrouvable(e *core.RequestEvent) error {
 // conditionnel de la fiche. Un paramètre plutôt qu'un champ rempli chez les
 // appelants, qui sont deux — pageRecette et rendLeBloc : la même règle posée
 // deux fois finit par diverger.
-func ficheDeLaRecette(app core.App, recette *core.Record, compte string, a *analyseur) (*donneesRecette, error) {
+//
+// portions est le paramètre ?portions=N tel que reçu, ou "" : la fiche
+// affiche alors les quantités de la recette. Rien n'en est écrit nulle part.
+func ficheDeLaRecette(app core.App, recette *core.Record, compte string, a *analyseur, portions string) (*donneesRecette, error) {
 	lignes, err := app.FindRecordsByFilter(
 		"ingredients",
 		"recipe = {:recette}",
@@ -176,14 +195,18 @@ func ficheDeLaRecette(app core.App, recette *core.Record, compte string, a *anal
 		return nil, fmt.Errorf("relations de %s : %v", recette.Id, echecs)
 	}
 
+	servings := recette.GetInt("servings")
+	affichees := portionsAffichees(portions, servings)
+
 	donnees := &donneesRecette{
 		Id:          recette.Id,
 		Sienne:      sienne(recette, compte),
+		Portions:    affichees,
 		Titre:       recette.GetString("title"),
 		Image:       urlDeLaMiniature(recette),
-		Faits:       faitsDeLaRecette(recette),
+		Faits:       faitsDeLaRecette(recette, affichees),
 		Source:      sourceDeLaRecette(recette),
-		Ingredients: ingredientsDeLaRecette(lignes, a),
+		Ingredients: ingredientsDeLaRecette(lignes, a, affichees, servings),
 		Etapes:      etapes(recette.GetString("instructions")),
 	}
 	return donnees, nil
@@ -192,7 +215,10 @@ func ficheDeLaRecette(app core.App, recette *core.Record, compte string, a *anal
 // faitsDeLaRecette rassemble le bandeau, dans l'ordre où il se lit. Un fait
 // dont la valeur est vide n'entre pas dans la liste : c'est ainsi que le
 // libellé disparaît avec la donnée.
-func faitsDeLaRecette(recette *core.Record) []fait {
+//
+// portions remplace servings dans le bandeau : c'est le nombre auquel les
+// quantités affichées se rapportent.
+func faitsDeLaRecette(recette *core.Record, portions int) []fait {
 	var faits []fait
 	ajoute := func(libelle, valeur string) {
 		if valeur != "" {
@@ -200,7 +226,7 @@ func faitsDeLaRecette(recette *core.Record) []fait {
 		}
 	}
 
-	if portions := recette.GetInt("servings"); portions > 0 {
+	if portions > 0 {
 		ajoute("Portions", strconv.Itoa(portions))
 	}
 	ajoute("Temps de préparation", dureeLisible(recette.GetInt("prep_time")))
@@ -313,10 +339,13 @@ func libelleSource(nom, adresse string) string {
 //
 // Aliment n'est pas food tel quel : la colonne porte la forme canonique du
 // lexique, donc le singulier, et la fiche l'accorde à la quantité (PATA-116).
-func ingredientsDeLaRecette(lignes []*core.Record, a *analyseur) []ligneDIngredient {
+//
+// La quantité est rapportée aux portions affichées avant d'être mise en forme
+// et accordée : le pluriel suit ce qu'on lit, pas ce qui est stocké.
+func ingredientsDeLaRecette(lignes []*core.Record, a *analyseur, portions, servings int) []ligneDIngredient {
 	rendues := make([]ligneDIngredient, 0, len(lignes))
 	for _, ligne := range lignes {
-		quantite := ligne.GetFloat("quantity")
+		quantite := quantiteProportionnelle(ligne.GetFloat("quantity"), portions, servings)
 		rendues = append(rendues, ligneDIngredient{
 			Brut:       ligne.GetString("raw"),
 			Quantite:   quantiteLisible(quantite),
@@ -384,4 +413,37 @@ func quantiteLisible(quantite float64) string {
 		return ""
 	}
 	return strings.Replace(strconv.FormatFloat(quantite, 'f', -1, 64), ".", ",", 1)
+}
+
+// portionsAffichees dit à combien de portions la fiche se rapporte : celles
+// demandées si la valeur se lit, celles de la recette sinon.
+//
+// Une valeur illisible, nulle, négative ou au-delà de portionsMaximum est
+// ignorée plutôt que refusée : c'est un réglage de lecture, et une adresse
+// mal tapée doit encore montrer la recette. Sans portions de référence, rien
+// n'est demandable.
+func portionsAffichees(demande string, servings int) int {
+	portions, err := strconv.Atoi(demande)
+	if servings <= 0 || err != nil || portions < 1 || portions > portionsMaximum {
+		return servings
+	}
+	return portions
+}
+
+// quantiteProportionnelle rapporte la quantité aux portions demandées,
+// arrondie à deux décimales.
+//
+// Rien ne bouge quand les portions sont celles de la recette, pas même
+// l'arrondi : la fiche sans paramètre reste celle d'avant PATA-138. Une
+// quantité absente le reste, et une quantité que l'arrondi effacerait
+// s'affiche au plus petit pas plutôt que de disparaître.
+func quantiteProportionnelle(quantite float64, portions, servings int) float64 {
+	if quantite == 0 || portions == servings {
+		return quantite
+	}
+	arrondie := math.Round(quantite*float64(portions)/float64(servings)*100) / 100
+	if arrondie == 0 {
+		return 0.01
+	}
+	return arrondie
 }
