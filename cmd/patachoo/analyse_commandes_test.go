@@ -181,9 +181,9 @@ func TestLaCommandeResumeRendLesMesures(t *testing.T) {
 	passe, err := o.lance(context.Background(), sourceFournie, corpus(
 		"1 pincée de sel",      // résolue, aucun signal, « Herbes et épices »
 		"2 tomates",            // résolue, aucun signal, « Légumes »
-		"100 g de farine",      // non résolue
+		"100 g de cassonade",   // non résolue
 		"1 feuille de laurier", // résolue, unité répétée
-		"100 g de farine",      // la même forme, une seconde occurrence
+		"100 g de cassonade",   // la même forme, une seconde occurrence
 	))
 	if err != nil {
 		t.Fatalf("analyse refusée : %v", err)

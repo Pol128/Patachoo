@@ -451,9 +451,9 @@ func TestLesQuatreMotifsCorrigesArriventJusquAuxCinqChamps(t *testing.T) {
 		// de rester collée à l'aliment.
 		{
 			motif: "préparation après une virgule finale",
-			brut:  "2 oignons, hachés finement",
+			brut:  "2 piquillos, hachés finement",
 			attendus: champsIngredient{
-				quantite: nombre(2), aliment: "oignons", note: "hachés finement",
+				quantite: nombre(2), aliment: "piquillos", note: "hachés finement",
 			},
 		},
 		// Le motif inversé « Aliment : quantité » se lisait entièrement de

@@ -118,7 +118,7 @@ func TestLeResumeCompteLesFormesSansSignal(t *testing.T) {
 	passe, err := o.lance(context.Background(), sourceFournie, corpus(
 		"1 pincée de sel",      // résolue, aucun signal
 		"2 tomates",            // résolue, aucun signal
-		"100 g de farine",      // non résolue
+		"100 g de cassonade",   // non résolue
 		"1 feuille de laurier", // résolue, unité répétée
 	))
 	if err != nil {

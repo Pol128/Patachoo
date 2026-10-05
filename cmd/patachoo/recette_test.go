@@ -582,6 +582,39 @@ func TestUnAlimentInconnuDuLexiqueSAfficheTelQuel(t *testing.T) {
 	}
 }
 
+// « fromage blanc » et « sucre glace » s'affichent comme tels (PATA-144) : le
+// lexique du moteur les rangeait sous « quark » et « sucre en poudre », et la
+// fiche affiche la forme canonique, pas le mot de la recette. Les lignes ne
+// portent ici que raw, et c'est litLaLigne qui pose food, comme à l'import.
+func TestFromageBlancEtSucreGlaceSAffichentParLeurNom(t *testing.T) {
+	app, mux, cookie := serveurConnecte(t)
+	recette := recetteEnBase(t, app, nil)
+
+	collection, err := app.FindCollectionByNameOrId("ingredients")
+	if err != nil {
+		t.Fatalf("collection ingredients : %v", err)
+	}
+	for i, brut := range []string{"200 g de fromage blanc", "100 g de sucre glace"} {
+		ligne := core.NewRecord(collection)
+		ligne.Set("recipe", recette.Id)
+		ligne.Set("raw", brut)
+		ligne.Set("position", i+1)
+		if err := app.Save(ligne); err != nil {
+			t.Fatalf("enregistrement de %q : %v", brut, err)
+		}
+	}
+
+	rendues := ingredientsRendus(t, fiche(mux, cookie, recette.Id).Body.String())
+	if len(rendues) != 2 {
+		t.Fatalf("%d ingrédients rendus, attendu 2", len(rendues))
+	}
+	for i, attendu := range []string{"fromage blanc", "sucre glace"} {
+		if got := alimentRendu(t, rendues[i]); got != attendu {
+			t.Errorf("aliment rendu %q, attendu %q : %q", got, attendu, rendues[i])
+		}
+	}
+}
+
 // Le seuil vient du pack, pas d'une constante Go : l'anglais met 1 là où le
 // français met 2, et une comparaison à 2 écrite en dur ne suivrait pas le pack
 // qu'on lui donne.

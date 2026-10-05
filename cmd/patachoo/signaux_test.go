@@ -42,21 +42,21 @@ func TestLesSignauxDUneLigne(t *testing.T) {
 
 		// Un simple trou de lexique n'allume que lui : c'est le cas qui dit
 		// que les quatre autres signaux ne suivent pas.
-		{"1 Oignon(s)", []string{"non_resolu"}},
-		{"100 g de farine", []string{"non_resolu"}},
+		{"1 Piquillo(s)", []string{"non_resolu"}},
+		{"100 g de cassonade", []string{"non_resolu"}},
 		{"2 tomates bien mûres (pelées)", []string{"non_resolu"}},
 		{"200 g de crème fraîche épaisse, facultatif", []string{"non_resolu"}},
 		// L'unité et l'aliment sont légitimement distincts : « unité répétée »
 		// ne s'allume pas.
 		{"1 gousse de vanille", []string{"non_resolu"}},
-		{"3 branches de thym", []string{"non_resolu"}},
+		{"3 branches de romarin", []string{"non_resolu"}},
 
 		// Le cas le plus fréquent du corpus, et la seule vraie perte du
 		// parser : le second « de » n'est revendiqué par aucun champ.
 		{"1/4 de litre de lait", []string{"mots_perdus"}},
 		// Un mot rangé dans un booléen est perdu, et c'est voulu :
 		// Approximative passe à vrai et « environ » reste derrière.
-		{"environ 500 g de farine", []string{"mots_perdus", "non_resolu"}},
+		{"environ 500 g de cassonade", []string{"mots_perdus", "non_resolu"}},
 
 		// « 1 feuille de feuille de laurier » sur la fiche.
 		{"1 feuille de laurier", []string{"unite_repetee"}},
@@ -147,7 +147,7 @@ func TestResoutRendLEntreeEtSaCategorie(t *testing.T) {
 		{"2 à 3 gousses d'ail", true, "Légumes"},
 		{"1/2 citron", true, "Fruits"},
 		// Absent du lexique : rien à ranger dans les trois colonnes.
-		{"100 g de farine", false, ""},
+		{"100 g de cassonade", false, ""},
 		{"(+ 1/4 de la sauce de base)", false, ""},
 	}
 	for _, c := range cas {

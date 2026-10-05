@@ -1,0 +1,1 @@
+- Les aliments « fromage blanc » et « sucre glace » sont désormais lus correctement à l'import : une fiche n'affiche plus « quark » ni « sucre en poudre » à leur place. Les recettes déjà importées ne changent pas tant que leurs ingrédients n'ont pas été ré-analysés.
