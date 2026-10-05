@@ -211,7 +211,7 @@ func TestLaFormePorteLaLectureEtSesSignaux(t *testing.T) {
 
 	passe, err := o.lance(context.Background(), sourceFournie, corpus(
 		"1 pincée de sel",
-		"100 g de farine",
+		"100 g de cassonade",
 		"1 feuille de laurier",
 	))
 	if err != nil {
@@ -247,17 +247,17 @@ func TestLaFormePorteLaLectureEtSesSignaux(t *testing.T) {
 
 	// Le trou de lexique : l'aliment sort tel quel, non résolu, sans
 	// catégorie, et le signal le dit.
-	farine, ecrite := formes["100 g de farine"]
+	cassonade, ecrite := formes["100 g de cassonade"]
 	if !ecrite {
-		t.Fatalf("aucune forme pour « 100 g de farine » : %v", formes)
+		t.Fatalf("aucune forme pour « 100 g de cassonade » : %v", formes)
 	}
-	if farine.GetBool("resolved") {
-		t.Error("resolved = vrai pour « farine », que le lexique ne résout pas")
+	if cassonade.GetBool("resolved") {
+		t.Error("resolved = vrai pour « cassonade », que le lexique ne résout pas")
 	}
-	if categorie := farine.GetString("category"); categorie != "" {
+	if categorie := cassonade.GetString("category"); categorie != "" {
 		t.Errorf("category = %q, attendu vide : une forme non résolue n'a pas de catégorie", categorie)
 	}
-	if signaux := signauxDe(t, farine); len(signaux) != 1 || signaux[0] != SignalNonResolu {
+	if signaux := signauxDe(t, cassonade); len(signaux) != 1 || signaux[0] != SignalNonResolu {
 		t.Errorf("signals = %q, attendu [%s]", signaux, SignalNonResolu)
 	}
 
