@@ -3,7 +3,7 @@ module github.com/Pol128/Patachoo
 go 1.26.6
 
 require (
-	github.com/Pol128/moteur v0.2.1-0.20261002081458-fa208f08eadb
+	github.com/Pol128/moteur v0.2.1-0.20261002091458-26037fec5655
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/pocketbase/dbx v1.12.0
 	github.com/pocketbase/ozzo-validation/v4 v4.3.0
