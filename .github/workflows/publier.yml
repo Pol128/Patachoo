@@ -199,6 +199,10 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff   # v5.6.0
         with:
           go-version-file: go.mod
+          # Sans cache : ce job porte les droits d'écriture et d'attestation, et
+          # rien de ce qui est attesté ne doit sortir d'un cache Actions qu'un
+          # autre run aurait pu écrire.
+          cache: false
 
       - name: Empaqueter
         env:
