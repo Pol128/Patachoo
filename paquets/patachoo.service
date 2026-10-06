@@ -1,0 +1,58 @@
+# L'unité que posent les paquets .deb et .rpm (paquets/nfpm.yaml).
+#
+# C'est celle d'INSTALL.md, « L'unité systemd », directive pour directive, à
+# une différence près : le binaire d'un paquet est en /usr/bin, celui qu'on
+# pose à la main en /usr/local/bin. Durcir l'une sans l'autre fait rougir
+# internal/installeur/paquets_test.go.
+
+[Unit]
+Description=Patachoo — carnet de recettes
+Documentation=https://github.com/Pol128/Patachoo
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/patachoo serve --http=127.0.0.1:8090 --dir=/var/lib/patachoo
+Restart=on-failure
+RestartSec=5s
+
+# Le compte : créé au démarrage, détruit à l'arrêt, il n'existe pas entre-temps.
+# StateDirectory pose /var/lib/patachoo, le lui donne, et le conserve d'un
+# démarrage à l'autre — c'est le chemin que --dir désigne ci-dessus, et les deux
+# ne peuvent pas diverger sans que le service cesse de trouver ses données.
+DynamicUser=yes
+StateDirectory=patachoo
+StateDirectoryMode=0700
+
+# Le système de fichiers : tout en lecture seule sauf le répertoire d'état,
+# /home et /root invisibles, un /tmp qui n'est partagé avec personne.
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+# Aucune élévation possible, aucune capacité conservée : Patachoo écoute
+# au-dessus de 1024 et n'a besoin d'aucune.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# Le noyau et le reste du système, hors de portée.
+PrivateDevices=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

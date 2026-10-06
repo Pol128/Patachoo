@@ -160,11 +160,6 @@ jobs:
       # chez l'hébergeant. Un binaire absent fait échouer `install`, donc le
       # job — une Release à laquelle manquerait une plateforme ne part pas.
       #
-      # Les sommes portent sur les archives, pas sur les binaires nus : c'est ce
-      # que l'hébergeant télécharge, donc ce qu'il doit pouvoir vérifier avant
-      # de l'ouvrir. Calculées depuis `actifs/`, elles nomment les archives sans
-      # chemin, et `sha256sum -c` passe là où on les a téléchargées.
-      #
       # installer.sh les rejoint tel qu'il est dans le dépôt, au commit du tag :
       # ni copie tenue ailleurs, ni fichier généré. C'est un actif comme les
       # autres, avec sa somme dans le même fichier et son attestation — on doit
@@ -186,19 +181,70 @@ jobs:
               -czf "actifs/patachoo_linux_$cible.tar.gz" patachoo LICENSE NOTICE
           done
           install -m 0755 installer.sh actifs/installer.sh
-          cd actifs
-          sha256sum patachoo_linux_*.tar.gz installer.sh > sommes-sha256.txt
 
-      # Les archives et le script, attestés comme l'image : ici, parce que c'est
-      # ce job qui porte `id-token: write` et `attestations: write`. Une seule
-      # attestation couvre les quatre sujets, et `gh attestation verify` la
-      # retrouve depuis n'importe lequel d'entre eux.
+      # Les paquets .deb et .rpm, à partir des mêmes binaires que les archives :
+      # nfpm emballe, il ne compile rien. Un seul fichier les décrit,
+      # paquets/nfpm.yaml ; ce qu'ils posent et ce que font leurs scripts y est
+      # écrit.
+      #
+      # nfpm est lancé par `go run` à une version exacte, jamais @latest : la
+      # même règle que l'épinglage des actions, appliquée à un outil qui
+      # n'entre pas dans go.mod — il construit, il n'est pas redistribué. Go
+      # vient de go.mod, comme dans verifie.yml.
+      #
+      # Les noms suivent ceux des archives, sans numéro de version, pour que
+      # /releases/latest/download/ les désigne d'une version à l'autre ; la
+      # version est dans les métadonnées du paquet. ARCH prend les noms de Go,
+      # que nfpm traduit dans ceux de chaque format (arm7 → armhf, armv7hl).
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff   # v5.6.0
+        with:
+          go-version-file: go.mod
+          # Sans cache : ce job porte les droits d'écriture et d'attestation, et
+          # rien de ce qui est attesté ne doit sortir d'un cache Actions qu'un
+          # autre run aurait pu écrire.
+          cache: false
+
+      - name: Empaqueter
+        env:
+          VERSION: ${{ steps.version.outputs.numero }}
+        run: |
+          set -euo pipefail
+          for cible in amd64 arm64 armv7; do
+            case "$cible" in
+              armv7) source=binaires/linux_arm_v7 arch=arm7 ;;
+              *)     source="binaires/linux_$cible" arch="$cible" ;;
+            esac
+            for format in deb rpm; do
+              ARCH="$arch" BINAIRE="$source/patachoo" \
+                go run github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0 package \
+                  -f paquets/nfpm.yaml -p "$format" \
+                  -t "actifs/patachoo_linux_$cible.$format"
+            done
+          done
+
+      # Les sommes portent sur ce qu'on publie, pas sur les binaires nus : c'est
+      # ce que l'hébergeant télécharge, donc ce qu'il doit pouvoir vérifier
+      # avant de l'ouvrir. Calculées depuis `actifs/`, elles nomment les
+      # fichiers sans chemin, et `sha256sum -c` passe là où on les a
+      # téléchargés.
+      - name: Calculer les sommes
+        working-directory: actifs
+        run: |
+          sha256sum patachoo_linux_*.tar.gz patachoo_linux_*.deb patachoo_linux_*.rpm \
+            installer.sh > sommes-sha256.txt
+
+      # Les archives, les paquets et le script, attestés comme l'image : ici,
+      # parce que c'est ce job qui porte `id-token: write` et
+      # `attestations: write`. Une seule attestation couvre les dix sujets, et
+      # `gh attestation verify` la retrouve depuis n'importe lequel d'entre eux.
       - name: Attester les archives
         id: attester-archives
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8   # v4.2.2
         with:
           subject-path: |
             actifs/patachoo_linux_*.tar.gz
+            actifs/patachoo_linux_*.deb
+            actifs/patachoo_linux_*.rpm
             actifs/installer.sh
 
       # Le paquet d'attestation, publié à côté des archives : avec lui,
@@ -253,7 +299,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4.4.0
 
-      # Les archives, le script, leurs sommes et leur paquet d'attestation, tels
+      # Les archives, les paquets, le script, leurs sommes et leur paquet d'attestation, tels
       # que le job précédent les a produits et attestés. Ici, on ne fait que les
       # poser.
       - name: Récupérer les actifs
@@ -317,13 +363,19 @@ jobs:
             *-*) drapeaux+=(--prerelease) ;;
           esac
 
-          # Les six actifs, nommés un par un plutôt que par un motif : un
+          # Les douze actifs, nommés un par un plutôt que par un motif : un
           # fichier qui manquerait fait échouer la commande, au lieu de publier
           # une Release amputée sans le dire.
           gh release create "$GITHUB_REF_NAME" "${drapeaux[@]}" \
             actifs/patachoo_linux_amd64.tar.gz \
             actifs/patachoo_linux_arm64.tar.gz \
             actifs/patachoo_linux_armv7.tar.gz \
+            actifs/patachoo_linux_amd64.deb \
+            actifs/patachoo_linux_arm64.deb \
+            actifs/patachoo_linux_armv7.deb \
+            actifs/patachoo_linux_amd64.rpm \
+            actifs/patachoo_linux_arm64.rpm \
+            actifs/patachoo_linux_armv7.rpm \
             actifs/installer.sh \
             actifs/sommes-sha256.txt \
             actifs/provenance.jsonl

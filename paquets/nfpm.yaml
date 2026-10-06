@@ -1,0 +1,59 @@
+# Les paquets .deb et .rpm de Patachoo, produits par nfpm à partir de ce seul
+# fichier — aucune chaîne de compilation Debian ni rpmbuild. La CI les
+# construit dans publier.yml, à partir du binaire de la Release :
+#
+#   VERSION=0.3.0 ARCH=amd64 BINAIRE=binaires/linux_amd64/patachoo \
+#     go run github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0 package \
+#     -f paquets/nfpm.yaml -p deb -t actifs/patachoo_linux_amd64.deb
+#
+# Lancé depuis la racine du dépôt : les chemins `src` y sont relatifs.
+#
+# ARCH prend les noms de Go — amd64, arm64, et arm7 pour armv7 — que nfpm
+# traduit lui-même dans ceux de chaque format : amd64/arm64/armhf pour deb,
+# x86_64/aarch64/armv7hl pour rpm.
+#
+# Le paquet pose le binaire et l'unité, rien de plus : pas de compte créé (le
+# DynamicUser=yes de l'unité en tient lieu), pas de service activé ni démarré,
+# et le répertoire de données n'est jamais effacé, purge comprise.
+
+name: patachoo
+version: ${VERSION}
+version_schema: semver
+arch: ${ARCH}
+platform: linux
+section: web
+priority: optional
+maintainer: Pol128 — https://github.com/Pol128/Patachoo
+description: |-
+  Carnet de recettes auto-hébergé.
+  Importe des recettes depuis le web, les range et les partage entre comptes.
+homepage: https://github.com/Pol128/Patachoo
+license: Apache-2.0
+
+contents:
+  # `expand` : sans lui, nfpm ne lit pas ${BINAIRE} dans un `src`.
+  - src: ${BINAIRE}
+    dst: /usr/bin/patachoo
+    expand: true
+    file_info:
+      mode: 0755
+
+  - src: ./paquets/patachoo.service
+    dst: /usr/lib/systemd/system/patachoo.service
+    file_info:
+      mode: 0644
+
+  - src: ./LICENSE
+    dst: /usr/share/doc/patachoo/LICENSE
+    file_info:
+      mode: 0644
+
+  - src: ./NOTICE
+    dst: /usr/share/doc/patachoo/NOTICE
+    file_info:
+      mode: 0644
+
+scripts:
+  postinstall: ./paquets/apres-installation.sh
+  preremove: ./paquets/avant-desinstallation.sh
+  postremove: ./paquets/apres-desinstallation.sh
