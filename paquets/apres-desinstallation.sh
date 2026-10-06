@@ -10,9 +10,10 @@
 
 systemctl_si_present() {
 	command -v systemctl >/dev/null 2>&1 || return 0
-	systemctl "$@" || true
+	systemctl "$@"
 }
 
 systemctl_si_present daemon-reload
 
+# Le code de sortie ne dépend d'aucun systemctl.
 exit 0

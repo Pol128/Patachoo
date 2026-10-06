@@ -12,11 +12,12 @@
 
 systemctl_si_present() {
 	command -v systemctl >/dev/null 2>&1 || return 0
-	systemctl "$@" || true
+	systemctl "$@"
 }
 
 case "$1" in
 remove | 0) systemctl_si_present disable --now patachoo.service ;;
 esac
 
+# Le code de sortie ne dépend d'aucun systemctl.
 exit 0

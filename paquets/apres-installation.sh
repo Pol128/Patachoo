@@ -15,7 +15,7 @@
 
 systemctl_si_present() {
 	command -v systemctl >/dev/null 2>&1 || return 0
-	systemctl "$@" || true
+	systemctl "$@"
 }
 
 systemctl_si_present daemon-reload
@@ -29,4 +29,5 @@ if [ -n "$mise_a_jour" ]; then
 	systemctl_si_present try-restart patachoo.service
 fi
 
+# Le code de sortie ne dépend d'aucun systemctl.
 exit 0
