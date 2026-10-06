@@ -460,7 +460,9 @@ docker compose up -d
 ```
 
 Seule l'image change ; les données restent dans le volume. Sauvegarder `pb_data`
-avant une montée de version reste la précaution d'usage.
+avant une montée de version reste la précaution d'usage. Les migrations de la
+base s'appliquent d'elles-mêmes au démarrage de la nouvelle version, sans
+commande à lancer : c'est pour ça que la sauvegarde se fait avant, et non après.
 
 ### Épingler une version, et vérifier ce qu'on a tiré
 
@@ -774,6 +776,84 @@ sa place — il exécute le script sans qu'on l'ait vérifié ni lu :
 
 ```sh
 curl -fsSL https://github.com/Pol128/Patachoo/releases/latest/download/installer.sh | sh -s -- --prefix "$HOME/.local/bin"
+```
+
+### Installer par paquet (.deb, .rpm)
+
+Sur Debian, Ubuntu, Fedora, Rocky et leurs voisines, la Release porte aussi des
+paquets : ils posent le binaire et [l'unité systemd](#lunité-systemd), et le
+gestionnaire de paquets sait ensuite les mettre à jour et les retirer.
+
+| Le paquet | La machine |
+| --- | --- |
+| `patachoo_linux_amd64.deb` / `.rpm` | PC, serveur ou VPS x86 64 bits |
+| `patachoo_linux_arm64.deb` / `.rpm` | Raspberry Pi 3 / 4 / 5, Pi Zero 2 W, sous un OS 64 bits |
+| `patachoo_linux_armv7.deb` / `.rpm` | Raspberry Pi 2, ou Pi 3 / 4 sous un OS 32 bits |
+
+Les noms ne portent pas de numéro de version, comme ceux des archives : la
+version est dans les métadonnées du paquet. On télécharge, et on vérifie
+exactement comme une archive — la somme par
+[« Vérifier les sommes »](#vérifier-les-sommes), l'origine par
+[« Vérifier la provenance »](#vérifier-la-provenance) :
+
+```sh
+base=https://github.com/Pol128/Patachoo/releases/latest/download
+curl -fLO "$base/patachoo_linux_amd64.deb"
+curl -fLO "$base/sommes-sha256.txt"
+curl -fLO "$base/provenance.jsonl"
+
+grep ' patachoo_linux_amd64.deb$' sommes-sha256.txt | sha256sum -c -
+gh attestation verify patachoo_linux_amd64.deb --repo Pol128/Patachoo --bundle provenance.jsonl
+```
+
+Puis, selon la distribution :
+
+```sh
+sudo apt install ./patachoo_linux_amd64.deb    # Debian, Ubuntu
+sudo dnf install ./patachoo_linux_amd64.rpm    # Fedora, Rocky, Alma
+```
+
+Le paquet pose `/usr/bin/patachoo` et `/usr/lib/systemd/system/patachoo.service`
+— l'unité de [« L'unité systemd »](#lunité-systemd), au chemin du binaire près.
+Il ne crée aucun compte : `DynamicUser=yes` en tient lieu. Et il **n'active ni
+ne démarre** le service, comme `installer.sh` : c'est à vous de le faire, en
+sachant que vous ouvrez un port.
+
+```sh
+sudo systemctl enable --now patachoo
+```
+
+Le premier superutilisateur se crée ensuite comme le dit
+[« Le premier superutilisateur »](#le-premier-superutilisateur).
+
+**Ne gardez pas deux binaires.** Le paquet pose le sien dans `/usr/bin`,
+l'installation à la main et `installer.sh` dans `/usr/local/bin`, qui passe
+devant dans le `PATH`. Qui passe d'une voie à l'autre supprime l'ancien
+`/usr/local/bin/patachoo` et l'ancienne unité de `/etc/systemd/system/` — cette
+dernière masquerait celle du paquet.
+
+**Mettre à jour**, c'est installer le paquet de la version suivante par-dessus,
+avec la même commande. Le service redémarre de lui-même s'il tournait, et
+seulement dans ce cas. Les migrations de la base s'appliquent à ce redémarrage :
+sauvegardez avant — voir [« Sauvegarde et restauration »](#sauvegarde-et-restauration).
+Aucun dépôt APT ni DNF n'est publié : rien ne vous préviendra qu'une version est
+sortie, il faut venir la chercher.
+
+**Désinstaller** arrête le service et le désactive, puis retire le binaire et
+l'unité :
+
+```sh
+sudo apt purge patachoo     # ou apt remove ; dnf remove patachoo
+```
+
+**Les données restent**, purge comprise : une purge qui effacerait toutes les
+recettes, sans corbeille, ne se rattraperait pas. Elles sont dans
+`/var/lib/private/patachoo` (voir ce qu'en dit [« L'unité
+systemd »](#lunité-systemd) à propos de `DynamicUser=yes`) ; qui veut vraiment
+s'en défaire les efface à la main :
+
+```sh
+sudo rm -rf /var/lib/private/patachoo
 ```
 
 ### Pour qui a déjà Go : `go install`
@@ -1120,7 +1200,9 @@ sudo systemctl restart patachoo
 ```
 
 Les données restent où elles sont ; seul l'exécutable est remplacé. Sauvegarder
-`pb_data` avant une montée de version reste la précaution d'usage.
+`pb_data` avant une montée de version reste la précaution d'usage. Les migrations
+de la base s'appliquent d'elles-mêmes au démarrage de la nouvelle version, sans
+commande à lancer : c'est pour ça que la sauvegarde se fait avant, et non après.
 
 **Ce que la vérification devient ici.** En Docker, on vérifie une empreinte et
 une attestation — « cette image vient bien de ce dépôt ». L'archive se vérifie

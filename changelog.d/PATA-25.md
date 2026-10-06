@@ -1,0 +1,1 @@
+- Chaque version publie des paquets `.deb` et `.rpm` (amd64, arm64, armv7) : `apt install ./patachoo_linux_amd64.deb` ou `dnf install ./patachoo_linux_amd64.rpm` pose Patachoo et son unité systemd, se met à jour par-dessus la version précédente et se désinstalle proprement, sans jamais effacer les recettes. Voir INSTALL.md, « Installer par paquet ».
